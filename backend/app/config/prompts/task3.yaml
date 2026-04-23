@@ -97,15 +97,17 @@ executor:
 
     规则：
     1. 只生成SELECT语句
-    2. 只使用允许的表
-    3. 公司筛选使用 stock_abbr 或 stock_code
-    4. 时间筛选使用 report_year 和 report_period
-    5. report_period 取值：Q1(一季度)、HY(半年度)、Q3(三季度)、FY(年度)
-    6. report_type 取值：REPORT(正式报告)、SUMMARY(摘要报告)，不要使用 audited、annual 等其他值
-    7. 金额单位统一为万元
-    8. 只输出SQL，不要解释
-    9. 禁止使用不存在字段：company_code、year；股票代码字段是 stock_code，年份字段是 report_year
-    10. 如需公司全称 company_name，必须通过 stock_code 关联 company_basic_info
+    2. 只使用Schema中列出的表，严禁使用任何不存在的表（如 top_cash_flow_companies、cmi_companies、temp_table 等）
+    3. 如需获取排名/筛选结果，必须使用子查询或 CTE (WITH 语句) 从现有表中查询
+    4. 公司筛选使用 stock_abbr 或 stock_code
+    5. 时间筛选使用 report_year 和 report_period
+    6. report_period 取值：Q1(一季度)、HY(半年度)、Q3(三季度)、FY(年度)
+    7. report_type 取值：REPORT(正式报告)、SUMMARY(摘要报告)，不要使用 audited、annual 等其他值
+    8. 金额单位统一为万元
+    9. 只输出SQL，不要解释
+    10. 禁止使用不存在字段：company_code、year；股票代码字段是 stock_code，年份字段是 report_year
+    11. 如需公司全称 company_name，必须通过 stock_code 关联 company_basic_info
+    12. 禁止使用 CREATE TEMPORARY TABLE、WITH 临时表名 AS 等创建临时表的方式；允许使用 CTE 进行子查询封装，但 CTE 名称不是表名
 
   user_prompt_template: |
     步骤信息：
@@ -114,8 +116,8 @@ executor:
     - 目标: {goal}
     - 参数: {params}
     - 上下文: {context}
-    
-    生成SQL语句。
+
+    生成SQL语句。只输出一条SQL，不要创建临时表，不要引用不存在的表。
 
 answer_builder:
   system_prompt: |

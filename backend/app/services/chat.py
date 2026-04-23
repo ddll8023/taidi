@@ -1,31 +1,20 @@
 """智能问数对话服务"""
+
 import json
 import os
 import re
 import uuid
-from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
-
 import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
-
 from app.core.config import settings
-from app.models.chat_message import ChatMessage
-from app.models.chat_session import ChatSession
+from app.models import chat_message as models_chat_message
+from app.models import chat_session as models_chat_session
 from app.models.company_basic_info import CompanyBasicInfo
-from app.schemas.chat import (
-    AnswerContent,
-    ChatMessageResponse,
-    ChatResponse,
-    ChatSessionResponse,
-    DerivedMetricType,
-    IntentResult,
-    QueryCapability,
-    QueryType,
-)
+from app.schemas import chat as schemas_chat
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
@@ -33,27 +22,9 @@ from app.utils.model_factory import get_model
 
 logger = setup_logger(__name__)
 
-FORBIDDEN_KEYWORDS = [
-    "DROP",
-    "DELETE",
-    "UPDATE",
-    "INSERT",
-    "ALTER",
-    "CREATE",
-    "TRUNCATE",
-    "GRANT",
-    "REVOKE",
-]
-ALLOWED_TABLES = [
-    "income_sheet",
-    "balance_sheet",
-    "cash_flow_sheet",
-    "core_performance_indicators_sheet",
-    "company_basic_info",
-]
-
 
 # ========== 公共入口函数 ==========
+
 
 def process_chat_message(
     session_id: str | None,
@@ -61,7 +32,7 @@ def process_chat_message(
     db: Session,
     question_id: str | None = None,
     chart_sequence: int = 1,
-) -> ChatResponse:
+) -> schemas_chat.ChatResponse:
     """处理单轮智能问数消息，返回对话回答、SQL 与图表信息。"""
     return _process_chat_message(
         session_id=session_id,
@@ -79,7 +50,9 @@ def get_chat_sessions(
     return _get_chat_sessions(db=db, page=page, page_size=page_size)
 
 
-def get_chat_history(session_id: str, db: Session) -> list[ChatMessageResponse]:
+def get_chat_history(
+    session_id: str, db: Session
+) -> list[schemas_chat.ChatMessageResponse]:
     """查询指定会话的历史消息列表。"""
     return _get_chat_history(session_id=session_id, db=db)
 
@@ -169,7 +142,9 @@ def _extract_select_columns(sql: str) -> list[str]:
                 elif depth == 0 and upper_statement.startswith(keyword_upper, i):
                     prev_char = statement[i - 1] if i > 0 else " "
                     next_index = i + keyword_len
-                    next_char = statement[next_index] if next_index < len(statement) else " "
+                    next_char = (
+                        statement[next_index] if next_index < len(statement) else " "
+                    )
                     if not (prev_char.isalnum() or prev_char == "_") and not (
                         next_char.isalnum() or next_char == "_"
                     ):
@@ -609,7 +584,7 @@ PERIOD_ALIAS_MAP = {
 }
 
 DERIVED_METRIC_KEYWORDS = {
-    DerivedMetricType.YOY_GROWTH: [
+    schemas_chat.DerivedMetricType.YOY_GROWTH: [
         "同比",
         "同比增长",
         "同比增速",
@@ -620,7 +595,7 @@ DERIVED_METRIC_KEYWORDS = {
         "年增长率",
         "同比增长率",
     ],
-    DerivedMetricType.QOQ_GROWTH: [
+    schemas_chat.DerivedMetricType.QOQ_GROWTH: [
         "环比",
         "环比增长",
         "环比增速",
@@ -631,7 +606,7 @@ DERIVED_METRIC_KEYWORDS = {
         "环比增长率",
         "季度增长率",
     ],
-    DerivedMetricType.CAGR: [
+    schemas_chat.DerivedMetricType.CAGR: [
         "复合增长率",
         "年均复合增长率",
         "CAGR",
@@ -640,7 +615,7 @@ DERIVED_METRIC_KEYWORDS = {
         "复合增速",
         "年均复合增速",
     ],
-    DerivedMetricType.RATIO: [
+    schemas_chat.DerivedMetricType.RATIO: [
         "占比",
         "比例",
         "比重",
@@ -654,7 +629,7 @@ DERIVED_METRIC_KEYWORDS = {
         "占比率",
         "比例值",
     ],
-    DerivedMetricType.INDUSTRY_AVG: [
+    schemas_chat.DerivedMetricType.INDUSTRY_AVG: [
         "行业均值",
         "行业平均",
         "行业平均水平",
@@ -663,18 +638,18 @@ DERIVED_METRIC_KEYWORDS = {
         "行业均值水平",
         "行业平均值",
     ],
-    DerivedMetricType.MEDIAN: [
+    schemas_chat.DerivedMetricType.MEDIAN: [
         "中位数",
         "中位值",
         "中间值",
     ],
-    DerivedMetricType.CORRELATION: [
+    schemas_chat.DerivedMetricType.CORRELATION: [
         "相关性",
         "相关系数",
         "关联度",
         "相关关系",
     ],
-    DerivedMetricType.DIFFERENCE: [
+    schemas_chat.DerivedMetricType.DIFFERENCE: [
         "差值",
         "差额",
         "差异",
@@ -684,7 +659,7 @@ DERIVED_METRIC_KEYWORDS = {
         "变化幅度",
         "变动幅度",
     ],
-    DerivedMetricType.PERCENTAGE: [
+    schemas_chat.DerivedMetricType.PERCENTAGE: [
         "百分比",
         "百分率",
         "占比",
@@ -992,7 +967,9 @@ def _normalize_metric_payload(metric_data: Any) -> dict | list[dict] | None:
                 if not isinstance(raw_field, str) or not raw_field:
                     continue
 
-                resolved_metric = _get_metric_by_field(raw_field) or {"field": raw_field}
+                resolved_metric = _get_metric_by_field(raw_field) or {
+                    "field": raw_field
+                }
 
                 if isinstance(raw_tables, list):
                     table_value = raw_tables[idx] if idx < len(raw_tables) else None
@@ -1052,7 +1029,9 @@ def _normalize_metric_payload(metric_data: Any) -> dict | list[dict] | None:
 def _resolve_current_report_period(report_period: Any) -> str:
     """派生指标模板需要一个明确的当前期，列表场景默认取最后一个周期。"""
     if isinstance(report_period, list):
-        valid_periods = [item for item in report_period if isinstance(item, str) and item]
+        valid_periods = [
+            item for item in report_period if isinstance(item, str) and item
+        ]
         if valid_periods:
             return valid_periods[-1]
         return "FY"
@@ -1095,10 +1074,12 @@ def _extract_comparison_time_points(time_range: dict | None) -> list[dict[str, A
 
     report_year = time_range.get("report_year")
     report_period = time_range.get("report_period")
-    if isinstance(report_year, list) and isinstance(report_period, str) and report_period:
-        normalized_years = sorted(
-            year for year in report_year if isinstance(year, int)
-        )
+    if (
+        isinstance(report_year, list)
+        and isinstance(report_period, str)
+        and report_period
+    ):
+        normalized_years = sorted(year for year in report_year if isinstance(year, int))
         if len(normalized_years) == 2:
             return [
                 {"report_year": normalized_years[0], "report_period": report_period},
@@ -1111,12 +1092,12 @@ def _extract_comparison_time_points(time_range: dict | None) -> list[dict[str, A
 def _resolve_prestored_derived_metric_source(
     metric_field: str,
     table_name: str,
-    derived_type: DerivedMetricType,
+    derived_type: schemas_chat.DerivedMetricType,
 ) -> tuple[str, str]:
     field_mapping: dict[str, tuple[str, str]] = {}
-    if derived_type == DerivedMetricType.YOY_GROWTH:
+    if derived_type == schemas_chat.DerivedMetricType.YOY_GROWTH:
         field_mapping = YOY_GROWTH_FIELD_MAPPING
-    elif derived_type == DerivedMetricType.QOQ_GROWTH:
+    elif derived_type == schemas_chat.DerivedMetricType.QOQ_GROWTH:
         field_mapping = QOQ_GROWTH_FIELD_MAPPING
 
     source_metric = field_mapping.get(metric_field)
@@ -1147,7 +1128,9 @@ def _has_non_null_measure_values(
                 continue
             if column_name in RESULT_IDENTITY_COLUMNS:
                 continue
-            if any(column_name.startswith(prefix) for prefix in RESULT_IDENTITY_PREFIXES):
+            if any(
+                column_name.startswith(prefix) for prefix in RESULT_IDENTITY_PREFIXES
+            ):
                 continue
             return True
 
@@ -1155,7 +1138,7 @@ def _has_non_null_measure_values(
 
 
 def _generate_qoq_comparison_sql(
-    intent: IntentResult,
+    intent: schemas_chat.IntentResult,
     metric_field: str,
     table_name: str,
     comparison_points: list[dict[str, Any]],
@@ -1193,8 +1176,12 @@ def _generate_qoq_comparison_sql(
 
     earlier_suffix = str(earlier_year)
     later_suffix = str(later_year)
-    earlier_company_filter = _build_company_filter(intent, table_alias=f"curr_{earlier_suffix}")
-    later_company_filter = _build_company_filter(intent, table_alias=f"curr_{later_suffix}")
+    earlier_company_filter = _build_company_filter(
+        intent, table_alias=f"curr_{earlier_suffix}"
+    )
+    later_company_filter = _build_company_filter(
+        intent, table_alias=f"curr_{later_suffix}"
+    )
 
     earlier_expr = (
         f"ROUND((curr_{earlier_suffix}.{metric_field} - prev_{earlier_suffix}.{metric_field}) "
@@ -1283,7 +1270,10 @@ def _is_cross_table_topn_ratio_question(question: str) -> bool:
         "排名前" in question
         and _extract_topn_limit(question) is not None
         and all(keyword in question for keyword in CROSS_TABLE_TOPN_RATIO_KEYWORDS)
-        and any(keyword in question for keyword in ["占未分配利润", "占未分配利润的比例", "比例"])
+        and any(
+            keyword in question
+            for keyword in ["占未分配利润", "占未分配利润的比例", "比例"]
+        )
     )
 
 
@@ -1292,7 +1282,9 @@ def _infer_cross_table_topn_ratio_time_ranges(
     fallback_time_range: dict | None,
 ) -> tuple[dict | None, dict | None]:
     ordered_mentions = _extract_ordered_time_mentions(question)
-    ranking_time_range = ordered_mentions[0] if ordered_mentions else fallback_time_range
+    ranking_time_range = (
+        ordered_mentions[0] if ordered_mentions else fallback_time_range
+    )
 
     aliases = sorted(set(PERIOD_ALIAS_MAP.keys()), key=len, reverse=True)
     period_pattern = "|".join(re.escape(alias) for alias in aliases)
@@ -1347,22 +1339,28 @@ def _extract_topn_limit(question: str) -> int | None:
     if "十" in numeral:
         parts = numeral.split("十")
         tens = CHINESE_NUMERAL_MAP.get(parts[0], 1) if parts[0] else 1
-        ones = CHINESE_NUMERAL_MAP.get(parts[1], 0) if len(parts) > 1 and parts[1] else 0
+        ones = (
+            CHINESE_NUMERAL_MAP.get(parts[1], 0) if len(parts) > 1 and parts[1] else 0
+        )
         return tens * 10 + ones
 
     return CHINESE_NUMERAL_MAP.get(numeral)
 
 
-def _is_multi_metric_topn_intersection_question(intent: IntentResult) -> bool:
+def _is_multi_metric_topn_intersection_question(
+    intent: schemas_chat.IntentResult,
+) -> bool:
     question = intent.question or ""
     metrics = intent.get_metric_list()
-    if intent.query_type != QueryType.RANKING or len(metrics) < 2:
+    if intent.query_type != schemas_chat.QueryType.RANKING or len(metrics) < 2:
         return False
 
     return "均排名前" in question and _extract_topn_limit(question) is not None
 
 
-def _generate_multi_metric_topn_intersection_sql(intent: IntentResult) -> str | None:
+def _generate_multi_metric_topn_intersection_sql(
+    intent: schemas_chat.IntentResult,
+) -> str | None:
     if not _is_multi_metric_topn_intersection_question(intent):
         return None
 
@@ -1384,11 +1382,13 @@ def _generate_multi_metric_topn_intersection_sql(intent: IntentResult) -> str | 
         if metric_key in seen_fields:
             continue
         seen_fields.add(metric_key)
-        normalized_metrics.append({
-            "field": field,
-            "table": table,
-            "display_name": str(metric.get("display_name") or field),
-        })
+        normalized_metrics.append(
+            {
+                "field": field,
+                "table": table,
+                "display_name": str(metric.get("display_name") or field),
+            }
+        )
 
     if len(normalized_metrics) < 2:
         return None
@@ -1442,7 +1442,9 @@ def _generate_multi_metric_topn_intersection_sql(intent: IntentResult) -> str | 
     )
 
 
-def _generate_cross_table_topn_ratio_sql(intent: IntentResult) -> str | None:
+def _generate_cross_table_topn_ratio_sql(
+    intent: schemas_chat.IntentResult,
+) -> str | None:
     question = intent.question or ""
     if not _is_cross_table_topn_ratio_question(question):
         return None
@@ -1528,44 +1530,60 @@ def _references_collection_result(question: str) -> bool:
         "筛选",
         "条件",
     ]
-    has_self_contained_filter = any(kw in question for kw in self_contained_filter_keywords)
+    has_self_contained_filter = any(
+        kw in question for kw in self_contained_filter_keywords
+    )
 
     for pattern, _ in COLLECTION_COREFERENCE_PATTERNS:
         if re.search(pattern, question):
             # 如果包含自包含筛选条件，"这些公司"指代的是当前查询的筛选结果
-            if has_self_contained_filter and pattern in (r"这些公司", r"那些公司", r"这几家公司", r"那几家公司"):
+            if has_self_contained_filter and pattern in (
+                r"这些公司",
+                r"那些公司",
+                r"这几家公司",
+                r"那几家公司",
+            ):
                 return False
             return True
 
     return bool(
         re.search(r"这[0-9一二三四五六七八九十两几]+家(?:公司|企业|上市公司)", question)
-        or re.search(r"前[0-9一二三四五六七八九十两]+家(?:公司|企业|上市公司)", question)
-        or re.search(r"上述[0-9一二三四五六七八九十两几]*家(?:公司|企业|上市公司)", question)
+        or re.search(
+            r"前[0-9一二三四五六七八九十两]+家(?:公司|企业|上市公司)", question
+        )
+        or re.search(
+            r"上述[0-9一二三四五六七八九十两几]*家(?:公司|企业|上市公司)", question
+        )
     )
 
 
-def _infer_query_type_from_question(question: str) -> QueryType | None:
-    if any(keyword in question for keyword in ["对比", "比较", "相比", "差异", "变化", "增长率如何"]):
-        return QueryType.COMPARISON
+def _infer_query_type_from_question(question: str) -> schemas_chat.QueryType | None:
+    if any(
+        keyword in question
+        for keyword in ["对比", "比较", "相比", "差异", "变化", "增长率如何"]
+    ):
+        return schemas_chat.QueryType.COMPARISON
     if any(keyword in question for keyword in AGGREGATION_RESULT_KEYWORDS):
-        return QueryType.RANKING
+        return schemas_chat.QueryType.RANKING
     if any(keyword in question for keyword in ["趋势", "近几年", "近三年", "近五年"]):
-        return QueryType.TREND
+        return schemas_chat.QueryType.TREND
     return None
 
 
-def _is_business_definition_followup(intent: IntentResult) -> bool:
+def _is_business_definition_followup(intent: schemas_chat.IntentResult) -> bool:
     question = intent.question or ""
     return bool(
         _detect_business_definition_needed(question)
         and _is_business_definition_response(question)
-        and intent.query_type == QueryType.RANKING
+        and intent.query_type == schemas_chat.QueryType.RANKING
         and intent.company is None
         and intent.metric is not None
     )
 
 
-def _repair_intent_from_question(intent: IntentResult) -> IntentResult:
+def _repair_intent_from_question(
+    intent: schemas_chat.IntentResult,
+) -> schemas_chat.IntentResult:
     question = intent.question or ""
     if not question:
         return intent
@@ -1585,32 +1603,35 @@ def _repair_intent_from_question(intent: IntentResult) -> IntentResult:
             patched_intent.metric = inferred_metrics
 
     business_def = _detect_business_definition_needed(question)
-    if business_def and _is_business_definition_response(question) and not patched_intent.metric:
+    if (
+        business_def
+        and _is_business_definition_response(question)
+        and not patched_intent.metric
+    ):
         fallback_metric = _get_metric_by_field(business_def.get("fallback_metric"))
         if fallback_metric:
             patched_intent.metric = fallback_metric
 
-    if (
-        patched_intent.query_type is None
-        or (
-            patched_intent.query_type == QueryType.SINGLE_VALUE
-            and _is_aggregation_collection_question(question)
-        )
+    if patched_intent.query_type is None or (
+        patched_intent.query_type == schemas_chat.QueryType.SINGLE_VALUE
+        and _is_aggregation_collection_question(question)
     ):
         inferred_query_type = _infer_query_type_from_question(question)
         if inferred_query_type:
             patched_intent.query_type = inferred_query_type
 
     if _is_aggregation_collection_question(question):
-        patched_intent.capability = QueryCapability.AGGREGATION
+        patched_intent.capability = schemas_chat.QueryCapability.AGGREGATION
 
-    if not patched_intent.time_range and _is_business_definition_followup(patched_intent):
+    if not patched_intent.time_range and _is_business_definition_followup(
+        patched_intent
+    ):
         patched_intent.time_range = dict(DEFAULT_LATEST_TIME_RANGE)
 
     if (
         not patched_intent.time_range
         and _is_tcm_contest_universe_question(question)
-        and patched_intent.query_type != QueryType.TREND
+        and patched_intent.query_type != schemas_chat.QueryType.TREND
     ):
         patched_intent.time_range = dict(DEFAULT_LATEST_TIME_RANGE)
 
@@ -1620,9 +1641,9 @@ def _repair_intent_from_question(intent: IntentResult) -> IntentResult:
             patched_intent.metric,
             inferred_metrics,
         )
-        patched_intent.query_type = QueryType.RANKING
-        patched_intent.capability = QueryCapability.CROSS_TABLE
-        patched_intent.derived_metric_type = DerivedMetricType.RATIO
+        patched_intent.query_type = schemas_chat.QueryType.RANKING
+        patched_intent.capability = schemas_chat.QueryCapability.CROSS_TABLE
+        patched_intent.derived_metric_type = schemas_chat.DerivedMetricType.RATIO
 
         ranking_time_range, calculation_time_range = (
             _infer_cross_table_topn_ratio_time_ranges(
@@ -1655,7 +1676,9 @@ def _load_derived_metrics_config() -> dict:
         return {}
 
 
-def _build_company_filter(intent: IntentResult, table_alias: str = "") -> str:
+def _build_company_filter(
+    intent: schemas_chat.IntentResult, table_alias: str = ""
+) -> str:
     """构建公司筛选条件
 
     Args:
@@ -1682,8 +1705,8 @@ def _build_company_filter(intent: IntentResult, table_alias: str = "") -> str:
 
 
 def _generate_derived_metric_sql(
-    intent: IntentResult,
-    derived_type: DerivedMetricType,
+    intent: schemas_chat.IntentResult,
+    derived_type: schemas_chat.DerivedMetricType,
 ) -> str | None:
     """根据派生指标类型生成SQL模板"""
     config = _load_derived_metrics_config()
@@ -1707,7 +1730,8 @@ def _generate_derived_metric_sql(
     comparison_points = _extract_comparison_time_points(time_range)
 
     if isinstance(report_year, list) and not (
-        intent.query_type == QueryType.COMPARISON and len(comparison_points) == 2
+        intent.query_type == schemas_chat.QueryType.COMPARISON
+        and len(comparison_points) == 2
     ):
         logger.warning(
             "report_year为数组格式 %s，派生指标模板不支持多年查询，返回None让LLM生成SQL",
@@ -1716,9 +1740,9 @@ def _generate_derived_metric_sql(
         return None
 
     JOIN_DERIVED_TYPES = {
-        DerivedMetricType.YOY_GROWTH,
-        DerivedMetricType.QOQ_GROWTH,
-        DerivedMetricType.DIFFERENCE,
+        schemas_chat.DerivedMetricType.YOY_GROWTH,
+        schemas_chat.DerivedMetricType.QOQ_GROWTH,
+        schemas_chat.DerivedMetricType.DIFFERENCE,
     }
     table_alias = "t1" if derived_type in JOIN_DERIVED_TYPES else ""
     company_filter = _build_company_filter(intent, table_alias=table_alias)
@@ -1731,7 +1755,7 @@ def _generate_derived_metric_sql(
     sql_template = template_config.get("sql_template", "")
 
     try:
-        if derived_type == DerivedMetricType.YOY_GROWTH:
+        if derived_type == schemas_chat.DerivedMetricType.YOY_GROWTH:
             return sql_template.format(
                 metric_field=metric_field,
                 table_name=table_name,
@@ -1740,10 +1764,10 @@ def _generate_derived_metric_sql(
                 report_period=report_period,
             )
 
-        elif derived_type == DerivedMetricType.QOQ_GROWTH:
+        elif derived_type == schemas_chat.DerivedMetricType.QOQ_GROWTH:
             period_sequence = template_config.get("period_sequence", {})
             if (
-                intent.query_type == QueryType.COMPARISON
+                intent.query_type == schemas_chat.QueryType.COMPARISON
                 and len(comparison_points) == 2
             ):
                 comparison_sql = _generate_qoq_comparison_sql(
@@ -1769,7 +1793,7 @@ def _generate_derived_metric_sql(
                 prev_period=period_info.get("prev_period", "Q1"),
             )
 
-        elif derived_type == DerivedMetricType.CAGR:
+        elif derived_type == schemas_chat.DerivedMetricType.CAGR:
             start_year = report_year - 3 if isinstance(report_year, int) else 2022
             return sql_template.format(
                 metric_field=metric_field,
@@ -1780,7 +1804,7 @@ def _generate_derived_metric_sql(
                 report_period=report_period,
             )
 
-        elif derived_type == DerivedMetricType.RATIO:
+        elif derived_type == schemas_chat.DerivedMetricType.RATIO:
             common_ratios = template_config.get("common_ratios", {})
             ratio_config = None
             for ratio_key, ratio_info in common_ratios.items():
@@ -1801,7 +1825,7 @@ def _generate_derived_metric_sql(
                 )
             return None
 
-        elif derived_type == DerivedMetricType.INDUSTRY_AVG:
+        elif derived_type == schemas_chat.DerivedMetricType.INDUSTRY_AVG:
             metric_name = metric.get("display_name", metric_field)
             return sql_template.format(
                 metric_field=metric_field,
@@ -1811,7 +1835,7 @@ def _generate_derived_metric_sql(
                 report_period=report_period,
             )
 
-        elif derived_type == DerivedMetricType.MEDIAN:
+        elif derived_type == schemas_chat.DerivedMetricType.MEDIAN:
             return sql_template.format(
                 metric_field=metric_field,
                 table_name=table_name,
@@ -1819,7 +1843,7 @@ def _generate_derived_metric_sql(
                 report_period=report_period,
             )
 
-        elif derived_type == DerivedMetricType.DIFFERENCE:
+        elif derived_type == schemas_chat.DerivedMetricType.DIFFERENCE:
             if "," in metric_field or "," in table_name:
                 return None
             return sql_template.format(
@@ -1830,7 +1854,7 @@ def _generate_derived_metric_sql(
                 report_period=report_period,
             )
 
-        elif derived_type == DerivedMetricType.CORRELATION:
+        elif derived_type == schemas_chat.DerivedMetricType.CORRELATION:
             numeric_cols = [metric_field]
             if len(numeric_cols) < 2:
                 return None
@@ -1852,7 +1876,7 @@ def _generate_derived_metric_sql(
         return None
 
 
-def _detect_derived_metric(question: str) -> DerivedMetricType | None:
+def _detect_derived_metric(question: str) -> schemas_chat.DerivedMetricType | None:
     """检测问题中是否包含派生指标关键词"""
     for metric_type, keywords in DERIVED_METRIC_KEYWORDS.items():
         for keyword in keywords:
@@ -1864,8 +1888,17 @@ def _detect_derived_metric(question: str) -> DerivedMetricType | None:
 def _contains_continuity_keyword(question: str) -> bool:
     """检测问题中是否包含连续性关键词"""
     continuity_keywords = [
-        "连续", "均超过", "均低于", "均满足", "都是", "全部", "每一",
-        "连续N个", "连续N年", "连续N季度", "连续N期",
+        "连续",
+        "均超过",
+        "均低于",
+        "均满足",
+        "都是",
+        "全部",
+        "每一",
+        "连续N个",
+        "连续N年",
+        "连续N季度",
+        "连续N期",
     ]
     for keyword in continuity_keywords:
         if keyword in question:
@@ -1873,57 +1906,64 @@ def _contains_continuity_keyword(question: str) -> bool:
     return False
 
 
-def _generate_continuity_sql(intent: IntentResult) -> str | None:
+def _generate_continuity_sql(intent: schemas_chat.IntentResult) -> str | None:
     """生成连续性查询SQL，处理'连续N期满足某条件'的查询"""
     continuity_cfg = intent.continuity_config or {}
     period_count = continuity_cfg.get("period_count")
     condition = continuity_cfg.get("condition")
     start_period = continuity_cfg.get("start_period")
     end_period = continuity_cfg.get("end_period")
-    
+
     first_metric = intent.get_first_metric()
     if not first_metric:
         return None
-    
+
     metric_field = first_metric.get("field", "")
     table_name = first_metric.get("table", "core_performance_indicators_sheet")
-    
+
     if not metric_field or not table_name:
         return None
-    
+
     if not period_count:
         import re
+
         question = intent.question or ""
-        match = re.search(r'连续(\d+)个', question)
+        match = re.search(r"连续(\d+)个", question)
         if match:
             period_count = int(match.group(1))
         else:
-            match = re.search(r'连续(\d+)', question)
+            match = re.search(r"连续(\d+)", question)
             if match:
                 period_count = int(match.group(1))
-    
+
     if not period_count:
         period_count = 4
-    
+
     if not start_period and intent.time_range:
         start_period = intent.time_range
-    
+
     if not end_period and intent.time_range:
         end_period = intent.time_range
-    
-    start_year = start_period.get("report_year") if isinstance(start_period, dict) else None
-    start_period_val = start_period.get("report_period") if isinstance(start_period, dict) else None
+
+    start_year = (
+        start_period.get("report_year") if isinstance(start_period, dict) else None
+    )
+    start_period_val = (
+        start_period.get("report_period") if isinstance(start_period, dict) else None
+    )
     end_year = end_period.get("report_year") if isinstance(end_period, dict) else None
-    end_period_val = end_period.get("report_period") if isinstance(end_period, dict) else None
-    
+    end_period_val = (
+        end_period.get("report_period") if isinstance(end_period, dict) else None
+    )
+
     if not start_year:
         start_year = 2022
     if not end_year:
         end_year = 2025
-    
+
     if not condition:
         condition = f"{metric_field} IS NOT NULL"
-    
+
     period_order_case = """
         CASE report_period 
             WHEN 'Q1' THEN 1 
@@ -1932,7 +1972,7 @@ def _generate_continuity_sql(intent: IntentResult) -> str | None:
             WHEN 'FY' THEN 4 
         END
     """
-    
+
     sql = f"""
 WITH qualified_periods AS (
     SELECT 
@@ -1969,7 +2009,7 @@ INNER JOIN company_continuous_count c
     ON q.stock_code = c.stock_code
 ORDER BY q.stock_code, q.report_year, {period_order_case}
 """.strip()
-    
+
     return sql
 
 
@@ -2016,7 +2056,7 @@ def _detect_business_definition_needed(question: str) -> dict | None:
 
 def _handle_business_definition_clarification(
     question: str,
-    intent: IntentResult,
+    intent: schemas_chat.IntentResult,
 ) -> tuple[bool, str]:
     """处理业务定义澄清，返回(是否需要澄清, 澄清问题或空字符串)"""
     business_def = _detect_business_definition_needed(question)
@@ -2046,8 +2086,8 @@ def _handle_business_definition_clarification(
 def _classify_query_capability(
     question: str,
     metric: dict | None,
-    derived_metric_type: DerivedMetricType | None,
-) -> QueryCapability:
+    derived_metric_type: schemas_chat.DerivedMetricType | None,
+) -> schemas_chat.QueryCapability:
     """分类查询能力
 
     返回逻辑：
@@ -2061,19 +2101,19 @@ def _classify_query_capability(
     if unsupported_keyword:
         # 有metric时为部分支持，无metric时为完全不支持
         if metric is not None:
-            return QueryCapability.PARTIAL_SUPPORT
-        return QueryCapability.UNSUPPORTED
+            return schemas_chat.QueryCapability.PARTIAL_SUPPORT
+        return schemas_chat.QueryCapability.UNSUPPORTED
 
     if _is_aggregation_collection_question(question):
-        return QueryCapability.AGGREGATION
+        return schemas_chat.QueryCapability.AGGREGATION
 
     if derived_metric_type:
-        return QueryCapability.DERIVED_METRIC
+        return schemas_chat.QueryCapability.DERIVED_METRIC
 
     if metric is None:
-        return QueryCapability.DIRECT_FIELD
+        return schemas_chat.QueryCapability.DIRECT_FIELD
 
-    return QueryCapability.DIRECT_FIELD
+    return schemas_chat.QueryCapability.DIRECT_FIELD
 
 
 def _convert_path_to_url(file_path: str) -> str:
@@ -2189,21 +2229,23 @@ def _process_chat_message(
     db: Session,
     question_id: str | None = None,
     chart_sequence: int = 1,
-) -> ChatResponse:
+) -> schemas_chat.ChatResponse:
     if session_id is None:
         session_id = str(uuid.uuid4())
-        chat_session = ChatSession(id=session_id, status=0, context_slots={})
+        chat_session = models_chat_session.ChatSession(
+            id=session_id, status=0, context_slots={}
+        )
         db.add(chat_session)
         db.flush()
         logger.info("创建新会话: session_id=%s", session_id)
     else:
-        chat_session = db.get(ChatSession, session_id)
+        chat_session = db.get(models_chat_session.ChatSession, session_id)
         if chat_session is None:
             raise ServiceException(
                 ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}"
             )
 
-    user_message = ChatMessage(
+    user_message = models_chat_message.ChatMessage(
         session_id=session_id,
         role="user",
         content=question,
@@ -2228,7 +2270,7 @@ def _process_chat_message(
             unsupported_keyword, "当前数据源不支持该查询"
         )
         unsupported_msg = f"抱歉，{hint}。请尝试其他问题或换一种表述方式。"
-        assistant_message = ChatMessage(
+        assistant_message = models_chat_message.ChatMessage(
             session_id=session_id,
             role="assistant",
             content=unsupported_msg,
@@ -2240,9 +2282,9 @@ def _process_chat_message(
         chat_session.context_slots = intent.model_dump()
         _commit_or_raise(db)
 
-        return ChatResponse(
+        return schemas_chat.ChatResponse(
             session_id=session_id,
-            answer=AnswerContent(content=unsupported_msg),
+            answer=schemas_chat.AnswerContent(content=unsupported_msg),
             need_clarification=False,
             sql=None,
         )
@@ -2262,7 +2304,7 @@ def _process_chat_message(
         business_clarification_msg = ""
 
     if need_business_clarification:
-        assistant_message = ChatMessage(
+        assistant_message = models_chat_message.ChatMessage(
             session_id=session_id,
             role="assistant",
             content=business_clarification_msg,
@@ -2274,9 +2316,9 @@ def _process_chat_message(
         chat_session.context_slots = intent.model_dump()
         _commit_or_raise(db)
 
-        return ChatResponse(
+        return schemas_chat.ChatResponse(
             session_id=session_id,
-            answer=AnswerContent(content=business_clarification_msg),
+            answer=schemas_chat.AnswerContent(content=business_clarification_msg),
             need_clarification=True,
             sql=None,
         )
@@ -2284,7 +2326,7 @@ def _process_chat_message(
     missing_slots = _check_missing_slots(intent)
     if missing_slots:
         clarification = _generate_clarification(missing_slots, intent)
-        assistant_message = ChatMessage(
+        assistant_message = models_chat_message.ChatMessage(
             session_id=session_id,
             role="assistant",
             content=clarification,
@@ -2296,9 +2338,9 @@ def _process_chat_message(
         chat_session.context_slots = intent.model_dump()
         _commit_or_raise(db)
 
-        return ChatResponse(
+        return schemas_chat.ChatResponse(
             session_id=session_id,
-            answer=AnswerContent(content=clarification),
+            answer=schemas_chat.AnswerContent(content=clarification),
             need_clarification=True,
             sql=None,
         )
@@ -2355,11 +2397,19 @@ def _process_chat_message(
                 system_prompt = sql_config.get("system_prompt", "").replace(
                     "{schema_ddl}", schema_ddl
                 )
-                user_prompt = sql_config.get("user_prompt_template", "").replace(
-                    "{intent_json}", json.dumps(fallback_intent, ensure_ascii=False)
-                ).replace(
-                    "{derived_metric_type}",
-                    intent.derived_metric_type.value if intent.derived_metric_type else "无",
+                user_prompt = (
+                    sql_config.get("user_prompt_template", "")
+                    .replace(
+                        "{intent_json}", json.dumps(fallback_intent, ensure_ascii=False)
+                    )
+                    .replace(
+                        "{derived_metric_type}",
+                        (
+                            intent.derived_metric_type.value
+                            if intent.derived_metric_type
+                            else "无"
+                        ),
+                    )
                 )
                 response_text = _invoke_llm(
                     system_prompt, user_prompt, max_tokens=2048, temperature=0.0
@@ -2391,7 +2441,7 @@ def _process_chat_message(
 
     image_list = [_convert_path_to_url(chart_path)] if chart_path else []
 
-    assistant_message = ChatMessage(
+    assistant_message = models_chat_message.ChatMessage(
         session_id=session_id,
         role="assistant",
         content=answer_text,
@@ -2410,16 +2460,18 @@ def _process_chat_message(
     chat_session.context_slots = context_slots_to_save
     _commit_or_raise(db)
 
-    return ChatResponse(
+    return schemas_chat.ChatResponse(
         session_id=session_id,
-        answer=AnswerContent(content=answer_text, image=image_list),
+        answer=schemas_chat.AnswerContent(content=answer_text, image=image_list),
         need_clarification=False,
         sql=sql,
         chart_type=chart_type,
     )
 
 
-def _parse_intent(question: str, context_slots: dict, db: Session) -> IntentResult:
+def _parse_intent(
+    question: str, context_slots: dict, db: Session
+) -> schemas_chat.IntentResult:
     config = _get_chat_config()
     intent_config = config.get("intent_parse", {})
 
@@ -2436,14 +2488,18 @@ def _parse_intent(question: str, context_slots: dict, db: Session) -> IntentResu
     current_metric = context_slots.get("metric", "无")
     current_time = context_slots.get("time_range", "无")
 
-    system_prompt = intent_config.get("system_prompt", "").replace(
-        "{schema_info}", schema_info
-    ).replace("{company_list}", company_list)
-    user_prompt = intent_config.get("user_prompt_template", "").replace(
-        "{question}", question
-    ).replace("{current_company}", str(current_company)).replace(
-        "{current_metric}", str(current_metric)
-    ).replace("{current_time}", str(current_time))
+    system_prompt = (
+        intent_config.get("system_prompt", "")
+        .replace("{schema_info}", schema_info)
+        .replace("{company_list}", company_list)
+    )
+    user_prompt = (
+        intent_config.get("user_prompt_template", "")
+        .replace("{question}", question)
+        .replace("{current_company}", str(current_company))
+        .replace("{current_metric}", str(current_metric))
+        .replace("{current_time}", str(current_time))
+    )
 
     response_text = _invoke_llm(
         system_prompt, user_prompt, max_tokens=32768, temperature=0.0
@@ -2453,7 +2509,7 @@ def _parse_intent(question: str, context_slots: dict, db: Session) -> IntentResu
     parsed = _extract_json_from_response(response_text)
     if parsed is None:
         logger.warning("意图解析返回非JSON，使用默认值")
-        return IntentResult(
+        return schemas_chat.IntentResult(
             confidence=0.0, missing_slots=["company", "metric", "time_range"]
         )
 
@@ -2461,9 +2517,9 @@ def _parse_intent(question: str, context_slots: dict, db: Session) -> IntentResu
         query_type = None
         if parsed.get("query_type"):
             try:
-                query_type = QueryType(parsed["query_type"])
+                query_type = schemas_chat.QueryType(parsed["query_type"])
             except ValueError:
-                query_type = QueryType.SINGLE_VALUE
+                query_type = schemas_chat.QueryType.SINGLE_VALUE
 
         company_data = parsed.get("company")
         if company_data is not None:
@@ -2500,10 +2556,14 @@ def _parse_intent(question: str, context_slots: dict, db: Session) -> IntentResu
             )
         elif isinstance(metric_data, dict):
             metric_field = (
-                metric_data.get("field", "") if isinstance(metric_data.get("field"), str) else ""
+                metric_data.get("field", "")
+                if isinstance(metric_data.get("field"), str)
+                else ""
             )
             metric_table = (
-                metric_data.get("table", "") if isinstance(metric_data.get("table"), str) else ""
+                metric_data.get("table", "")
+                if isinstance(metric_data.get("table"), str)
+                else ""
             )
             has_component_fields = metric_data.get("component_fields") is not None
         else:
@@ -2529,7 +2589,7 @@ def _parse_intent(question: str, context_slots: dict, db: Session) -> IntentResu
             question, metric_data, derived_metric_type
         )
 
-        return IntentResult(
+        return schemas_chat.IntentResult(
             company=company_data,
             metric=metric_data,
             time_range=_normalize_time_range(parsed.get("time_range")),
@@ -2548,7 +2608,7 @@ def _parse_intent(question: str, context_slots: dict, db: Session) -> IntentResu
         logger.warning("意图解析结果构造失败: %s", exc)
         derived_metric_type = _detect_derived_metric(question)
         capability = _classify_query_capability(question, None, derived_metric_type)
-        return IntentResult(
+        return schemas_chat.IntentResult(
             capability=capability,
             derived_metric_type=derived_metric_type,
             confidence=0.0,
@@ -2557,7 +2617,7 @@ def _parse_intent(question: str, context_slots: dict, db: Session) -> IntentResu
         )
 
 
-def _check_missing_slots(intent: IntentResult) -> list[str]:
+def _check_missing_slots(intent: schemas_chat.IntentResult) -> list[str]:
     """检查槽位缺失情况，根据查询类型动态判断必需槽位"""
     missing = []
     question = intent.question or ""
@@ -2584,35 +2644,38 @@ def _check_missing_slots(intent: IntentResult) -> list[str]:
         return missing
 
     # 集合查询场景：ranking、comparison、聚合问题不要求company槽位
-    is_collection_query = intent.query_type in [QueryType.RANKING, QueryType.COMPARISON]
+    is_collection_query = intent.query_type in [
+        schemas_chat.QueryType.RANKING,
+        schemas_chat.QueryType.COMPARISON,
+    ]
     if is_aggregation_question:
         is_collection_query = True
 
-    if intent.query_type == QueryType.SINGLE_VALUE:
+    if intent.query_type == schemas_chat.QueryType.SINGLE_VALUE:
         if not is_collection_query and not has_company:
             missing.append("company")
         if not intent.metric:
             missing.append("metric")
         if not intent.time_range:
             missing.append("time_range")
-    elif intent.query_type == QueryType.TREND:
+    elif intent.query_type == schemas_chat.QueryType.TREND:
         if not is_collection_query and not has_company:
             missing.append("company")
         if not intent.metric:
             missing.append("metric")
         if not intent.time_range:
             missing.append("time_range_for_trend")
-    elif intent.query_type == QueryType.COMPARISON:
+    elif intent.query_type == schemas_chat.QueryType.COMPARISON:
         if not intent.metric:
             missing.append("metric")
         if not intent.time_range:
             missing.append("time_range")
-    elif intent.query_type == QueryType.RANKING:
+    elif intent.query_type == schemas_chat.QueryType.RANKING:
         if not intent.metric:
             missing.append("metric")
         if not intent.time_range:
             missing.append("time_range")
-    elif intent.query_type == QueryType.CONTINUITY:
+    elif intent.query_type == schemas_chat.QueryType.CONTINUITY:
         # 连续性查询需要：metric、time_range（或continuity_config中的时间范围）
         if not intent.metric:
             missing.append("metric")
@@ -2633,7 +2696,9 @@ def _check_missing_slots(intent: IntentResult) -> list[str]:
     return missing
 
 
-def _generate_clarification(missing_slots: list[str], intent: IntentResult) -> str:
+def _generate_clarification(
+    missing_slots: list[str], intent: schemas_chat.IntentResult
+) -> str:
     config = _get_chat_config()
     templates = config.get("clarification", {}).get("templates", {})
 
@@ -2654,7 +2719,7 @@ def _generate_clarification(missing_slots: list[str], intent: IntentResult) -> s
     return " ".join(parts)
 
 
-def _enrich_clarification(template: str, intent: IntentResult) -> str:
+def _enrich_clarification(template: str, intent: schemas_chat.IntentResult) -> str:
     context_parts = []
 
     if intent.company is not None:
@@ -2685,7 +2750,7 @@ def _enrich_clarification(template: str, intent: IntentResult) -> str:
     return template
 
 
-def _generate_sql(intent: IntentResult, db: Session) -> str:
+def _generate_sql(intent: schemas_chat.IntentResult, db: Session) -> str:
     first_metric = intent.get_first_metric()
     metric_field = first_metric.get("field", "") if first_metric else ""
     is_prestored_derived = metric_field in PRESTORED_DERIVED_FIELDS
@@ -2700,7 +2765,7 @@ def _generate_sql(intent: IntentResult, db: Session) -> str:
         logger.info("使用跨表TopN占比模板生成SQL")
         return cross_table_topn_ratio_sql
 
-    if intent.query_type == QueryType.CONTINUITY:
+    if intent.query_type == schemas_chat.QueryType.CONTINUITY:
         continuity_sql = _generate_continuity_sql(intent)
         if continuity_sql:
             logger.info("使用连续性查询模板生成SQL")
@@ -2710,7 +2775,7 @@ def _generate_sql(intent: IntentResult, db: Session) -> str:
         intent.derived_metric_type
         and intent.is_derived_query()
         and not is_prestored_derived
-        and intent.capability != QueryCapability.AGGREGATION
+        and intent.capability != schemas_chat.QueryCapability.AGGREGATION
     ):
         template_sql = _generate_derived_metric_sql(intent, intent.derived_metric_type)
         if template_sql:
@@ -2732,9 +2797,11 @@ def _generate_sql(intent: IntentResult, db: Session) -> str:
     system_prompt = sql_config.get("system_prompt", "").replace(
         "{schema_ddl}", schema_ddl
     )
-    user_prompt = sql_config.get("user_prompt_template", "").replace(
-        "{intent_json}", intent_json
-    ).replace("{derived_metric_type}", derived_metric_type_str)
+    user_prompt = (
+        sql_config.get("user_prompt_template", "")
+        .replace("{intent_json}", intent_json)
+        .replace("{derived_metric_type}", derived_metric_type_str)
+    )
 
     response_text = _invoke_llm(
         system_prompt, user_prompt, max_tokens=2048, temperature=0.0
@@ -2752,9 +2819,7 @@ def _extract_sql_from_response(response_text: str) -> str | None:
         r"```(?:sql)?\s*([\s\S]*?)```", response_text, re.IGNORECASE
     )
     cleaned_text = (
-        code_block_match.group(1).strip()
-        if code_block_match
-        else response_text.strip()
+        code_block_match.group(1).strip() if code_block_match else response_text.strip()
     )
 
     sql_match = re.search(
@@ -2883,7 +2948,7 @@ def _normalize_sql_for_mysql_compatibility(sql: str) -> str:
     return rewritten_sql
 
 
-def _normalize_sql_for_question(sql: str, intent: IntentResult) -> str:
+def _normalize_sql_for_question(sql: str, intent: schemas_chat.IntentResult) -> str:
     question = intent.question or ""
     normalized_sql = _normalize_sql_for_mysql_compatibility(sql.strip())
 
@@ -2929,9 +2994,7 @@ def _ensure_non_empty_qa_pairs(
     return [
         {
             "Q": fallback_question,
-            "A": {
-                "content": "回答生成失败：未生成任何有效轮次结果，请重新执行该题。"
-            },
+            "A": {"content": "回答生成失败：未生成任何有效轮次结果，请重新执行该题。"},
         }
     ]
 
@@ -2940,7 +3003,7 @@ def _validate_sql(sql: str) -> tuple[bool, str]:
     stripped_sql = sql.strip()
     sql_upper = stripped_sql.upper()
 
-    for keyword in FORBIDDEN_KEYWORDS:
+    for keyword in schemas_chat.FORBIDDEN_KEYWORDS:
         pattern = r"\b" + keyword + r"\b"
         if re.search(pattern, sql_upper):
             return False, f"SQL包含禁止关键字: {keyword}"
@@ -2948,7 +3011,9 @@ def _validate_sql(sql: str) -> tuple[bool, str]:
     if not re.match(r"(?i)^(WITH|SELECT)\b", stripped_sql):
         return False, "SQL必须以SELECT或WITH开头"
 
-    allowed_table_names = {table_name.lower() for table_name in ALLOWED_TABLES}
+    allowed_table_names = {
+        table_name.lower() for table_name in schemas_chat.ALLOWED_TABLES
+    }
     allowed_table_names.update(_extract_declared_cte_names(stripped_sql))
 
     found_tables = re.findall(r"(?i)\b(?:FROM|JOIN)\s+(\w+)", stripped_sql)
@@ -3060,10 +3125,7 @@ def _median_decimal(values: list[Decimal]) -> Decimal | None:
 
 def _is_ten_thousand_unit_result_column(column: str) -> bool:
     normalized_column = _normalize_result_column_name(column)
-    return (
-        normalized_column in TEN_THOUSAND_UNIT_COLUMN_NAMES
-        or "万元" in str(column)
-    )
+    return normalized_column in TEN_THOUSAND_UNIT_COLUMN_NAMES or "万元" in str(column)
 
 
 def _normalize_abnormal_unit_rows(rows: list[dict]) -> list[dict]:
@@ -3081,17 +3143,13 @@ def _normalize_abnormal_unit_rows(rows: list[dict]) -> list[dict]:
                 all_columns.append(column)
 
     candidate_columns = [
-        column
-        for column in all_columns
-        if _is_ten_thousand_unit_result_column(column)
+        column for column in all_columns if _is_ten_thousand_unit_result_column(column)
     ]
 
     for column in candidate_columns:
         column_values = [_to_decimal_value(row.get(column)) for row in normalized_rows]
         non_zero_values = [
-            abs(value)
-            for value in column_values
-            if value is not None and value != 0
+            abs(value) for value in column_values if value is not None and value != 0
         ]
         if not non_zero_values:
             continue
@@ -3163,7 +3221,9 @@ def _apply_post_normalization_sql_adjustments(rows: list[dict], sql: str) -> lis
             where_clause,
         )
         for column, operator, raw_threshold in numeric_predicates:
-            if column not in result_columns or not _is_ten_thousand_unit_result_column(column):
+            if column not in result_columns or not _is_ten_thousand_unit_result_column(
+                column
+            ):
                 continue
 
             threshold = Decimal(raw_threshold)
@@ -3196,12 +3256,16 @@ def _apply_post_normalization_sql_adjustments(rows: list[dict], sql: str) -> lis
         if order_match:
             order_column = order_match.group(1)
             direction = (order_match.group(2) or "ASC").upper()
-            if order_column in result_columns and _is_ten_thousand_unit_result_column(order_column):
+            if order_column in result_columns and _is_ten_thousand_unit_result_column(
+                order_column
+            ):
                 adjusted_rows = sorted(
                     adjusted_rows,
-                    key=lambda row: _to_decimal_value(row.get(order_column))
-                    if _to_decimal_value(row.get(order_column)) is not None
-                    else Decimal("-Infinity"),
+                    key=lambda row: (
+                        _to_decimal_value(row.get(order_column))
+                        if _to_decimal_value(row.get(order_column)) is not None
+                        else Decimal("-Infinity")
+                    ),
                     reverse=direction == "DESC",
                 )
 
@@ -3211,7 +3275,7 @@ def _apply_post_normalization_sql_adjustments(rows: list[dict], sql: str) -> lis
 def _build_multi_metric_topn_intersection_answer(
     question: str,
     query_result: list[dict],
-    intent: IntentResult,
+    intent: schemas_chat.IntentResult,
 ) -> str | None:
     if not _is_multi_metric_topn_intersection_question(intent) or not query_result:
         return None
@@ -3308,12 +3372,14 @@ def _format_time_range_label(time_range: dict | None) -> str:
 def _build_cross_table_topn_ratio_answer(
     question: str,
     query_result: list[dict],
-    intent: IntentResult,
+    intent: schemas_chat.IntentResult,
 ) -> str | None:
     if not _is_cross_table_topn_ratio_question(intent.question or question):
         return None
 
-    ranking_label = _format_time_range_label(intent.ranking_time_range or intent.time_range)
+    ranking_label = _format_time_range_label(
+        intent.ranking_time_range or intent.time_range
+    )
     calculation_label = _format_time_range_label(
         intent.calculation_time_range or intent.time_range
     )
@@ -3391,7 +3457,9 @@ def _build_cross_table_topn_ratio_answer(
     return "\n".join(lines)
 
 
-def _build_answer(question: str, query_result: list[dict], intent: IntentResult) -> str:
+def _build_answer(
+    question: str, query_result: list[dict], intent: schemas_chat.IntentResult
+) -> str:
     structured_answer = _build_multi_metric_topn_intersection_answer(
         question, query_result, intent
     )
@@ -3526,8 +3594,8 @@ def _resolve_coreference(question: str, context_slots: dict) -> str:
 
 
 def _merge_context(
-    session_id: str, new_intent: IntentResult, context_slots: dict
-) -> IntentResult:
+    session_id: str, new_intent: schemas_chat.IntentResult, context_slots: dict
+) -> schemas_chat.IntentResult:
     if not context_slots:
         return new_intent
 
@@ -3560,12 +3628,12 @@ def _merge_context(
         if _is_valid_company(context_company):
             merged_company = context_company
 
-    merged_metric = _normalize_metric_payload(new_intent.metric) or _normalize_metric_payload(
-        context_slots.get("metric")
-    )
+    merged_metric = _normalize_metric_payload(
+        new_intent.metric
+    ) or _normalize_metric_payload(context_slots.get("metric"))
     merged_time_range = new_intent.time_range or context_slots.get("time_range")
-    merged_ranking_time_range = (
-        new_intent.ranking_time_range or context_slots.get("ranking_time_range")
+    merged_ranking_time_range = new_intent.ranking_time_range or context_slots.get(
+        "ranking_time_range"
     )
     merged_calculation_time_range = (
         new_intent.calculation_time_range or context_slots.get("calculation_time_range")
@@ -3574,7 +3642,7 @@ def _merge_context(
 
     if not merged_query_type and context_slots.get("query_type"):
         try:
-            merged_query_type = QueryType(context_slots["query_type"])
+            merged_query_type = schemas_chat.QueryType(context_slots["query_type"])
         except (ValueError, KeyError):
             pass
 
@@ -3600,14 +3668,16 @@ def _merge_context(
     merged_capability = new_intent.capability
     if not merged_capability and context_slots.get("capability"):
         try:
-            merged_capability = QueryCapability(context_slots["capability"])
+            merged_capability = schemas_chat.QueryCapability(
+                context_slots["capability"]
+            )
         except (ValueError, KeyError):
             pass
 
     merged_derived_metric_type = new_intent.derived_metric_type
     if not merged_derived_metric_type and context_slots.get("derived_metric_type"):
         try:
-            merged_derived_metric_type = DerivedMetricType(
+            merged_derived_metric_type = schemas_chat.DerivedMetricType(
                 context_slots["derived_metric_type"]
             )
         except (ValueError, KeyError):
@@ -3617,7 +3687,7 @@ def _merge_context(
     if not merged_last_result_companies and context_slots.get("last_result_companies"):
         merged_last_result_companies = context_slots.get("last_result_companies")
 
-    return IntentResult(
+    return schemas_chat.IntentResult(
         company=merged_company,
         metric=merged_metric,
         time_range=merged_time_range,
@@ -3692,19 +3762,19 @@ def _resolve_metric(metric_text: str) -> dict | None:
 def _get_chat_sessions(
     db: Session, page: int = 1, page_size: int = 10
 ) -> PaginatedResponse:
-    base_stmt = select(ChatSession).where(ChatSession.status == 0)
+    base_stmt = select(models_chat_session.ChatSession).where(
+        models_chat_session.ChatSession.status == 0
+    )
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
     offset = (page - 1) * page_size
-    records = (
-        db.scalars(
-            base_stmt.order_by(ChatSession.updated_at.desc())
-            .offset(offset)
-            .limit(page_size)
-        ).all()
-    )
+    records = db.scalars(
+        base_stmt.order_by(models_chat_session.ChatSession.updated_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    ).all()
 
     items = [
-        ChatSessionResponse(
+        schemas_chat.ChatSessionResponse(
             id=r.id,
             name=r.name,
             status=r.status,
@@ -3721,20 +3791,22 @@ def _get_chat_sessions(
     return PaginatedResponse(lists=items, pagination=pagination)
 
 
-def _get_chat_history(session_id: str, db: Session) -> list[ChatMessageResponse]:
-    chat_session = db.get(ChatSession, session_id)
+def _get_chat_history(
+    session_id: str, db: Session
+) -> list[schemas_chat.ChatMessageResponse]:
+    chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
 
     stmt = (
-        select(ChatMessage)
-        .where(ChatMessage.session_id == session_id)
-        .order_by(ChatMessage.created_at.asc())
+        select(models_chat_message.ChatMessage)
+        .where(models_chat_message.ChatMessage.session_id == session_id)
+        .order_by(models_chat_message.ChatMessage.created_at.asc())
     )
     messages = db.execute(stmt).scalars().all()
 
     return [
-        ChatMessageResponse(
+        schemas_chat.ChatMessageResponse(
             id=m.id,
             role=m.role,
             content=m.content,
@@ -3750,7 +3822,7 @@ def _get_chat_history(session_id: str, db: Session) -> list[ChatMessageResponse]
 
 
 def _close_chat_session(session_id: str, db: Session) -> bool:
-    chat_session = db.get(ChatSession, session_id)
+    chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
 
@@ -3763,11 +3835,13 @@ def _close_chat_session(session_id: str, db: Session) -> bool:
 def _delete_chat_session(session_id: str, db: Session) -> bool:
     import os
 
-    chat_session = db.get(ChatSession, session_id)
+    chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
 
-    stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
+    stmt = select(models_chat_message.ChatMessage).where(
+        models_chat_message.ChatMessage.session_id == session_id
+    )
     messages = db.execute(stmt).scalars().all()
 
     chart_dir = os.path.join(os.getcwd(), "result")
@@ -3793,7 +3867,7 @@ def _delete_chat_session(session_id: str, db: Session) -> bool:
 
 
 def _rename_chat_session(session_id: str, name: str, db: Session) -> bool:
-    chat_session = db.get(ChatSession, session_id)
+    chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
 
@@ -3859,7 +3933,11 @@ def _export_result_2(questions: list[dict], db: Session) -> str:
                         image_paths.append(f"./result/{filename}")
                         chart_sequence += 1
 
-                answer_content = response.answer.content if response.answer and response.answer.content else ""
+                answer_content = (
+                    response.answer.content
+                    if response.answer and response.answer.content
+                    else ""
+                )
                 if not answer_content:
                     answer_content = "回答内容为空"
 
@@ -3902,7 +3980,9 @@ def _export_result_2(questions: list[dict], db: Session) -> str:
                     round_idx,
                     str(exc),
                 )
-                error_msg = f"回答生成失败: {str(exc)}" if exc else "回答生成失败: 未知错误"
+                error_msg = (
+                    f"回答生成失败: {str(exc)}" if exc else "回答生成失败: 未知错误"
+                )
                 qa_pairs.append(
                     {
                         "Q": q_text,

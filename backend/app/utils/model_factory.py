@@ -15,21 +15,10 @@ class ModelFactory:
         self.default_chat_max_tokens = 32768
         self.default_chat_temperature = 0.1
 
-        logger.info(
-            "[ModelFactory] 初始化 Embedding 模型: model=%s, key长度=%d, key前4位=%s",
-            settings.EMBEDDING_MODEL,
-            len(settings.EMBEDDING_API_KEY) if settings.EMBEDDING_API_KEY else 0,
-            settings.EMBEDDING_API_KEY[:4] if settings.EMBEDDING_API_KEY else "EMPTY",
-        )
-
-        if not settings.EMBEDDING_API_KEY:
-            logger.error("[ModelFactory] EMBEDDING_API_KEY 为空，请检查环境变量配置")
-
         self.embedding_model = DashScopeEmbeddings(
             model=settings.EMBEDDING_MODEL,
             dashscope_api_key=settings.EMBEDDING_API_KEY,
         )
-        logger.info("[ModelFactory] DashScopeEmbeddings 初始化完成")
 
         self.chat_model = self.build_chat_model()
 

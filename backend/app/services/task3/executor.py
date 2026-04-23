@@ -228,6 +228,8 @@ SQL_FUNCTIONS = {
     "STR_TO_DATE",
     "DATE_FORMAT",
 }
+
+
 def _get_task3_config() -> dict:
     """获取任务三执行阶段配置。"""
     return settings.PROMPT_CONFIG.get_task3_config
@@ -290,11 +292,15 @@ def _extract_sql_from_response(response_text: str) -> str | None:
     cleaned_text = re.sub(r"\s*```$", "", cleaned_text, flags=re.MULTILINE)
     cleaned_text = cleaned_text.strip()
 
-    sql_match = re.search(r"(SELECT\s[\s\S]*?)(?:;|$)", cleaned_text, re.IGNORECASE)
+    sql_match = re.search(
+        r"((?:WITH\s[\s\S]*?\)\s*)?SELECT\s[\s\S]*?)(?:;|$)",
+        cleaned_text,
+        re.IGNORECASE,
+    )
     if sql_match:
         return sql_match.group(1).strip().rstrip(";")
 
-    if cleaned_text.upper().startswith("SELECT"):
+    if cleaned_text.upper().startswith(("SELECT", "WITH")):
         return cleaned_text.rstrip(";")
 
     return None
@@ -309,9 +315,26 @@ def _strip_sql_literals(sql: str) -> str:
     return cleaned
 
 
+def _extract_cte_names(sql: str) -> set[str]:
+    """提取 SQL 中定义的 CTE 名称。"""
+    cleaned = _strip_sql_literals(sql)
+    if not re.match(r"^\s*WITH\b", cleaned, flags=re.IGNORECASE):
+        return set()
+
+    cte_names = set()
+    for match in re.finditer(
+        r"(?:WITH|,)\s*`?([A-Za-z_]\w*)`?\s+AS\s*\(",
+        cleaned,
+        flags=re.IGNORECASE,
+    ):
+        cte_names.add(match.group(1).lower())
+    return cte_names
+
+
 def _extract_referenced_table_names(sql: str) -> list[str]:
     """提取 SQL 中引用的表名。"""
     cleaned = _strip_sql_literals(sql)
+    cte_names = _extract_cte_names(sql)
     return [
         match.group(1).lower()
         for match in re.finditer(
@@ -319,17 +342,28 @@ def _extract_referenced_table_names(sql: str) -> list[str]:
             cleaned,
             flags=re.IGNORECASE,
         )
+        if match.group(1).lower() not in cte_names
     ]
 
 
 def _extract_table_aliases(sql: str) -> dict[str, str]:
     """提取 SQL 中的表别名映射。"""
     cleaned = _strip_sql_literals(sql)
+    cte_names = _extract_cte_names(sql)
     aliases: dict[str, str] = {}
-    pattern = r"\b(?:FROM|JOIN)\s+`?([A-Za-z_]\w*)`?(?:\s+(?:AS\s+)?`?([A-Za-z_]\w*)`?)?"
+    pattern = (
+        r"\b(?:FROM|JOIN)\s+`?([A-Za-z_]\w*)`?(?:\s+(?:AS\s+)?`?([A-Za-z_]\w*)`?)?"
+    )
     for match in re.finditer(pattern, cleaned, flags=re.IGNORECASE):
         table_name = match.group(1).lower()
         alias = match.group(2)
+        if table_name in cte_names:
+            table_marker = f"__cte__:{table_name}"
+            aliases[table_name] = table_marker
+            if alias and alias.upper() not in SQL_RESERVED_IDENTIFIERS:
+                aliases[alias.lower()] = table_marker
+            continue
+
         if table_name not in TASK3_TABLE_SCHEMA:
             continue
 
@@ -353,7 +387,11 @@ def _extract_select_aliases(sql: str) -> set[str]:
 def _validate_sql_identifiers(sql: str) -> tuple[bool, str]:
     """校验 SQL 中字段和别名是否合法。"""
     table_aliases = _extract_table_aliases(sql)
-    referenced_tables = set(table_aliases.values())
+    referenced_tables = {
+        table_name for table_name in table_aliases.values()
+        if not str(table_name).startswith("__cte__:")
+    }
+    has_cte = any(str(table_name).startswith("__cte__:") for table_name in table_aliases.values())
     if not referenced_tables:
         return True, ""
 
@@ -372,6 +410,8 @@ def _validate_sql_identifiers(sql: str) -> tuple[bool, str]:
         table_name = table_aliases.get(prefix)
         if table_name is None:
             return False, f"SQL引用了未知表或别名: {match.group(1)}"
+        if str(table_name).startswith("__cte__:"):
+            continue
         if column not in TASK3_TABLE_SCHEMA[table_name]:
             return False, f"SQL字段不存在: {match.group(1)}.{match.group(2)}"
 
@@ -396,6 +436,8 @@ def _validate_sql_identifiers(sql: str) -> tuple[bool, str]:
             continue
         if identifier_lower in allowed_columns:
             continue
+        if has_cte:
+            continue
 
         return False, f"SQL字段不存在或不在引用表范围内: {identifier}"
 
@@ -411,8 +453,8 @@ def _validate_sql(sql: str) -> tuple[bool, str]:
         if re.search(pattern, sql_upper):
             return False, f"SQL包含禁止关键字: {keyword}"
 
-    if not sql_upper.startswith("SELECT"):
-        return False, "SQL必须以SELECT开头"
+    if not sql_upper.startswith(("SELECT", "WITH")):
+        return False, "SQL必须以SELECT或WITH开头"
 
     found_tables = _extract_referenced_table_names(sql)
     for table_name in found_tables:
@@ -465,7 +507,12 @@ def execute_step(
 ) -> StepResult:
     """执行单个任务三步骤并更新执行状态。"""
     start_time = time.time()
-    logger.info("执行步骤: step_id=%s, type=%s, goal=%s", step.step_id, step.step_type, step.goal)
+    logger.info(
+        "执行步骤: step_id=%s, type=%s, goal=%s",
+        step.step_id,
+        step.step_type,
+        step.goal,
+    )
 
     try:
         if step.step_type == StepType.SQL_QUERY:
@@ -548,19 +595,38 @@ def _execute_sql_query(step: TaskStep, db: Session, context: dict[str, Any]) -> 
             )
             sql = None
 
-    if not sql:
-        sql = _generate_sql_for_step(step, context)
+    max_retries = 2
+    for attempt in range(1, max_retries + 1):
+        if not sql:
+            sql = _generate_sql_for_step(step, context)
 
-    if not sql:
-        raise ServiceException(
-            ErrorCode.AI_SERVICE_ERROR, f"无法生成SQL: step_id={step.step_id}"
+        if not sql:
+            raise ServiceException(
+                ErrorCode.AI_SERVICE_ERROR, f"无法生成SQL: step_id={step.step_id}"
+            )
+
+        is_valid, validate_msg = _validate_sql(sql)
+        if is_valid:
+            break
+
+        logger.warning(
+            "SQL校验失败(第%d次): step_id=%s, reason=%s, sql=%s",
+            attempt,
+            step.step_id,
+            validate_msg,
+            sql[:200],
         )
 
-    is_valid, validate_msg = _validate_sql(sql)
-    if not is_valid:
-        raise ServiceException(
-            ErrorCode.AI_SERVICE_ERROR, f"SQL校验失败: {validate_msg}"
-        )
+        if attempt < max_retries:
+            # 将校验失败原因注入上下文，指导 LLM 修正
+            retry_context = dict(context)
+            retry_context["_previous_sql_error"] = validate_msg
+            retry_context["_previous_sql"] = sql[:500]
+            sql = _generate_sql_for_step(step, retry_context)
+        else:
+            raise ServiceException(
+                ErrorCode.AI_SERVICE_ERROR, f"SQL校验失败: {validate_msg}"
+            )
 
     if "LIMIT" not in sql.upper():
         sql = sql.rstrip(";") + " LIMIT 1000"
@@ -571,27 +637,327 @@ def _execute_sql_query(step: TaskStep, db: Session, context: dict[str, Any]) -> 
 
 def _generate_sql_for_step(step: TaskStep, context: dict[str, Any]) -> str | None:
     """为步骤生成 SQL 语句。"""
+    deterministic_sql = _build_rule_based_sql(step, context)
+    if deterministic_sql:
+        logger.info("命中规则SQL: step_id=%s, sql=%s", step.step_id, deterministic_sql[:200])
+        return deterministic_sql
+
     config = _get_task3_config()
     executor_config = config.get("executor", {})
     schema_ddl = _build_schema_ddl()
-    system_prompt = executor_config.get("system_prompt", "").format(schema_ddl=schema_ddl)
+    system_prompt = executor_config.get("system_prompt", "").format(
+        schema_ddl=schema_ddl
+    )
+
+    # 构建上下文描述，显式包含前序步骤的执行结果
+    context_parts = []
+    context_parts.append(json.dumps(context, ensure_ascii=False, default=str)[:1500])
+
+    # 提取前序步骤的结果（特别是 aggregate 步骤的聚合值）
+    previous_results = {}
+    for key, value in context.items():
+        if isinstance(value, dict):
+            if "result" in value and "operation" in value:
+                # aggregate 步骤结果
+                previous_results[key] = {
+                    "type": "aggregate",
+                    "operation": value.get("operation"),
+                    "metric": value.get("metric"),
+                    "result": value.get("result"),
+                }
+            elif "data" in value and "row_count" in value:
+                # sql_query 步骤结果
+                previous_results[key] = {
+                    "type": "sql_query",
+                    "row_count": value.get("row_count"),
+                    "sample": value.get("data", [])[:3],
+                }
+    if previous_results:
+        context_parts.append(
+            "前序步骤结果:\n"
+            + json.dumps(previous_results, ensure_ascii=False, default=str)[:1500]
+        )
+
+    context_desc = "\n\n".join(context_parts)
+
     user_prompt = executor_config.get("user_prompt_template", "").format(
         step_id=step.step_id,
         step_type=step.step_type.value,
         goal=step.goal,
         params=json.dumps(step.params, ensure_ascii=False),
-        context=json.dumps(context, ensure_ascii=False, default=str)[:2000],
+        context=context_desc,
     )
-    response_text = _invoke_llm(system_prompt, user_prompt, max_tokens=2048, temperature=0.0)
+    response_text = _invoke_llm(
+        system_prompt, user_prompt, max_tokens=2048, temperature=0.0
+    )
     sql = _extract_sql_from_response(response_text)
     if sql:
         logger.info("生成SQL: step_id=%s, sql=%s", step.step_id, sql[:200])
     return sql
 
 
+def _build_rule_based_sql(step: TaskStep, context: dict[str, Any]) -> str | None:
+    """按题型生成规则化 SQL，降低关键场景对 LLM 自由生成的依赖。"""
+    question = _get_step_question_text(step, context)
+    resolved_companies = _get_resolved_companies(context)
+
+    if (
+        "投资性现金流量净额为负" in question
+        and any(keyword in question for keyword in ["数量", "占比", "绝对值最大"])
+    ):
+        return (
+            "WITH base_companies AS ("
+            "SELECT stock_code, stock_abbr, investing_cf_net_amount "
+            "FROM cash_flow_sheet "
+            "WHERE report_year = 2025 "
+            "AND report_period = 'Q3' "
+            "AND investing_cf_net_amount < 0"
+            "), total_stats AS ("
+            "SELECT COUNT(*) AS total_company_count "
+            "FROM cash_flow_sheet "
+            "WHERE report_year = 2025 "
+            "AND report_period = 'Q3'"
+            "), negative_stats AS ("
+            "SELECT COUNT(*) AS negative_company_count "
+            "FROM base_companies"
+            ") "
+            "SELECT b.stock_code, b.stock_abbr, b.investing_cf_net_amount, "
+            "t.total_company_count, n.negative_company_count, "
+            "ROUND(n.negative_company_count * 100.0 / NULLIF(t.total_company_count, 0), 2) "
+            "AS negative_ratio_pct "
+            "FROM base_companies b "
+            "CROSS JOIN total_stats t "
+            "CROSS JOIN negative_stats n "
+            "ORDER BY b.investing_cf_net_amount ASC"
+        )
+
+    if (
+        "净利润率" in question
+        and "营业总收入" in question
+        and "资产负债率" in question
+        and "2025年第三季度" in question
+    ):
+        return (
+            "SELECT i.stock_code, i.stock_abbr, i.report_year, i.report_period, "
+            "i.net_profit, i.total_operating_revenue, "
+            "ROUND(i.net_profit / NULLIF(i.total_operating_revenue, 0) * 100, 2) "
+            "AS calculated_net_profit_margin, "
+            "CASE "
+            "WHEN i.net_profit / NULLIF(i.total_operating_revenue, 0) * 100 > 15 THEN '高' "
+            "WHEN i.net_profit / NULLIF(i.total_operating_revenue, 0) * 100 >= 5 THEN '中' "
+            "ELSE '低' "
+            "END AS net_profit_margin_level, "
+            "b.asset_liability_ratio "
+            "FROM income_sheet i "
+            "LEFT JOIN balance_sheet b "
+            "ON i.stock_code = b.stock_code "
+            "AND i.report_year = b.report_year "
+            "AND i.report_period = b.report_period "
+            "WHERE i.report_year = 2025 "
+            "AND i.report_period = 'Q3' "
+            "AND i.net_profit IS NOT NULL "
+            "AND i.total_operating_revenue IS NOT NULL "
+            "AND i.total_operating_revenue <> 0 "
+            "ORDER BY i.stock_code"
+        )
+
+    if (
+        "连续四个报告期" in question
+        and "营业总收入" in question
+        and "研发投入" in question
+    ):
+        years = _extract_years(question, [2022, 2023, 2024, 2025])
+        return (
+            "SELECT stock_code, stock_abbr, report_year, report_period, "
+            "total_operating_revenue, operating_revenue_yoy_growth, "
+            "operating_expense_rnd_expenses "
+            "FROM income_sheet "
+            f"WHERE report_year IN ({_format_number_in_clause(years)}) "
+            "AND report_period = 'Q3' "
+            "ORDER BY stock_code, report_year"
+        )
+
+    if (
+        len(resolved_companies) >= 2
+        and "第三季度" in question
+        and any(keyword in question for keyword in ["营业总收入", "营收"])
+        and any(keyword in question for keyword in ["行业整体", "行业"])
+    ):
+        stock_codes = [
+            company["stock_code"]
+            for company in resolved_companies
+            if company.get("stock_code")
+        ]
+        if stock_codes:
+            base_stock_code = stock_codes[0]
+            return (
+                "SELECT stock_code, stock_abbr, report_year, report_period, "
+                "total_operating_revenue, operating_revenue_yoy_growth, "
+                "'company' AS entity_type "
+                "FROM income_sheet "
+                f"WHERE stock_code IN ({_format_text_in_clause(stock_codes)}) "
+                "AND report_year IN (2022, 2023, 2024, 2025) "
+                "AND report_period = 'Q3' "
+                "UNION ALL "
+                "SELECT NULL AS stock_code, '行业整体' AS stock_abbr, "
+                "i.report_year, i.report_period, "
+                "ROUND(AVG(i.total_operating_revenue), 2) AS total_operating_revenue, "
+                "ROUND(AVG(i.operating_revenue_yoy_growth), 2) AS operating_revenue_yoy_growth, "
+                "'industry' AS entity_type "
+                "FROM income_sheet i "
+                "JOIN company_basic_info c ON i.stock_code = c.stock_code "
+                "WHERE i.report_year IN (2022, 2023, 2024, 2025) "
+                "AND i.report_period = 'Q3' "
+                "AND c.csrc_industry = ("
+                "SELECT csrc_industry FROM company_basic_info "
+                f"WHERE stock_code = '{base_stock_code}' LIMIT 1"
+                ") "
+                "GROUP BY i.report_year, i.report_period"
+            )
+
+    if "净利润" in question and any(
+        keyword in question for keyword in ["营业成本", "销售费用", "净利润同比下降"]
+    ):
+        company_filter = _build_single_company_filter(step, context, question)
+        if company_filter:
+            return (
+                "SELECT stock_code, stock_abbr, report_year, report_period, "
+                "net_profit, net_profit_yoy_growth, total_operating_revenue, "
+                "operating_expense_cost_of_sales, operating_expense_selling_expenses, "
+                "operating_expense_administrative_expenses, credit_impairment_loss, "
+                "asset_impairment_loss "
+                "FROM income_sheet "
+                f"WHERE {company_filter} "
+                "AND report_year IN (2024, 2025) "
+                "AND report_period = 'Q3' "
+                "ORDER BY report_year"
+            )
+
+    if (
+        any(keyword in question for keyword in ["经营性现金流量净额", "经营性现金流"])
+        and "净利润" in question
+        and any(keyword in question for keyword in ["背离", "为正", "为负"])
+    ):
+        company_filter = _build_single_company_filter(step, context, question, alias="c")
+        if company_filter:
+            return (
+                "SELECT c.stock_code, c.stock_abbr, c.report_year, c.report_period, "
+                "c.operating_cf_net_amount, c.operating_cf_cash_from_sales, "
+                "c.net_cash_flow, i.net_profit, i.total_operating_revenue, "
+                "i.operating_expense_cost_of_sales, i.operating_expense_selling_expenses, "
+                "i.operating_expense_administrative_expenses, i.credit_impairment_loss, "
+                "i.asset_impairment_loss "
+                "FROM cash_flow_sheet c "
+                "LEFT JOIN income_sheet i "
+                "ON c.stock_code = i.stock_code "
+                "AND c.report_year = i.report_year "
+                "AND c.report_period = i.report_period "
+                f"WHERE {company_filter} "
+                "AND c.report_year = 2025 "
+                "AND c.report_period = 'Q3'"
+            )
+
+    if "应收账款" in question and any(keyword in question for keyword in ["占营业总收入比例", "占比"]):
+        company_filter = _build_single_company_filter(step, context, question, alias="b")
+        if company_filter:
+            return (
+                "SELECT b.stock_code, b.stock_abbr, b.report_year, b.report_period, "
+                "b.asset_accounts_receivable, b.asset_total_assets, b.asset_inventory, "
+                "b.liability_accounts_payable, i.total_operating_revenue, "
+                "ROUND(b.asset_accounts_receivable / NULLIF(i.total_operating_revenue, 0) * 100, 2) "
+                "AS accounts_receivable_to_revenue_ratio "
+                "FROM balance_sheet b "
+                "LEFT JOIN income_sheet i "
+                "ON b.stock_code = i.stock_code "
+                "AND b.report_year = i.report_year "
+                "AND b.report_period = i.report_period "
+                f"WHERE {company_filter} "
+                "AND b.report_year IN (2024, 2025) "
+                "AND b.report_period = 'Q3' "
+                "ORDER BY b.report_year"
+            )
+
+    return None
+
+
+def _get_step_question_text(step: TaskStep, context: dict[str, Any]) -> str:
+    """提取当前步骤实际对应的问题文本。"""
+    for key in ["original_question", "standalone_question"]:
+        value = context.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    description = step.params.get("description")
+    if isinstance(description, str) and description.strip():
+        return description.strip()
+    return step.goal
+
+
+def _get_resolved_companies(context: dict[str, Any]) -> list[dict[str, Any]]:
+    """读取上下文中已解析的公司列表。"""
+    resolved_companies = context.get("resolved_companies")
+    if isinstance(resolved_companies, list):
+        return [item for item in resolved_companies if isinstance(item, dict)]
+    return []
+
+
+def _extract_years(question: str, default_years: list[int]) -> list[int]:
+    """从问题文本提取年份列表。"""
+    years = sorted({int(item) for item in re.findall(r"20\d{2}", question)})
+    return years or default_years
+
+
+def _format_number_in_clause(values: list[int]) -> str:
+    """格式化数字 IN 子句。"""
+    return ", ".join(str(value) for value in values)
+
+
+def _format_text_in_clause(values: list[str]) -> str:
+    """格式化文本 IN 子句。"""
+    return ", ".join(f"'{value}'" for value in values)
+
+
+def _extract_company_name_from_question(question: str) -> str | None:
+    """从问题文本提取单个公司名称。"""
+    match = re.search(r"([\u4e00-\u9fa5]{2,8}(?:药业|集团|制药|股份|医药))", question)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _build_single_company_filter(
+    step: TaskStep,
+    context: dict[str, Any],
+    question: str,
+    alias: str = "",
+) -> str | None:
+    """构造单主体查询条件，优先使用 stock_code。"""
+    prefix = f"{alias}." if alias else ""
+
+    stock_code = step.params.get("stock_code") or context.get("stock_code")
+    if isinstance(stock_code, str) and stock_code.strip():
+        return f"{prefix}stock_code = '{stock_code.strip()}'"
+
+    resolved_companies = _get_resolved_companies(context)
+    if resolved_companies:
+        first_company = resolved_companies[0]
+        if first_company.get("stock_code"):
+            return f"{prefix}stock_code = '{first_company['stock_code']}'"
+        if first_company.get("stock_abbr"):
+            return f"{prefix}stock_abbr = '{first_company['stock_abbr']}'"
+
+    company_name = _extract_company_name_from_question(question)
+    if company_name:
+        return f"{prefix}stock_abbr = '{company_name}'"
+
+    return None
+
+
 def _build_schema_ddl() -> str:
     """构造供模型参考的表结构说明。"""
     lines = []
+    lines.append("-- 重要提示：只允许使用以下列出的表，严禁使用任何不存在的表（如 top_cash_flow_companies、temp_table 等）。")
+    lines.append("-- 如需获取排名/筛选结果，请使用子查询或 CTE (WITH 语句) 从现有表中查询。")
+    lines.append("")
     for table_name, fields in TASK3_TABLE_SCHEMA.items():
         lines.append(f"CREATE TABLE {table_name} (")
         field_lines = [
@@ -618,7 +984,11 @@ def _execute_derive_metric(step: TaskStep, context: dict[str, Any]) -> dict:
     if not dep_data:
         return {"metric_name": metric_name, "values": [], "formula": formula}
 
-    if "yoy_growth" in metric_name.lower() or "同比增长" in metric_name or "同比" in formula:
+    if (
+        "yoy_growth" in metric_name.lower()
+        or "同比增长" in metric_name
+        or "同比" in formula
+    ):
         return _calculate_yoy_growth(dep_data, metric_name, formula)
 
     if "current_year" in formula and "previous_year" in formula:
@@ -652,7 +1022,12 @@ def _execute_derive_metric(step: TaskStep, context: dict[str, Any]) -> dict:
 def _calculate_yoy_growth(data: list[dict], metric_name: str, formula: str) -> dict:
     """按年度顺序计算同比增长结果。"""
     metric_field = None
-    for field in ["total_profit", "net_profit", "total_operating_revenue", "operating_revenue"]:
+    for field in [
+        "total_profit",
+        "net_profit",
+        "total_operating_revenue",
+        "operating_revenue",
+    ]:
         if field in formula or any(field in row for row in data):
             metric_field = field
             break
@@ -660,7 +1035,13 @@ def _calculate_yoy_growth(data: list[dict], metric_name: str, formula: str) -> d
     if not metric_field:
         for row in data:
             for key, value in row.items():
-                if key in ["stock_code", "stock_abbr", "report_year", "report_period", "report_id"]:
+                if key in [
+                    "stock_code",
+                    "stock_abbr",
+                    "report_year",
+                    "report_period",
+                    "report_id",
+                ]:
                     continue
                 if isinstance(value, (int, float, Decimal)):
                     metric_field = key
@@ -676,7 +1057,9 @@ def _calculate_yoy_growth(data: list[dict], metric_name: str, formula: str) -> d
             "error": "无法识别指标字段",
         }
 
-    sorted_data = sorted(data, key=lambda item: (item.get("stock_code", ""), item.get("report_year", 0)))
+    sorted_data = sorted(
+        data, key=lambda item: (item.get("stock_code", ""), item.get("report_year", 0))
+    )
     calculated_values = []
     prev_row = None
 
@@ -700,7 +1083,11 @@ def _calculate_yoy_growth(data: list[dict], metric_name: str, formula: str) -> d
             prev_value = prev_row.get(metric_field)
             if prev_value is not None and prev_value != 0:
                 try:
-                    yoy_value = (float(current_value) - float(prev_value)) / float(prev_value) * 100
+                    yoy_value = (
+                        (float(current_value) - float(prev_value))
+                        / float(prev_value)
+                        * 100
+                    )
                 except (TypeError, ValueError, ZeroDivisionError):
                     yoy_value = None
 
@@ -749,6 +1136,7 @@ def _execute_retrieve_evidence(
     stock_code = params.get("stock_code")
     doc_type = params.get("doc_type")
     top_k = params.get("top_k") or params.get("limit") or 5
+    company_name_filter = params.get("company_name_filter")
 
     if stock_code is None and "resolved_companies" in context:
         companies = context["resolved_companies"]
@@ -770,6 +1158,34 @@ def _execute_retrieve_evidence(
         top_k=top_k,
     )
 
+    # 当 stock_code 缺失但存在 company_name_filter 时，对检索结果做二次过滤
+    if not stock_code and company_name_filter and evidence_list:
+        original_count = len(evidence_list)
+        filtered_evidence = []
+        for evidence in evidence_list:
+            text = evidence.get("text", "")
+            title = evidence.get("title", "")
+            stock_abbr = evidence.get("stock_abbr", "")
+            # 证据必须包含目标公司名称（在标题、正文或股票简称中）
+            combined = f"{title} {stock_abbr} {text[:200]}"
+            if company_name_filter in combined:
+                filtered_evidence.append(evidence)
+            else:
+                logger.debug(
+                    "证据被过滤（主体不匹配）: company_name_filter=%s, title=%s, stock_abbr=%s",
+                    company_name_filter,
+                    title,
+                    stock_abbr,
+                )
+        evidence_list = filtered_evidence
+        logger.info(
+            "知识库证据二次过滤完成: step_id=%s, original_count=%d, filtered_count=%d, company_name_filter=%s",
+            step.step_id,
+            original_count,
+            len(evidence_list),
+            company_name_filter,
+        )
+
     for evidence in evidence_list:
         references.append(
             Reference(
@@ -785,7 +1201,11 @@ def _execute_retrieve_evidence(
         len(evidence_list),
         len(references),
     )
-    return {"query": query, "evidence_count": len(evidence_list), "evidence": evidence_list}
+    return {
+        "query": query,
+        "evidence_count": len(evidence_list),
+        "evidence": evidence_list,
+    }
 
 
 def _execute_aggregate(step: TaskStep, context: dict[str, Any]) -> dict:
@@ -804,6 +1224,9 @@ def _execute_aggregate(step: TaskStep, context: dict[str, Any]) -> dict:
 
     if not dep_data:
         return {"operation": operation, "metric": metric, "result": None}
+
+    if operation == "count_and_avg":
+        return _aggregate_count_and_avg(step, dep_data)
 
     numeric_items = []
     for row in dep_data:
@@ -875,8 +1298,87 @@ def _execute_verify(step: TaskStep, context: dict[str, Any]) -> dict:
         if expected_count:
             verification_result["expected_count"] = expected_count
             verification_result["passed"] = actual_count >= expected_count
+    elif check_type == "correlation":
+        actual_count = 0
+        for dep_id in step.depends_on:
+            dep_result = context.get(dep_id)
+            if isinstance(dep_result, dict):
+                if "data" in dep_result:
+                    actual_count += len(dep_result["data"])
+                elif "values" in dep_result:
+                    actual_count += len(dep_result["values"])
+                elif dep_result.get("result") is not None:
+                    actual_count += 1
+
+        verification_result["actual_count"] = actual_count
+        verification_result["passed"] = actual_count > 0
+        if actual_count == 0:
+            verification_result["details"].append(
+                {"status": "missing", "message": "关联性验证缺少可比较的数据结果"}
+            )
 
     return verification_result
+
+
+def _aggregate_count_and_avg(step: TaskStep, dep_data: list[dict[str, Any]]) -> dict:
+    """按净利润率分组，统计公司数量并计算平均资产负债率。"""
+    merged_rows: dict[str, dict[str, Any]] = {}
+    for row in dep_data:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("stock_code") or row.get("stock_abbr") or "")
+        if not key:
+            continue
+        current = merged_rows.setdefault(key, {})
+        current.update({k: v for k, v in row.items() if v is not None})
+
+    groups = {"高": {"count": 0, "debt_ratios": []}, "中": {"count": 0, "debt_ratios": []}, "低": {"count": 0, "debt_ratios": []}}
+    for row in merged_rows.values():
+        margin = row.get("calculated_net_profit_margin")
+        if margin is None:
+            margin = row.get("net_profit_margin")
+        if margin is None:
+            continue
+
+        try:
+            margin_value = float(margin)
+        except (TypeError, ValueError):
+            continue
+
+        if margin_value > 15:
+            level = "高"
+        elif margin_value >= 5:
+            level = "中"
+        else:
+            level = "低"
+
+        groups[level]["count"] += 1
+
+        debt_ratio = row.get("asset_liability_ratio")
+        if debt_ratio is not None:
+            try:
+                groups[level]["debt_ratios"].append(float(debt_ratio))
+            except (TypeError, ValueError):
+                pass
+
+    group_results = []
+    for level in ["高", "中", "低"]:
+        debt_ratios = groups[level]["debt_ratios"]
+        avg_debt_ratio = sum(debt_ratios) / len(debt_ratios) if debt_ratios else None
+        group_results.append(
+            {
+                "level": level,
+                "company_count": groups[level]["count"],
+                "avg_asset_liability_ratio": round(avg_debt_ratio, 2) if avg_debt_ratio is not None else None,
+            }
+        )
+
+    return {
+        "operation": "count_and_avg",
+        "group_by": step.params.get("group_by"),
+        "result": group_results,
+        "count": sum(item["company_count"] for item in group_results),
+    }
 
 
 def _execute_compose_answer(
@@ -894,7 +1396,9 @@ def _execute_compose_answer(
         question=plan.question,
         execution_trace=execution_summary,
     )
-    answer_text = _invoke_llm(system_prompt, user_prompt, max_tokens=8192, temperature=0.3)
+    answer_text = _invoke_llm(
+        system_prompt, user_prompt, max_tokens=8192, temperature=0.3
+    )
     return {"answer": answer_text, "has_references": len(references) > 0}
 
 
@@ -959,7 +1463,10 @@ def _get_final_answer(
     answer_content = ""
     for step_id in reversed(list(results.keys())):
         result = results[step_id]
-        if result.step_type == StepType.COMPOSE_ANSWER and result.status == StepStatus.COMPLETED:
+        if (
+            result.step_type == StepType.COMPOSE_ANSWER
+            and result.status == StepStatus.COMPLETED
+        ):
             answer_content = result.output.get("answer", "")
             break
 

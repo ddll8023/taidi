@@ -3,6 +3,28 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# ========== 常量==========
+
+FORBIDDEN_KEYWORDS = [
+    "DROP",
+    "DELETE",
+    "UPDATE",
+    "INSERT",
+    "ALTER",
+    "CREATE",
+    "TRUNCATE",
+    "GRANT",
+    "REVOKE",
+]
+
+ALLOWED_TABLES = [
+    "income_sheet",
+    "balance_sheet",
+    "cash_flow_sheet",
+    "core_performance_indicators_sheet",
+    "company_basic_info",
+]
+
 
 # ========== 辅助类（Support）==========
 
@@ -21,7 +43,9 @@ class QueryCapability(str, Enum):
     CROSS_TABLE = "cross_table"
     AGGREGATION = "aggregation"
     UNSUPPORTED = "unsupported"
-    PARTIAL_SUPPORT = "partial_support"  # 部分支持：问题中有不支持的部分，但其他部分可执行
+    PARTIAL_SUPPORT = (
+        "partial_support"  # 部分支持：问题中有不支持的部分，但其他部分可执行
+    )
 
 
 class DerivedMetricType(str, Enum):
@@ -41,9 +65,12 @@ class IntentResult(BaseModel):
         None, description="公司信息，单公司为dict含value/type，多公司为list[dict]"
     )
     metric: dict | list[dict] | None = Field(
-        None, description="指标信息，单指标为dict含field/table/display_name，多指标为list[dict]"
+        None,
+        description="指标信息，单指标为dict含field/table/display_name，多指标为list[dict]",
     )
-    time_range: dict | None = Field(None, description="时间范围，含report_year/report_period/is_range")
+    time_range: dict | None = Field(
+        None, description="时间范围，含report_year/report_period/is_range"
+    )
     ranking_time_range: dict | None = Field(
         None,
         description="排序口径时间范围，适用于先筛选TopN再计算其他指标的场景",
@@ -54,9 +81,12 @@ class IntentResult(BaseModel):
     )
     query_type: QueryType | None = Field(None, description="查询类型")
     capability: QueryCapability | None = Field(None, description="查询能力分类")
-    derived_metric_type: DerivedMetricType | None = Field(None, description="派生指标类型")
+    derived_metric_type: DerivedMetricType | None = Field(
+        None, description="派生指标类型"
+    )
     continuity_config: dict | None = Field(
-        None, description="连续性查询配置，包含period_count/condition/start_period/end_period"
+        None,
+        description="连续性查询配置，包含period_count/condition/start_period/end_period",
     )
     last_result_companies: list[dict] | None = Field(
         None, description="上一轮查询结果中的公司集合"
@@ -65,7 +95,8 @@ class IntentResult(BaseModel):
     missing_slots: list[str] = Field(default_factory=list, description="缺失的槽位列表")
     question: str | None = Field(None, description="原始问题文本，用于图表类型检测")
     unsupported_keywords: list[str] = Field(
-        default_factory=list, description="问题中包含的不支持关键词列表（用于部分支持场景）"
+        default_factory=list,
+        description="问题中包含的不支持关键词列表（用于部分支持场景）",
     )
 
     model_config = ConfigDict(from_attributes=True)
@@ -153,7 +184,8 @@ class ChatResponse(BaseModel):
     need_clarification: bool = Field(False, description="是否需要澄清")
     sql: str | None = Field(None, description="生成的SQL语句")
     chart_type: str | None = Field(
-        None, description="图表类型: line/bar/pie/horizontal_bar/grouped_bar/radar/histogram/scatter/box"
+        None,
+        description="图表类型: line/bar/pie/horizontal_bar/grouped_bar/radar/histogram/scatter/box",
     )
 
     model_config = ConfigDict(from_attributes=True)
