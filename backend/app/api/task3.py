@@ -241,6 +241,7 @@ async def get_question_detail(
         if question is None:
             return error(code=ErrorCode.DATA_NOT_FOUND, message="题目不存在")
 
+        question = task3_import.normalize_question_item(question)
         return success(schemas_task3.Task3QuestionItemResponse.model_validate(question))
 
     except ServiceException as e:

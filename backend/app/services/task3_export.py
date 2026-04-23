@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime
 
 from openpyxl import Workbook
@@ -11,6 +12,10 @@ from app.services.task3_verifier import verify_answer_quality
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
+TASK3_QUESTION_CODE_PATTERN = re.compile(r"^B2\d{3}$")
+TASK3_IMAGE_PATH_PATTERN = re.compile(
+    r"^\./result/(?P<question_id>B2\d{3})_(?P<sequence>[1-9]\d*)\.jpg$"
+)
 
 CHART_TYPE_MAP = {
     "line": "折线图",
@@ -80,6 +85,33 @@ def _convert_path_to_url(file_path: str) -> str:
     return f"./result/{filename}"
 
 
+def _validate_task3_question_id(question_id: str) -> None:
+    if not TASK3_QUESTION_CODE_PATTERN.fullmatch(str(question_id or "").strip()):
+        raise ValueError(f"任务三题目编号非法: {question_id}")
+
+
+def _validate_task3_answer_images(question_id: str, answer_json) -> None:
+    _validate_task3_question_id(question_id)
+    if not isinstance(answer_json, list):
+        return
+
+    for item in answer_json:
+        if not isinstance(item, dict):
+            continue
+        answer = item.get("A")
+        if not isinstance(answer, dict):
+            continue
+        images = answer.get("image") or []
+        if isinstance(images, str):
+            images = [images]
+        for image_path in images:
+            if not isinstance(image_path, str) or not image_path:
+                continue
+            match = TASK3_IMAGE_PATH_PATTERN.fullmatch(image_path)
+            if not match or match.group("question_id") != question_id:
+                raise ValueError(f"图表路径命名不符合任务三要求: {image_path}")
+
+
 def export_result_3(questions: list[dict], db: Session) -> str:
     wb = Workbook()
     wb.remove(wb.active)
@@ -101,6 +133,7 @@ def export_result_3(questions: list[dict], db: Session) -> str:
         logger.info("处理问题 %d/%d: %s", idx + 1, len(questions), question_id)
 
         try:
+            _validate_task3_question_id(question_id)
             response = process_task3_question(
                 question=merged_question_text,
                 db=db,
@@ -131,6 +164,10 @@ def export_result_3(questions: list[dict], db: Session) -> str:
                 answer_data["image"] = image_paths
             if references_list:
                 answer_data["references"] = references_list
+            _validate_task3_answer_images(question_id, [{
+                "Q": merged_question_text,
+                "A": answer_data,
+            }])
 
             quality_check = verify_answer_quality(
                 answer_content.content,
@@ -239,6 +276,7 @@ def export_single_question_result(
     db: Session,
 ) -> dict:
     try:
+        _validate_task3_question_id(question_id)
         response = process_task3_question(
             question=question,
             db=db,
@@ -262,6 +300,14 @@ def export_single_question_result(
             if ref.paper_image:
                 ref_dict["paper_image"] = ref.paper_image
             references_list.append(ref_dict)
+        _validate_task3_answer_images(question_id, [{
+            "Q": question,
+            "A": {
+                "content": answer_content.content,
+                "image": image_paths,
+                "references": references_list,
+            },
+        }])
 
         return {
             "id": question_id,
@@ -366,6 +412,11 @@ def export_result_3_from_workspace(db: Session) -> dict:
     if not questions:
         raise ValueError("没有可导出的题目")
 
+    workspace.total_questions = len(questions)
+    workspace.answered_count = sum(1 for item in questions if item.status == 2)
+    workspace.failed_count = sum(1 for item in questions if item.status == 3)
+    workspace.pending_count = sum(1 for item in questions if item.status == 0)
+
     wb = Workbook()
     wb.remove(wb.active)
 
@@ -381,6 +432,7 @@ def export_result_3_from_workspace(db: Session) -> dict:
         rounds = _parse_question_rounds(question_text)
         try:
             answer_json = _ensure_non_empty_qa_pairs(question_text, question.answer_json or [])
+            _validate_task3_answer_images(question_id, answer_json)
             chart_type = question.chart_type or "无"
 
             ws.append([
@@ -391,7 +443,10 @@ def export_result_3_from_workspace(db: Session) -> dict:
                 json.dumps(answer_json, ensure_ascii=False),
             ])
 
-            success_count += 1
+            if question.status == 2:
+                success_count += 1
+            else:
+                fail_count += 1
 
         except Exception as exc:
             logger.error("导出题目失败: question_id=%s, error=%s", question_id, str(exc))

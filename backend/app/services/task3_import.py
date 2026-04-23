@@ -162,9 +162,14 @@ def get_question_list(
     stmt = stmt.order_by(Task3QuestionItem.question_code)
     questions = list(db.execute(stmt).scalars().all())
     for question in questions:
-        if isinstance(question.execution_plan, list):
-            question.execution_plan = {"rounds": question.execution_plan}
+        normalize_question_item(question)
     return questions
+
+
+def normalize_question_item(question: Task3QuestionItem) -> Task3QuestionItem:
+    if isinstance(question.execution_plan, list):
+        question.execution_plan = {"rounds": question.execution_plan}
+    return question
 
 
 def get_question_stats(db: Session, workspace_id: int) -> dict:

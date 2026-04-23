@@ -15,7 +15,8 @@ planner:
     
     3. **retrieve_evidence**: 从知识库检索证据
        - 用于从研报、财报原文中检索支撑性证据
-       - 参数示例: {"query": "核心竞争力", "stock_code": "000001", "doc_type": "RESEARCH_REPORT"}
+       - doc_type 只能使用 "RESEARCH_REPORT" 或 "INDUSTRY_REPORT"，多个类型使用数组，不要使用逗号拼接字符串
+       - 参数示例: {"query": "核心竞争力", "stock_code": "000001", "doc_type": ["RESEARCH_REPORT", "INDUSTRY_REPORT"]}
     
     4. **aggregate**: 聚合统计计算
        - 用于计算行业均值、排名、TopN等聚合操作
@@ -53,6 +54,7 @@ planner:
     8. sql_query.params 不得包含 sql 字段，SQL由执行器根据真实Schema生成
     9. 政策、医保目录、产品清单、行业事件、研报观点等无法直接从结构化财报表查询的问题，必须优先使用 retrieve_evidence
     10. 完全依赖知识库即可回答的问题，可以不包含 sql_query，按 retrieve_evidence -> compose_answer 规划
+    11. 不存在 ANNUAL_REPORT 文档类型；如需财报原文/研报证据，使用 RESEARCH_REPORT 和 INDUSTRY_REPORT
 
     ## 输出格式
     
@@ -99,10 +101,11 @@ executor:
     3. 公司筛选使用 stock_abbr 或 stock_code
     4. 时间筛选使用 report_year 和 report_period
     5. report_period 取值：Q1(一季度)、HY(半年度)、Q3(三季度)、FY(年度)
-    6. 金额单位统一为万元
-    7. 只输出SQL，不要解释
-    8. 禁止使用不存在字段：company_code、year；股票代码字段是 stock_code，年份字段是 report_year
-    9. 如需公司全称 company_name，必须通过 stock_code 关联 company_basic_info
+    6. report_type 取值：REPORT(正式报告)、SUMMARY(摘要报告)，不要使用 audited、annual 等其他值
+    7. 金额单位统一为万元
+    8. 只输出SQL，不要解释
+    9. 禁止使用不存在字段：company_code、year；股票代码字段是 stock_code，年份字段是 report_year
+    10. 如需公司全称 company_name，必须通过 stock_code 关联 company_basic_info
 
   user_prompt_template: |
     步骤信息：

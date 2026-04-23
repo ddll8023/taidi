@@ -22,6 +22,51 @@ from app.utils.model_factory import get_model
 
 logger = setup_logger(__name__)
 
+KNOWLEDGE_ONLY_KEYWORDS = [
+    "医保",
+    "医保目录",
+    "国家医保",
+    "商保",
+    "集采",
+    "谈判",
+    "政策",
+    "目录",
+    "新增",
+    "产品有哪些",
+    "名单",
+    "北向资金",
+    "外资",
+    "撤退",
+    "市场观点",
+    "行业风向",
+    "行业事件",
+    "原因",
+    "为什么",
+    "为何",
+    "导致",
+    "因素",
+    "影响",
+    "驱动",
+    "分析原因",
+    "涨跌原因",
+    "变化原因",
+    "增长原因",
+    "下降原因",
+]
+
+INDUSTRY_KNOWLEDGE_KEYWORDS = [
+    "医保",
+    "商保",
+    "集采",
+    "谈判",
+    "政策",
+    "目录",
+    "新增",
+    "北向资金",
+    "外资",
+    "行业",
+]
+
 
 def _get_task3_config() -> dict:
     return settings.PROMPT_CONFIG.get_task3_config
@@ -103,6 +148,9 @@ def analyze_question(question: str, context: dict | None = None) -> dict:
 
 
 def _create_default_plan(question: str) -> dict:
+    if _is_knowledge_only_question(question):
+        return _create_knowledge_plan_dict(question)
+
     return {
         "steps": [
             {
@@ -125,6 +173,89 @@ def _create_default_plan(question: str) -> dict:
         "context": {},
         "reasoning": "默认简单计划：单步查询后直接回答",
     }
+
+
+def _is_knowledge_only_question(question: str) -> bool:
+    return any(keyword.lower() in question.lower() for keyword in KNOWLEDGE_ONLY_KEYWORDS)
+
+
+def _infer_doc_types_for_question(question: str) -> list[str]:
+    if any(keyword.lower() in question.lower() for keyword in INDUSTRY_KNOWLEDGE_KEYWORDS):
+        return ["INDUSTRY_REPORT"]
+    return ["RESEARCH_REPORT", "INDUSTRY_REPORT"]
+
+
+def _extract_stock_code_from_context(context: dict | None) -> str | None:
+    if not context:
+        return None
+
+    resolved_companies = context.get("resolved_companies")
+    if isinstance(resolved_companies, list) and resolved_companies:
+        first_company = resolved_companies[0]
+        if isinstance(first_company, dict) and first_company.get("stock_code"):
+            return str(first_company["stock_code"])
+
+    stock_code = context.get("stock_code")
+    if stock_code:
+        return str(stock_code)
+    return None
+
+
+def _create_knowledge_plan_dict(question: str, context: dict | None = None) -> dict:
+    params: dict[str, Any] = {
+        "query": question,
+        "doc_type": _infer_doc_types_for_question(question),
+        "top_k": 8,
+    }
+    stock_code = _extract_stock_code_from_context(context)
+    if stock_code:
+        params["stock_code"] = stock_code
+
+    return {
+        "steps": [
+            {
+                "step_id": "s1",
+                "step_type": "retrieve_evidence",
+                "goal": f"从知识库检索可支撑回答的证据: {question[:120]}",
+                "depends_on": [],
+                "params": params,
+                "priority": 0,
+            },
+            {
+                "step_id": "s2",
+                "step_type": "compose_answer",
+                "goal": "基于检索证据生成最终答案",
+                "depends_on": ["s1"],
+                "params": {"include_references": True, "format": "evidence_based"},
+                "priority": 100,
+            },
+        ],
+        "context": context or {},
+        "reasoning": "知识库优先问题：通过研报/行业报告证据回答",
+    }
+
+
+def _create_knowledge_plan(question: str, context: dict | None = None) -> ExecutionPlan:
+    plan_dict = _create_knowledge_plan_dict(question, context)
+    merged_context = dict(context) if context else {}
+    if plan_dict.get("context"):
+        merged_context.update(plan_dict["context"])
+    return ExecutionPlan(
+        question=question,
+        steps=[
+            TaskStep(
+                step_id=step["step_id"],
+                step_type=StepType(step["step_type"]),
+                goal=step["goal"],
+                depends_on=step["depends_on"],
+                params=step["params"],
+                priority=step["priority"],
+            )
+            for step in plan_dict["steps"]
+        ],
+        context=merged_context,
+        created_at=datetime.now(),
+    )
 
 
 def create_execution_plan(
@@ -177,10 +308,14 @@ def create_execution_plan(
             ),
         ]
 
+    merged_context = dict(context) if context else {}
+    if plan_dict.get("context"):
+        merged_context.update(plan_dict["context"])
+
     plan = ExecutionPlan(
         question=question,
         steps=steps,
-        context=plan_dict.get("context", context or {}),
+        context=merged_context,
         created_at=datetime.now(),
     )
 
@@ -197,9 +332,9 @@ def detect_multi_intent(question: str) -> bool:
         "并", "同时", "分别", "各自", "以及",
         "排名", "前几", "Top", "最高", "最低",
         "对比", "比较", "差异", "区别",
-        "原因", "为什么", "为何", "如何",
+        "原因", "为什么", "为何", "如何", "导致", "因素",
         "趋势", "变化", "增长", "下降",
-        "行业", "平均", "均值",
+        "行业", "平均", "均值", "共同点", "共同因素",
         "是否一致", "核实", "校验", "重新计算",
     ]
 
@@ -243,6 +378,11 @@ def plan_task3_question(
     context: dict | None = None,
     db: Session | None = None,
 ) -> ExecutionPlan:
+    if _is_knowledge_only_question(question):
+        plan = _create_knowledge_plan(question, context)
+        logger.info("知识库优先规划: question=%s, steps=%d", question[:50], len(plan.steps))
+        return plan
+
     complexity = estimate_complexity(question)
     logger.info("问题复杂度评估: question=%s, complexity=%s", question[:50], complexity)
 
@@ -263,9 +403,9 @@ def _create_simple_plan(question: str, context: dict | None = None) -> Execution
         TaskStep(
             step_id="s1",
             step_type=StepType.SQL_QUERY,
-            goal="查询相关数据",
+            goal=f"根据问题查询结构化财务数据: {question[:120]}",
             depends_on=[],
-            params={},
+            params={"description": question},
             priority=0,
         ),
         TaskStep(
@@ -281,7 +421,7 @@ def _create_simple_plan(question: str, context: dict | None = None) -> Execution
     return ExecutionPlan(
         question=question,
         steps=steps,
-        context=context or {},
+        context=dict(context) if context else {},
         created_at=datetime.now(),
     )
 

@@ -38,6 +38,8 @@ from app.utils.model_factory import get_model
 
 logger = setup_logger(__name__)
 
+VALID_KB_DOC_TYPES = {"RESEARCH_REPORT", "INDUSTRY_REPORT"}
+
 
 # 定义可重试的异常类型（网络错误、SSL错误）
 RETRYABLE_EXCEPTIONS = (
@@ -1428,11 +1430,73 @@ def _update_document_vector_status(db: Session, document_ids: list[int]) -> None
         db.commit()
 
 
+def _normalize_doc_types(doc_type) -> list[str]:
+    if not doc_type:
+        return []
+
+    raw_items = []
+    if isinstance(doc_type, str):
+        raw_items = re.split(r"[,，、/\s]+", doc_type)
+    elif isinstance(doc_type, (list, tuple, set)):
+        for item in doc_type:
+            if isinstance(item, str):
+                raw_items.extend(re.split(r"[,，、/\s]+", item))
+    else:
+        raw_items = [str(doc_type)]
+
+    normalized = []
+    for item in raw_items:
+        value = item.strip().upper()
+        if value in VALID_KB_DOC_TYPES and value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _build_kb_filter_expr(stock_code: str | None, doc_types: list[str]) -> str | None:
+    filters = []
+    if stock_code:
+        filters.append(f'stock_code == "{stock_code}"')
+    if len(doc_types) == 1:
+        filters.append(f'doc_type == "{doc_types[0]}"')
+    elif len(doc_types) > 1:
+        doc_type_values = ", ".join(f'"{item}"' for item in doc_types)
+        filters.append(f"doc_type in [{doc_type_values}]")
+    if not filters:
+        return None
+    return " and ".join(filters)
+
+
+def _has_search_hits(results) -> bool:
+    return bool(results and results[0])
+
+
+def _count_search_hits(results) -> int:
+    if not results or not results[0]:
+        return 0
+    return len(results[0])
+
+
+def _summarize_search_results(search_results: list[dict], limit: int = 3) -> list[dict]:
+    summary = []
+    for item in search_results[:limit]:
+        summary.append(
+            {
+                "title": item.get("title"),
+                "page_no": item.get("page_no"),
+                "score": round(float(item.get("score", 0)), 4),
+                "doc_type": item.get("doc_type"),
+                "stock_code": item.get("stock_code"),
+                "stock_abbr": item.get("stock_abbr"),
+            }
+        )
+    return summary
+
+
 def search_knowledge(
     query_text: str,
     *,
     stock_code: str | None = None,
-    doc_type: str | None = None,
+    doc_type=None,
     top_k: int = 5,
 ) -> list[dict]:
     logger.info(
@@ -1466,19 +1530,29 @@ def search_knowledge(
     collection = get_kb_collection()
     logger.debug("[search_knowledge] Milvus Collection 获取成功")
 
-    filter_expr = None
-    filters = []
-    if stock_code:
-        filters.append(f'stock_code == "{stock_code}"')
-    if doc_type:
-        filters.append(f'doc_type == "{doc_type}"')
-    if filters:
-        filter_expr = " and ".join(filters)
+    doc_types = _normalize_doc_types(doc_type)
+    filter_expr = _build_kb_filter_expr(stock_code, doc_types)
+    effective_filter_expr = filter_expr
 
     search_params = {
         "metric_type": "COSINE",
         "params": {"nprobe": 10},
     }
+
+    output_fields = [
+        "chunk_id",
+        "document_id",
+        "doc_type",
+        "stock_code",
+        "vector_version",
+    ]
+
+    logger.info(
+        "[search_knowledge] Milvus检索参数: filter_expr=%s, normalized_doc_types=%s, top_k=%d",
+        filter_expr or "<none>",
+        doc_types or [],
+        top_k,
+    )
 
     results = collection.search(
         data=[query_embedding],
@@ -1486,16 +1560,60 @@ def search_knowledge(
         param=search_params,
         limit=top_k,
         expr=filter_expr,
-        output_fields=[
-            "chunk_id",
-            "document_id",
-            "doc_type",
-            "stock_code",
-            "vector_version",
-        ],
+        output_fields=output_fields,
+    )
+    logger.info(
+        "[search_knowledge] Milvus初次检索完成: hit_count=%d, filter_expr=%s",
+        _count_search_hits(results),
+        filter_expr or "<none>",
     )
 
+    if not _has_search_hits(results) and stock_code:
+        fallback_expr = _build_kb_filter_expr(None, doc_types)
+        logger.info(
+            "[search_knowledge] 股票代码过滤无命中，放宽stock_code重试: original=%s, fallback=%s",
+            filter_expr,
+            fallback_expr,
+        )
+        results = collection.search(
+            data=[query_embedding],
+            anns_field="embedding",
+            param=search_params,
+            limit=top_k,
+            expr=fallback_expr,
+            output_fields=output_fields,
+        )
+        effective_filter_expr = fallback_expr
+        logger.info(
+            "[search_knowledge] 放宽stock_code后检索完成: hit_count=%d, filter_expr=%s",
+            _count_search_hits(results),
+            fallback_expr or "<none>",
+        )
+
+    if not _has_search_hits(results) and doc_types:
+        fallback_expr = _build_kb_filter_expr(stock_code, [])
+        logger.info(
+            "[search_knowledge] 文档类型过滤无命中，放宽doc_type重试: original=%s, fallback=%s",
+            filter_expr,
+            fallback_expr,
+        )
+        results = collection.search(
+            data=[query_embedding],
+            anns_field="embedding",
+            param=search_params,
+            limit=top_k,
+            expr=fallback_expr,
+            output_fields=output_fields,
+        )
+        effective_filter_expr = fallback_expr
+        logger.info(
+            "[search_knowledge] 放宽doc_type后检索完成: hit_count=%d, filter_expr=%s",
+            _count_search_hits(results),
+            fallback_expr or "<none>",
+        )
+
     if not results or not results[0]:
+        logger.info("[search_knowledge] 检索无命中: query=%s", query_text[:120])
         return []
 
     hits = results[0]
@@ -1543,6 +1661,12 @@ def search_knowledge(
                 }
             )
 
+        logger.info(
+            "[search_knowledge] 回表完成: result_count=%d, effective_filter_expr=%s, top_hits=%s",
+            len(search_results),
+            effective_filter_expr or "<none>",
+            _summarize_search_results(search_results),
+        )
         return search_results
 
     finally:
@@ -1553,7 +1677,7 @@ def search_and_format_evidence(
     query_text: str,
     *,
     stock_code: str | None = None,
-    doc_type: str | None = None,
+    doc_type=None,
     top_k: int = 5,
 ) -> list[dict]:
     results = search_knowledge(
@@ -1577,6 +1701,11 @@ def search_and_format_evidence(
         }
         evidence_list.append(evidence)
 
+    logger.info(
+        "[search_and_format_evidence] 证据格式化完成: evidence_count=%d, query=%s",
+        len(evidence_list),
+        query_text[:120],
+    )
     return evidence_list
 
 

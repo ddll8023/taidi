@@ -212,11 +212,34 @@ SQL_FUNCTIONS = {
     "NULLIF",
     "ROUND",
     "SUM",
+    "CURRENT_DATE",
+    "CURRENT_TIME",
+    "CURRENT_TIMESTAMP",
+    "NOW",
+    "CURDATE",
+    "CURTIME",
+    "DATE",
+    "YEAR",
+    "MONTH",
+    "DAY",
+    "QUARTER",
+    "WEEK",
+    "STR_TO_DATE",
+    "DATE_FORMAT",
 }
+TASK3_QUESTION_CODE_PATTERN = re.compile(r"^B2\d{3}$")
 
 
 def _get_task3_config() -> dict:
     return settings.PROMPT_CONFIG.get_task3_config
+
+
+def _get_required_task3_question_id(context: dict[str, Any]) -> str:
+    question_id = str(context.get("question_id") or "").strip()
+    if not TASK3_QUESTION_CODE_PATTERN.fullmatch(question_id):
+        logger.error("任务三图表题号非法: question_id=%s", question_id or "<empty>")
+        raise ServiceException(ErrorCode.PARAM_ERROR, "任务三图表生成缺少合法题目编号")
+    return question_id
 
 
 def _invoke_llm(
@@ -586,6 +609,12 @@ class Task3Executor:
                 "formula": formula,
             }
 
+        if "yoy_growth" in metric_name.lower() or "同比增长" in metric_name or "同比" in formula:
+            return self._calculate_yoy_growth(dep_data, metric_name, formula)
+
+        if "current_year" in formula and "previous_year" in formula:
+            return self._calculate_yoy_growth(dep_data, metric_name, formula)
+
         calculated_values = []
         for row in dep_data:
             try:
@@ -604,6 +633,74 @@ class Task3Executor:
             "metric_name": metric_name,
             "values": calculated_values,
             "formula": formula,
+            "count": len(calculated_values),
+        }
+
+    def _calculate_yoy_growth(self, data: list[dict], metric_name: str, formula: str) -> dict:
+        metric_field = None
+        for field in ["total_profit", "net_profit", "total_operating_revenue", "operating_revenue"]:
+            if field in formula or any(field in row for row in data):
+                metric_field = field
+                break
+
+        if not metric_field:
+            for row in data:
+                for key in row:
+                    if key not in ["stock_code", "stock_abbr", "report_year", "report_period", "report_id"]:
+                        if isinstance(row[key], (int, float, Decimal)):
+                            metric_field = key
+                            break
+                if metric_field:
+                    break
+
+        if not metric_field:
+            return {
+                "metric_name": metric_name,
+                "values": [],
+                "formula": formula,
+                "error": "无法识别指标字段",
+            }
+
+        sorted_data = sorted(data, key=lambda x: (x.get("stock_code", ""), x.get("report_year", 0)))
+
+        calculated_values = []
+        prev_row = None
+
+        for row in sorted_data:
+            current_value = row.get(metric_field)
+            if current_value is None:
+                calculated_values.append({
+                    "stock_code": row.get("stock_code"),
+                    "stock_abbr": row.get("stock_abbr"),
+                    "report_year": row.get("report_year"),
+                    "report_period": row.get("report_period"),
+                    metric_name: None,
+                })
+                prev_row = row
+                continue
+
+            yoy_value = None
+            if prev_row is not None:
+                prev_value = prev_row.get(metric_field)
+                if prev_value is not None and prev_value != 0:
+                    try:
+                        yoy_value = (float(current_value) - float(prev_value)) / float(prev_value) * 100
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        pass
+
+            calculated_values.append({
+                "stock_code": row.get("stock_code"),
+                "stock_abbr": row.get("stock_abbr"),
+                "report_year": row.get("report_year"),
+                "report_period": row.get("report_period"),
+                metric_name: round(yoy_value, 2) if yoy_value is not None else None,
+            })
+            prev_row = row
+
+        return {
+            "metric_name": metric_name,
+            "values": calculated_values,
+            "formula": f"yoy_growth({metric_field})",
             "count": len(calculated_values),
         }
 
@@ -629,12 +726,21 @@ class Task3Executor:
         query = params.get("query", step.goal)
         stock_code = params.get("stock_code")
         doc_type = params.get("doc_type")
-        top_k = params.get("top_k", 5)
+        top_k = params.get("top_k") or params.get("limit") or 5
 
         if stock_code is None and "resolved_companies" in self.context:
             companies = self.context["resolved_companies"]
             if companies and isinstance(companies, list) and len(companies) > 0:
                 stock_code = companies[0].get("stock_code")
+
+        logger.info(
+            "知识库证据检索开始: step_id=%s, query=%s, stock_code=%s, doc_type=%s, top_k=%s",
+            step.step_id,
+            str(query)[:120],
+            stock_code,
+            doc_type,
+            top_k,
+        )
 
         evidence_list = knowledge_base.search_and_format_evidence(
             query,
@@ -650,6 +756,13 @@ class Task3Executor:
                 page_no=evidence.get("page_no"),
             )
             self.references.append(ref)
+
+        logger.info(
+            "知识库证据检索完成: step_id=%s, evidence_count=%d, reference_total=%d",
+            step.step_id,
+            len(evidence_list),
+            len(self.references),
+        )
 
         return {
             "query": query,
@@ -856,14 +969,13 @@ class Task3Executor:
             query_type=QueryType.TREND if len(data_for_chart) >= 3 else QueryType.SINGLE_VALUE,
         )
 
-        question_id = str(
-            self.context.get("question_id")
-            or f"task3_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        )
+        question_id = _get_required_task3_question_id(self.context)
         try:
             chart_sequence = int(self.context.get("chart_sequence", 1))
-        except (TypeError, ValueError):
-            chart_sequence = 1
+        except (TypeError, ValueError) as exc:
+            raise ServiceException(ErrorCode.PARAM_ERROR, "任务三图表顺序编号非法") from exc
+        if chart_sequence < 1:
+            raise ServiceException(ErrorCode.PARAM_ERROR, "任务三图表顺序编号非法")
 
         chart_path, chart_type = services_visualization.generate_chart(
             data=data_for_chart,

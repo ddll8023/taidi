@@ -91,6 +91,28 @@ def _parse_question_rounds(question_json_str: str) -> list[dict]:
     return rounds
 
 
+def _build_standalone_question(q_text: str, previous_rounds: list[dict]) -> str:
+    if not previous_rounds:
+        return q_text
+
+    history_parts = []
+    for idx, item in enumerate(previous_rounds, start=1):
+        question_text = str(item.get("Q", "")).strip()
+        answer_text = str(item.get("A", "")).strip()
+        if len(answer_text) > 300:
+            answer_text = answer_text[:300] + "..."
+        history_parts.append(
+            f"第{idx}轮问题：{question_text}\n第{idx}轮回答：{answer_text}"
+        )
+
+    history_text = "\n\n".join(history_parts)
+    return (
+        "请结合以下多轮对话上下文，补全当前追问中的省略信息后回答。\n"
+        f"历史上下文：\n{history_text}\n\n"
+        f"当前问题：{q_text}"
+    )
+
+
 def _build_reference_json(ref) -> dict:
     if isinstance(ref, dict):
         return {
@@ -201,15 +223,18 @@ def answer_single_question(question_id: int, db: Session) -> dict:
 
         for round_idx, round_item in enumerate(rounds):
             q_text = round_item.get("Q", "")
+            standalone_question = _build_standalone_question(q_text, previous_rounds)
             context = {
                 "question_id": question.question_code,
                 "chart_sequence": chart_sequence,
                 "previous_rounds": previous_rounds,
                 "previous_sqls": all_sqls,
+                "original_question": q_text,
+                "standalone_question": standalone_question,
             }
 
             response = process_task3_question(
-                question=q_text,
+                question=standalone_question,
                 db=db,
                 context=context,
             )
@@ -271,6 +296,7 @@ def answer_single_question(question_id: int, db: Session) -> dict:
             question.last_error = _build_failure_message(verification)
         question.answered_at = datetime.now()
 
+        _sync_workspace_stats(db, question.workspace_id)
         db.commit()
         db.refresh(question)
 
@@ -285,6 +311,7 @@ def answer_single_question(question_id: int, db: Session) -> dict:
             failed_question.last_error = str(e)
             failed_question.answered_at = datetime.now()
             try:
+                _sync_workspace_stats(db, failed_question.workspace_id)
                 db.commit()
             except Exception:
                 logger.error("保存题目失败状态失败: question_id=%s", question_id, exc_info=True)
@@ -307,6 +334,7 @@ def delete_question_answer(question_id: int, db: Session) -> dict:
     question.last_error = None
     question.answered_at = None
     question.status = 0  # 待处理
+    _sync_workspace_stats(db, question.workspace_id)
     db.commit()
 
     return {"id": question_id, "status": question.status}

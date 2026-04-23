@@ -733,6 +733,10 @@ AGGREGATION_COLLECTION_KEYWORDS = [
     "全部公司",
     "上市公司",
     "家公司",
+    "分布",
+    "历史分布",
+    "频次分布",
+    "频率分布",
 ]
 
 AGGREGATION_RESULT_KEYWORDS = [
@@ -762,6 +766,7 @@ TCM_CONTEST_UNIVERSE_KEYWORDS = [
 
 TCM_CONTEST_INDUSTRY_SQL_PATTERNS = [
     r"(?:\w+\.)?csrc_industry\s+LIKE\s+'%中药%'",
+    r"(?:\w+\.)?csrc_industry\s*=\s*'中药'",
     r"(?:\w+\.)?csrc_industry\s*=\s*'中药公司'",
     r"(?:\w+\.)?csrc_industry\s*=\s*'中药上市公司'",
     r"(?:\w+\.)?csrc_industry\s*=\s*'中药行业'",
@@ -1539,6 +1544,13 @@ def _repair_intent_from_question(intent: IntentResult) -> IntentResult:
     if not patched_intent.time_range and _is_business_definition_followup(patched_intent):
         patched_intent.time_range = dict(DEFAULT_LATEST_TIME_RANGE)
 
+    if (
+        not patched_intent.time_range
+        and _is_tcm_contest_universe_question(question)
+        and patched_intent.query_type != QueryType.TREND
+    ):
+        patched_intent.time_range = dict(DEFAULT_LATEST_TIME_RANGE)
+
     if _is_cross_table_topn_ratio_question(question):
         inferred_metrics = _extract_metrics_from_question(question)
         patched_intent.metric = _merge_metric_payload(
@@ -1899,11 +1911,20 @@ ORDER BY q.stock_code, q.report_year, {period_order_case}
 
 
 def _detect_unsupported(question: str) -> str | None:
-    """检测问题中是否包含不支持的数据源关键词"""
+    """检测问题中是否包含不支持的数据源关键词（返回第一个匹配的关键词）"""
     for keyword in UNSUPPORTED_KEYWORDS:
         if keyword in question:
             return keyword
     return None
+
+
+def _detect_all_unsupported_keywords(question: str) -> list[str]:
+    """检测问题中所有不支持的数据源关键词（返回所有匹配的关键词列表）"""
+    found = []
+    for keyword in UNSUPPORTED_KEYWORDS:
+        if keyword in question:
+            found.append(keyword)
+    return found
 
 
 def _detect_business_definition_needed(question: str) -> dict | None:
@@ -1964,10 +1985,24 @@ def _classify_query_capability(
     metric: dict | None,
     derived_metric_type: DerivedMetricType | None,
 ) -> QueryCapability:
-    """分类查询能力"""
+    """分类查询能力
+
+    返回逻辑：
+    - 如果包含不支持关键词，且同时有metric → PARTIAL_SUPPORT（部分支持）
+    - 如果包含不支持关键词，但没有metric → UNSUPPORTED（完全不支持）
+    - 如果包含"分布/历史分布/频次"等聚合关键词 → AGGREGATION（忽略派生指标）
+    - 如果有派生指标类型 → DERIVED_METRIC
+    - 如果没有metric → DIRECT_FIELD
+    """
     unsupported_keyword = _detect_unsupported(question)
     if unsupported_keyword:
+        # 有metric时为部分支持，无metric时为完全不支持
+        if metric is not None:
+            return QueryCapability.PARTIAL_SUPPORT
         return QueryCapability.UNSUPPORTED
+
+    if _is_aggregation_collection_question(question):
+        return QueryCapability.AGGREGATION
 
     if derived_metric_type:
         return QueryCapability.DERIVED_METRIC
@@ -2149,9 +2184,20 @@ def process_chat_message(
             sql=None,
         )
 
+    if intent.is_partial_support():
+        all_unsupported = _detect_all_unsupported_keywords(resolved_question)
+        intent.unsupported_keywords = all_unsupported
+        logger.info("部分支持场景，检测到不支持关键词: %s", all_unsupported)
+
     need_business_clarification, business_clarification_msg = (
         _handle_business_definition_clarification(resolved_question, intent)
     )
+    # 部分支持场景下，即使检测到unsupported关键词，如果有可执行的metric则跳过澄清
+    if need_business_clarification and intent.is_partial_support() and intent.metric:
+        logger.info("部分支持场景，跳过unsupported澄清，继续执行可支持的查询")
+        need_business_clarification = False
+        business_clarification_msg = ""
+
     if need_business_clarification:
         assistant_message = ChatMessage(
             session_id=session_id,
@@ -2243,16 +2289,14 @@ def process_chat_message(
                 config = _get_chat_config()
                 sql_config = config.get("sql_generate", {})
                 schema_ddl = _build_schema_ddl_text()
-                system_prompt = sql_config.get("system_prompt", "").format(
-                    schema_ddl=schema_ddl
+                system_prompt = sql_config.get("system_prompt", "").replace(
+                    "{schema_ddl}", schema_ddl
                 )
-                user_prompt = sql_config.get("user_prompt_template", "").format(
-                    intent_json=json.dumps(fallback_intent, ensure_ascii=False),
-                    derived_metric_type=(
-                        intent.derived_metric_type.value
-                        if intent.derived_metric_type
-                        else "无"
-                    ),
+                user_prompt = sql_config.get("user_prompt_template", "").replace(
+                    "{intent_json}", json.dumps(fallback_intent, ensure_ascii=False)
+                ).replace(
+                    "{derived_metric_type}",
+                    intent.derived_metric_type.value if intent.derived_metric_type else "无",
                 )
                 response_text = _invoke_llm(
                     system_prompt, user_prompt, max_tokens=2048, temperature=0.0
@@ -2329,16 +2373,14 @@ def _parse_intent(question: str, context_slots: dict, db: Session) -> IntentResu
     current_metric = context_slots.get("metric", "无")
     current_time = context_slots.get("time_range", "无")
 
-    system_prompt = intent_config.get("system_prompt", "").format(
-        schema_info=schema_info,
-        company_list=company_list,
-    )
-    user_prompt = intent_config.get("user_prompt_template", "").format(
-        question=question,
-        current_company=current_company,
-        current_metric=current_metric,
-        current_time=current_time,
-    )
+    system_prompt = intent_config.get("system_prompt", "").replace(
+        "{schema_info}", schema_info
+    ).replace("{company_list}", company_list)
+    user_prompt = intent_config.get("user_prompt_template", "").replace(
+        "{question}", question
+    ).replace("{current_company}", str(current_company)).replace(
+        "{current_metric}", str(current_metric)
+    ).replace("{current_time}", str(current_time))
 
     response_text = _invoke_llm(
         system_prompt, user_prompt, max_tokens=32768, temperature=0.0
@@ -2605,6 +2647,7 @@ def _generate_sql(intent: IntentResult, db: Session) -> str:
         intent.derived_metric_type
         and intent.is_derived_query()
         and not is_prestored_derived
+        and intent.capability != QueryCapability.AGGREGATION
     ):
         template_sql = _generate_derived_metric_sql(intent, intent.derived_metric_type)
         if template_sql:
@@ -2623,11 +2666,12 @@ def _generate_sql(intent: IntentResult, db: Session) -> str:
             intent.derived_metric_type.value if intent.derived_metric_type else "无"
         )
 
-    system_prompt = sql_config.get("system_prompt", "").format(schema_ddl=schema_ddl)
-    user_prompt = sql_config.get("user_prompt_template", "").format(
-        intent_json=intent_json,
-        derived_metric_type=derived_metric_type_str,
+    system_prompt = sql_config.get("system_prompt", "").replace(
+        "{schema_ddl}", schema_ddl
     )
+    user_prompt = sql_config.get("user_prompt_template", "").replace(
+        "{intent_json}", intent_json
+    ).replace("{derived_metric_type}", derived_metric_type_str)
 
     response_text = _invoke_llm(
         system_prompt, user_prompt, max_tokens=2048, temperature=0.0
@@ -3308,12 +3352,23 @@ def _build_answer(question: str, query_result: list[dict], intent: IntentResult)
         intent.derived_metric_type.value if intent.derived_metric_type else "无"
     )
 
+    # 处理部分支持场景：在user_prompt中添加说明
+    partial_support_note = ""
+    if intent.is_partial_support() and intent.unsupported_keywords:
+        unsupported_list = "、".join(intent.unsupported_keywords)
+        partial_support_note = (
+            f"\n\n【重要提示】用户问题中包含数据库不支持的指标/内容：{unsupported_list}。"
+            f"请在回答中明确说明这些指标无法查询，并返回其他可支持的指标查询结果。"
+        )
+
     system_prompt = answer_config.get("system_prompt", "")
-    user_prompt = answer_config.get("user_prompt_template", "").format(
-        question=question,
-        query_result=query_result_str,
-        intent_json=intent_json,
-        derived_metric_type=derived_metric_type_str,
+    user_prompt = (
+        answer_config.get("user_prompt_template", "")
+        .replace("{question}", question)
+        .replace("{query_result}", query_result_str)
+        .replace("{intent_json}", intent_json)
+        .replace("{derived_metric_type}", derived_metric_type_str)
+        + partial_support_note
     )
 
     response_text = _invoke_llm(
@@ -3732,7 +3787,7 @@ def export_result_2(questions: list[dict], db: Session) -> str:
                 session_id = response.session_id
 
                 image_paths = []
-                if response.answer.image:
+                if response.answer and response.answer.image:
                     for img in response.answer.image:
                         filename = (
                             os.path.basename(img) if "/" in img or "\\" in img else img
@@ -3740,10 +3795,14 @@ def export_result_2(questions: list[dict], db: Session) -> str:
                         image_paths.append(f"./result/{filename}")
                         chart_sequence += 1
 
+                answer_content = response.answer.content if response.answer and response.answer.content else ""
+                if not answer_content:
+                    answer_content = "回答内容为空"
+
                 answer_data = {
                     "Q": q_text,
                     "A": {
-                        "content": response.answer.content,
+                        "content": answer_content,
                     },
                 }
                 if image_paths:
@@ -3779,10 +3838,11 @@ def export_result_2(questions: list[dict], db: Session) -> str:
                     round_idx,
                     str(exc),
                 )
+                error_msg = f"回答生成失败: {str(exc)}" if exc else "回答生成失败: 未知错误"
                 qa_pairs.append(
                     {
                         "Q": q_text,
-                        "A": {"content": f"回答生成失败: {str(exc)}"},
+                        "A": {"content": error_msg},
                     }
                 )
 

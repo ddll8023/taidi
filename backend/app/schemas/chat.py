@@ -21,6 +21,7 @@ class QueryCapability(str, Enum):
     CROSS_TABLE = "cross_table"
     AGGREGATION = "aggregation"
     UNSUPPORTED = "unsupported"
+    PARTIAL_SUPPORT = "partial_support"  # 部分支持：问题中有不支持的部分，但其他部分可执行
 
 
 class DerivedMetricType(str, Enum):
@@ -49,7 +50,7 @@ class IntentResult(BaseModel):
     )
     calculation_time_range: dict | None = Field(
         None,
-        description="计算口径时间范围，适用于分子分母或后续指标与排序口径不同的场景",
+        description="计算口径时间范围，适用于分子分母或排序口径不同的场景",
     )
     query_type: QueryType | None = Field(None, description="查询类型")
     capability: QueryCapability | None = Field(None, description="查询能力分类")
@@ -63,6 +64,9 @@ class IntentResult(BaseModel):
     confidence: float = Field(0.0, ge=0.0, le=1.0, description="置信度")
     missing_slots: list[str] = Field(default_factory=list, description="缺失的槽位列表")
     question: str | None = Field(None, description="原始问题文本，用于图表类型检测")
+    unsupported_keywords: list[str] = Field(
+        default_factory=list, description="问题中包含的不支持关键词列表（用于部分支持场景）"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -107,6 +111,10 @@ class IntentResult(BaseModel):
     def is_unsupported(self) -> bool:
         """判断是否为不可答查询"""
         return self.capability == QueryCapability.UNSUPPORTED
+
+    def is_partial_support(self) -> bool:
+        """判断是否为部分支持查询"""
+        return self.capability == QueryCapability.PARTIAL_SUPPORT
 
     def has_last_result_companies(self) -> bool:
         """判断是否有上一轮筛选结果的公司集合"""

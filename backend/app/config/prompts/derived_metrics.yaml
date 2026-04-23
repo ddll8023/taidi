@@ -76,7 +76,7 @@ cagr:
     WHERE {company_filter}
       AND report_year BETWEEN {start_year} AND {end_year}
       AND report_period = '{report_period}'
-    GROUP BY stock_abbr, report_year, {metric_field}
+    GROUP BY stock_abbr, report_year
     ORDER BY stock_abbr
 
 ratio:
