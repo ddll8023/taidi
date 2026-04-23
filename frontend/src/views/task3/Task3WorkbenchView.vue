@@ -143,14 +143,6 @@ function handleOpenReferences() {
   task3Store.openReferencesModal()
 }
 
-function resolveImagePath(path) {
-  if (!path) return ''
-  if (path.startsWith('./result/')) {
-    return path.replace('./result/', '/api/v1/chat/images/')
-  }
-  return path
-}
-
 function formatTime(dateStr) {
   if (!dateStr) return '-'
   const d = new Date(dateStr)
@@ -395,14 +387,6 @@ function checkStatus(status, field) {
                 >
                   <div class="mb-2 text-xs font-medium text-ink-500">Q: {{ qa.Q }}</div>
                   <div v-if="qa.A?.content" class="prose prose-sm prose-ink max-w-none text-sm text-ink-700" v-html="renderMarkdown(qa.A.content)"></div>
-                  <div v-if="qa.A?.image && qa.A.image.length > 0" class="mt-2 flex flex-wrap gap-2">
-                    <img
-                      v-for="(img, imgIdx) in qa.A.image"
-                      :key="imgIdx"
-                      :src="resolveImagePath(img)"
-                      class="max-w-xs rounded-lg border border-black/5"
-                    />
-                  </div>
                 </div>
               </div>
             </div>
@@ -528,18 +512,6 @@ function checkStatus(status, field) {
                 SQL语句
               </h5>
               <pre class="overflow-x-auto rounded-lg bg-ink-900 p-3 text-xs text-green-400">{{ currentQuestion.sql_text }}</pre>
-            </div>
-
-            <!-- 图表类型 -->
-            <div v-if="currentQuestion.chart_type" class="mb-4">
-              <h5 class="mb-2 flex items-center gap-2 text-sm font-semibold text-ink-700">
-                <FontAwesomeIcon :icon="['fas', 'chart-bar']" />
-                图表类型
-              </h5>
-              <span class="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700 border border-blue-200">
-                <FontAwesomeIcon :icon="['fas', 'chart-pie']" class="text-xs" />
-                {{ currentQuestion.chart_type }}
-              </span>
             </div>
 
             <!-- 错误信息 -->

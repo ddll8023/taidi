@@ -1,3 +1,4 @@
+"""任务二题目回答执行服务"""
 import json
 import os
 import uuid
@@ -10,8 +11,10 @@ from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
 from app.models.task2_question_item import Task2QuestionItem
 from app.models.task2_workspace import Task2Workspace
+from app.schemas.common import ErrorCode
 from app.schemas.task2 import QuestionStatus
 from app.services import chat as chat_service
+from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -19,13 +22,16 @@ logger = setup_logger(__name__)
 CHART_DIR = os.path.join(os.getcwd(), "result")
 
 
+# ========== 公共入口函数 ==========
+
 def answer_single_question(question_id: int, db: Session) -> dict:
+    """回答指定任务二题目并保存问答结果。"""
     question = db.get(Task2QuestionItem, question_id)
     if question is None:
-        raise ValueError(f"题目不存在: {question_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
 
     if question.status == QuestionStatus.ANSWERING:
-        raise ValueError(f"题目正在回答中: {question.question_code}")
+        raise ServiceException(ErrorCode.PARAM_ERROR, "题目正在回答中")
 
     question.status = QuestionStatus.ANSWERING
     question.last_error = None
@@ -104,6 +110,7 @@ def answer_single_question(question_id: int, db: Session) -> dict:
         db.flush()
 
         _update_workspace_stats(db, question.workspace_id)
+        _commit_or_raise(db)
 
         logger.info("题目 %s 回答完成", question.question_code)
 
@@ -122,17 +129,21 @@ def answer_single_question(question_id: int, db: Session) -> dict:
         question.last_error = str(exc)
         db.flush()
         _update_workspace_stats(db, question.workspace_id)
+        _commit_or_raise(db)
         logger.error("题目 %s 回答失败: %s", question.question_code, str(exc))
-        raise
+        if isinstance(exc, ServiceException):
+            raise
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "回答失败") from exc
 
 
 def delete_question_answer(question_id: int, db: Session) -> dict:
+    """删除指定任务二题目的已生成回答。"""
     question = db.get(Task2QuestionItem, question_id)
     if question is None:
-        raise ValueError(f"题目不存在: {question_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
 
     if question.status == QuestionStatus.ANSWERING:
-        raise ValueError(f"题目正在回答中，无法删除: {question.question_code}")
+        raise ServiceException(ErrorCode.PARAM_ERROR, "题目正在回答中，无法删除")
 
     if question.session_id:
         _delete_session_and_charts(db, question.session_id)
@@ -152,6 +163,7 @@ def delete_question_answer(question_id: int, db: Session) -> dict:
     db.flush()
 
     _update_workspace_stats(db, question.workspace_id)
+    _commit_or_raise(db)
 
     logger.info("题目 %s 的回答已删除", question.question_code)
 
@@ -164,12 +176,13 @@ def delete_question_answer(question_id: int, db: Session) -> dict:
 
 
 def rerun_question(question_id: int, db: Session) -> dict:
+    """清理指定题目旧结果后重新回答。"""
     question = db.get(Task2QuestionItem, question_id)
     if question is None:
-        raise ValueError(f"题目不存在: {question_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
 
     if question.status == QuestionStatus.ANSWERING:
-        raise ValueError(f"题目正在回答中，无法重新回答: {question.question_code}")
+        raise ServiceException(ErrorCode.PARAM_ERROR, "题目正在回答中，无法重新回答")
 
     if question.session_id:
         _delete_session_and_charts(db, question.session_id)
@@ -190,6 +203,23 @@ def rerun_question(question_id: int, db: Session) -> dict:
     logger.info("题目 %s 开始重新回答", question.question_code)
 
     return answer_single_question(question_id, db)
+
+
+def batch_answer_questions(workspace_id: int, scope: str, db: Session) -> dict:
+    """按范围批量回答任务二工作台题目。"""
+    return _batch_answer_questions(workspace_id=workspace_id, scope=scope, db=db)
+
+
+"""辅助函数"""
+
+
+def _commit_or_raise(db: Session) -> None:
+    """提交当前事务，失败时回滚并转换为业务异常。"""
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
 
 
 def _delete_session_and_charts(db: Session, session_id: str):
@@ -249,10 +279,10 @@ def _update_workspace_stats(db: Session, workspace_id: int):
         db.flush()
 
 
-def batch_answer_questions(workspace_id: int, scope: str, db: Session) -> dict:
+def _batch_answer_questions(workspace_id: int, scope: str, db: Session) -> dict:
     workspace = db.get(Task2Workspace, workspace_id)
     if workspace is None:
-        raise ValueError(f"工作台不存在: {workspace_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "工作台不存在")
 
     stmt = select(Task2QuestionItem).where(
         Task2QuestionItem.workspace_id == workspace_id
@@ -288,7 +318,6 @@ def batch_answer_questions(workspace_id: int, scope: str, db: Session) -> dict:
 
         try:
             result = answer_single_question(question.id, db)
-            db.commit()
             success_count += 1
             results.append({
                 "question_code": question.question_code,
@@ -301,12 +330,13 @@ def batch_answer_questions(workspace_id: int, scope: str, db: Session) -> dict:
             results.append({
                 "question_code": question.question_code,
                 "status": "failed",
-                "error": str(exc),
+                "error": exc.message if isinstance(exc, ServiceException) else "回答失败",
             })
             logger.error("批量回答失败: %s - %s", question.question_code, str(exc))
 
     _update_workspace_stats(db, workspace_id)
     db.flush()
+    _commit_or_raise(db)
 
     return {
         "total": len(all_questions),

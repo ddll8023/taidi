@@ -1,3 +1,5 @@
+"""任务三附件导入与工作台查询服务。"""
+
 import json
 import os
 import zipfile
@@ -10,7 +12,13 @@ from sqlalchemy.orm import Session
 
 from app.models.task3_question_item import Task3QuestionItem
 from app.models.task3_workspace import Task3Workspace
-from app.schemas.task3 import Task3ImportStatus
+from app.schemas.common import ErrorCode
+from app.schemas.task3 import (
+    Task3ImportResponse,
+    Task3ImportStatus,
+    Task3QuestionStatsResponse,
+)
+from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -23,6 +31,7 @@ UPLOAD_DIR = os.path.join(os.getcwd(), "uploads", "fujian6", "current")
 
 
 def _column_ref_to_index(cell_ref: str) -> int:
+    """将 Excel 列标转换为从零开始的索引。"""
     letters = "".join(char for char in cell_ref if char.isalpha())
     if not letters:
         return 0
@@ -33,6 +42,7 @@ def _column_ref_to_index(cell_ref: str) -> int:
 
 
 def _load_shared_strings(archive: zipfile.ZipFile) -> list[str]:
+    """读取共享字符串表。"""
     if "xl/sharedStrings.xml" not in archive.namelist():
         return []
     root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
@@ -47,6 +57,7 @@ def _load_shared_strings(archive: zipfile.ZipFile) -> list[str]:
 
 
 def _get_all_sheet_names(archive: zipfile.ZipFile) -> list[str]:
+    """获取工作簿中的全部工作表名称。"""
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
     sheets = workbook.find("a:sheets", MAIN_NS)
     if sheets is None:
@@ -55,6 +66,7 @@ def _get_all_sheet_names(archive: zipfile.ZipFile) -> list[str]:
 
 
 def _get_sheet_target(archive: zipfile.ZipFile, sheet_name: str) -> str:
+    """根据工作表名称定位其 XML 文件路径。"""
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
     relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
     rel_map = {
@@ -70,10 +82,11 @@ def _get_sheet_target(archive: zipfile.ZipFile, sheet_name: str) -> str:
             break
         target = rel_map[relation_id]
         return target if target.startswith("xl/") else f"xl/{target}"
-    raise ValueError(f"未找到工作表：{sheet_name}")
+    raise ServiceException(ErrorCode.PARAM_ERROR, f"未找到工作表：{sheet_name}")
 
 
 def _read_sheet_rows(archive: zipfile.ZipFile, sheet_target: str) -> list[list[str]]:
+    """读取指定工作表的原始行数据。"""
     shared_strings = _load_shared_strings(archive)
     root = ET.fromstring(archive.read(sheet_target))
     sheet_data = root.find("a:sheetData", MAIN_NS)
@@ -108,6 +121,7 @@ def _read_sheet_rows(archive: zipfile.ZipFile, sheet_target: str) -> list[list[s
 
 
 def _parse_fujian6_file(file_path: str) -> list[dict[str, Any]]:
+    """解析附件6并提取题目数据。"""
     source_path = Path(file_path)
     if not source_path.exists():
         raise FileNotFoundError(f"附件6文件不存在：{file_path}")
@@ -145,6 +159,7 @@ def _parse_fujian6_file(file_path: str) -> list[dict[str, Any]]:
 
 
 def get_workspace_info(db: Session) -> Task3Workspace | None:
+    """获取最新的任务三工作台记录。"""
     stmt = select(Task3Workspace).order_by(Task3Workspace.id.desc()).limit(1)
     return db.execute(stmt).scalar_one_or_none()
 
@@ -154,6 +169,7 @@ def get_question_list(
     workspace_id: int,
     status: int | None = None,
 ) -> list[Task3QuestionItem]:
+    """获取工作台题目列表。"""
     stmt = select(Task3QuestionItem).where(
         Task3QuestionItem.workspace_id == workspace_id
     )
@@ -166,27 +182,40 @@ def get_question_list(
     return questions
 
 
+def get_question_detail(db: Session, question_id: int) -> Task3QuestionItem | None:
+    """获取单个题目的详情对象。"""
+    question = db.get(Task3QuestionItem, question_id)
+    if question is None:
+        return None
+    return normalize_question_item(question)
+
+
 def normalize_question_item(question: Task3QuestionItem) -> Task3QuestionItem:
+    """规范化题目对象中的结构化字段。"""
     if isinstance(question.execution_plan, list):
         question.execution_plan = {"rounds": question.execution_plan}
     return question
 
 
-def get_question_stats(db: Session, workspace_id: int) -> dict:
+def get_question_stats(
+    db: Session, workspace_id: int
+) -> Task3QuestionStatsResponse:
+    """统计工作台题目数量与状态分布。"""
     all_items = get_question_list(db, workspace_id)
     total = len(all_items)
     pending = sum(1 for q in all_items if q.status == 0)
     answered = sum(1 for q in all_items if q.status == 2)
     failed = sum(1 for q in all_items if q.status == 3)
-    return {
-        "total": total,
-        "pending": pending,
-        "answered": answered,
-        "failed": failed,
-    }
+    return Task3QuestionStatsResponse(
+        total=total,
+        pending=pending,
+        answered=answered,
+        failed=failed,
+    )
 
 
 def get_or_create_workspace(db: Session) -> Task3Workspace:
+    """获取工作台，不存在时自动创建。"""
     workspace = get_workspace_info(db)
     if workspace is None:
         workspace = Task3Workspace(
@@ -202,7 +231,10 @@ def get_or_create_workspace(db: Session) -> Task3Workspace:
     return workspace
 
 
-def import_fujian6(file_path: str, original_filename: str, db: Session) -> dict:
+def import_fujian6(
+    file_path: str, original_filename: str, db: Session
+) -> Task3ImportResponse:
+    """导入附件6并刷新任务三工作台数据。"""
     workspace = get_or_create_workspace(db)
 
     stmt = select(Task3QuestionItem).where(
@@ -258,12 +290,12 @@ def import_fujian6(file_path: str, original_filename: str, db: Session) -> dict:
 
         logger.info("附件6导入完成: workspace_id=%d total=%d", workspace.id, len(questions))
 
-        return {
-            "workspace_id": workspace.id,
-            "source_file_name": original_filename,
-            "total_questions": len(questions),
-            "message": f"成功导入 {len(questions)} 个问题",
-        }
+        return Task3ImportResponse(
+            workspace_id=workspace.id,
+            source_file_name=original_filename,
+            total_questions=len(questions),
+            message=f"成功导入 {len(questions)} 个问题",
+        )
 
     except Exception as e:
         workspace.import_status = Task3ImportStatus.IMPORT_FAILED

@@ -1,3 +1,5 @@
+"""任务三问题规划与执行调度服务。"""
+
 import json
 import re
 from datetime import datetime
@@ -69,6 +71,7 @@ INDUSTRY_KNOWLEDGE_KEYWORDS = [
 
 
 def _get_task3_config() -> dict:
+    """获取任务三提示词配置。"""
     return settings.PROMPT_CONFIG.get_task3_config
 
 
@@ -78,6 +81,7 @@ def _invoke_llm(
     max_tokens: int = 8192,
     temperature: float = 0.1,
 ) -> str:
+    """调用大模型并返回文本响应。"""
     logger.info("调用LLM: prompt_chars=%d", len(system_prompt) + len(user_prompt))
     try:
         model = get_model.build_chat_model(
@@ -105,6 +109,7 @@ def _invoke_llm(
 
 
 def _extract_json_from_response(response_text: str) -> dict | None:
+    """从模型响应中提取 JSON 结构。"""
     json_match = re.search(r"\{[\s\S]*\}", response_text)
     if json_match:
         try:
@@ -118,6 +123,7 @@ def _extract_json_from_response(response_text: str) -> dict | None:
 
 
 def analyze_question(question: str, context: dict | None = None) -> dict:
+    """分析问题意图并返回结构化结果。"""
     config = _get_task3_config()
     planner_config = config.get("planner", {})
 
@@ -148,6 +154,7 @@ def analyze_question(question: str, context: dict | None = None) -> dict:
 
 
 def _create_default_plan(question: str) -> dict:
+    """为未识别场景构造默认执行计划。"""
     if _is_knowledge_only_question(question):
         return _create_knowledge_plan_dict(question)
 
@@ -176,16 +183,19 @@ def _create_default_plan(question: str) -> dict:
 
 
 def _is_knowledge_only_question(question: str) -> bool:
+    """判断问题是否属于知识库检索优先场景。"""
     return any(keyword.lower() in question.lower() for keyword in KNOWLEDGE_ONLY_KEYWORDS)
 
 
 def _infer_doc_types_for_question(question: str) -> list[str]:
+    """根据问题内容推断文档类型过滤条件。"""
     if any(keyword.lower() in question.lower() for keyword in INDUSTRY_KNOWLEDGE_KEYWORDS):
         return ["INDUSTRY_REPORT"]
     return ["RESEARCH_REPORT", "INDUSTRY_REPORT"]
 
 
 def _extract_stock_code_from_context(context: dict | None) -> str | None:
+    """从上下文中提取股票代码。"""
     if not context:
         return None
 
@@ -202,6 +212,7 @@ def _extract_stock_code_from_context(context: dict | None) -> str | None:
 
 
 def _create_knowledge_plan_dict(question: str, context: dict | None = None) -> dict:
+    """为知识库型问题生成计划字典。"""
     params: dict[str, Any] = {
         "query": question,
         "doc_type": _infer_doc_types_for_question(question),
@@ -236,6 +247,7 @@ def _create_knowledge_plan_dict(question: str, context: dict | None = None) -> d
 
 
 def _create_knowledge_plan(question: str, context: dict | None = None) -> ExecutionPlan:
+    """创建知识库检索优先的执行计划。"""
     plan_dict = _create_knowledge_plan_dict(question, context)
     merged_context = dict(context) if context else {}
     if plan_dict.get("context"):
@@ -262,6 +274,7 @@ def create_execution_plan(
     question: str,
     context: dict | None = None,
 ) -> ExecutionPlan:
+    """根据问题分析结果创建执行计划。"""
     plan_dict = analyze_question(question, context)
 
     steps = []
@@ -328,6 +341,7 @@ def create_execution_plan(
 
 
 def detect_multi_intent(question: str) -> bool:
+    """检测问题是否包含多个子意图。"""
     multi_intent_keywords = [
         "并", "同时", "分别", "各自", "以及",
         "排名", "前几", "Top", "最高", "最低",
@@ -347,6 +361,7 @@ def detect_multi_intent(question: str) -> bool:
 
 
 def estimate_complexity(question: str) -> str:
+    """估算问题复杂度等级。"""
     score = 0
 
     if detect_multi_intent(question):
@@ -378,6 +393,7 @@ def plan_task3_question(
     context: dict | None = None,
     db: Session | None = None,
 ) -> ExecutionPlan:
+    """规划任务三问题并返回执行计划。"""
     if _is_knowledge_only_question(question):
         plan = _create_knowledge_plan(question, context)
         logger.info("知识库优先规划: question=%s, steps=%d", question[:50], len(plan.steps))
@@ -399,6 +415,7 @@ def plan_task3_question(
 
 
 def _create_simple_plan(question: str, context: dict | None = None) -> ExecutionPlan:
+    """构造简单问题的降级计划。"""
     steps = [
         TaskStep(
             step_id="s1",
@@ -427,6 +444,7 @@ def _create_simple_plan(question: str, context: dict | None = None) -> Execution
 
 
 def _enrich_context_from_db(context: dict, db: Session) -> dict:
+    """补充上下文中的公司解析信息。"""
     from app.models.company_basic_info import CompanyBasicInfo
     from sqlalchemy import select
 
@@ -460,6 +478,7 @@ def _enrich_context_from_db(context: dict, db: Session) -> dict:
 
 
 def validate_plan(plan: ExecutionPlan) -> tuple[bool, list[str]]:
+    """校验执行计划的依赖关系与关键步骤。"""
     errors = []
 
     if not plan.steps:
@@ -491,6 +510,7 @@ def get_next_executable_steps(
     completed_step_ids: set[str],
     failed_step_ids: set[str] | None = None,
 ) -> list[TaskStep]:
+    """获取当前可以执行的步骤列表。"""
     if failed_step_ids is None:
         failed_step_ids = set()
 
@@ -521,7 +541,8 @@ def execute_plan(
     db: Session,
     stop_on_failure: bool = False,
 ) -> "ExecutionTrace":
-    from app.services.task3_executor import Task3Executor
+    """执行任务三计划并返回执行轨迹。"""
+    from app.services.task3 import executor as services_task3_executor
 
     is_valid, errors = validate_plan(plan)
     if not is_valid:
@@ -530,7 +551,9 @@ def execute_plan(
             f"执行计划无效: {'; '.join(errors)}",
         )
 
-    executor = Task3Executor(db, plan)
+    context: dict[str, Any] = dict(plan.context)
+    results: dict[str, StepResult] = {}
+    references: list[Reference] = []
 
     completed_step_ids: set[str] = set()
     failed_step_ids: set[str] = set()
@@ -562,12 +585,19 @@ def execute_plan(
                             output={},
                             error_message="依赖步骤失败，跳过执行",
                         )
-                        executor.results[step_id] = result
+                        results[step_id] = result
                         failed_step_ids.add(step_id)
             break
 
         for step in executable_steps:
-            result = executor.execute_step(step)
+            result = services_task3_executor.execute_step(
+                step=step,
+                db=db,
+                plan=plan,
+                context=context,
+                results=results,
+                references=references,
+            )
 
             if result.status == StepStatus.COMPLETED:
                 completed_step_ids.add(step.step_id)
@@ -580,7 +610,11 @@ def execute_plan(
         if stop_on_failure and failed_step_ids:
             break
 
-    trace = executor.get_execution_trace()
+    trace = services_task3_executor.build_execution_trace(
+        plan=plan,
+        results=results,
+        references=references,
+    )
     logger.info(
         "执行计划完成: steps=%d, completed=%d, failed=%d",
         len(plan.steps),
@@ -596,6 +630,7 @@ def process_task3_question(
     db: Session,
     context: dict | None = None,
 ) -> "Task3Response":
+    """处理任务三问题并组装最终回答。"""
     plan = plan_task3_question(question, context, db)
 
     trace = execute_plan(plan, db)
@@ -611,15 +646,8 @@ def process_task3_question(
 
     answer_content = Task3AnswerContent(
         content=answer,
-        image=[],
         references=[],
     )
-
-    for result in trace.results:
-        if result.step_type == StepType.COMPOSE_ANSWER and result.status == StepStatus.COMPLETED:
-            if result.output.get("chart_path"):
-                answer_content.image.append(result.output["chart_path"])
-            break
 
     if trace.references:
         answer_content.references = [Reference(**r) for r in trace.references]
@@ -632,15 +660,8 @@ def process_task3_question(
             sql = result.output.get("sql")
             break
 
-    chart_type = None
-    for result in trace.results:
-        if result.step_type == StepType.COMPOSE_ANSWER and result.status == StepStatus.COMPLETED:
-            chart_type = result.output.get("chart_type")
-            break
-
     return Task3Response(
         answer=answer_content,
         sql=sql,
-        chart_type=chart_type,
         execution_trace=trace,
     )

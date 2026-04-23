@@ -1,3 +1,4 @@
+"""智能问数图表生成服务"""
 import os
 import re
 from decimal import Decimal
@@ -61,6 +62,8 @@ CHART_TYPE_KEYWORDS = {
 }
 
 
+# ========== 公共入口函数 ==========
+
 def generate_chart(
     data: list[dict],
     intent: IntentResult,
@@ -68,6 +71,7 @@ def generate_chart(
     sequence: int = 1,
     requested_chart_type: str | None = None,
 ) -> tuple[str | None, str | None]:
+    """根据查询结果和意图生成图表文件，并返回文件路径与图表类型。"""
     chart_type = _select_chart_type(data, intent, requested_chart_type)
     if chart_type is None:
         logger.info("无需生成图表: question_id=%s", question_id)
@@ -121,6 +125,9 @@ def generate_chart(
         logger.error("图表生成失败: %s", str(exc))
         plt.close("all")
         return None, None
+
+
+"""辅助函数"""
 
 
 def _detect_requested_chart_type(question: str) -> str | None:

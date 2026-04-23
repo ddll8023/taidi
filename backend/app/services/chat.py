@@ -1,3 +1,4 @@
+"""智能问数对话服务"""
 import json
 import os
 import re
@@ -8,7 +9,7 @@ from typing import Any
 
 import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -26,7 +27,6 @@ from app.schemas.chat import (
     QueryType,
 )
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
-from app.schemas.response import error
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 from app.utils.model_factory import get_model
@@ -51,6 +51,69 @@ ALLOWED_TABLES = [
     "core_performance_indicators_sheet",
     "company_basic_info",
 ]
+
+
+# ========== 公共入口函数 ==========
+
+def process_chat_message(
+    session_id: str | None,
+    question: str,
+    db: Session,
+    question_id: str | None = None,
+    chart_sequence: int = 1,
+) -> ChatResponse:
+    """处理单轮智能问数消息，返回对话回答、SQL 与图表信息。"""
+    return _process_chat_message(
+        session_id=session_id,
+        question=question,
+        db=db,
+        question_id=question_id,
+        chart_sequence=chart_sequence,
+    )
+
+
+def get_chat_sessions(
+    db: Session, page: int = 1, page_size: int = 10
+) -> PaginatedResponse:
+    """分页查询活跃会话列表。"""
+    return _get_chat_sessions(db=db, page=page, page_size=page_size)
+
+
+def get_chat_history(session_id: str, db: Session) -> list[ChatMessageResponse]:
+    """查询指定会话的历史消息列表。"""
+    return _get_chat_history(session_id=session_id, db=db)
+
+
+def close_chat_session(session_id: str, db: Session) -> bool:
+    """关闭指定会话。"""
+    return _close_chat_session(session_id=session_id, db=db)
+
+
+def delete_chat_session(session_id: str, db: Session) -> bool:
+    """删除指定会话及其消息和图表文件。"""
+    return _delete_chat_session(session_id=session_id, db=db)
+
+
+def rename_chat_session(session_id: str, name: str, db: Session) -> bool:
+    """重命名指定会话。"""
+    return _rename_chat_session(session_id=session_id, name=name, db=db)
+
+
+def export_result_2(questions: list[dict], db: Session) -> str:
+    """批量回答任务二问题并导出 result_2.xlsx。"""
+    return _export_result_2(questions=questions, db=db)
+
+
+"""辅助函数"""
+
+
+def _commit_or_raise(db: Session) -> None:
+    """提交当前事务，失败时回滚并转换为业务异常。"""
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
 
 
 def _build_allowed_column_names() -> set[str]:
@@ -2120,7 +2183,7 @@ def _extract_json_from_response(response_text: str) -> dict | None:
         return None
 
 
-def process_chat_message(
+def _process_chat_message(
     session_id: str | None,
     question: str,
     db: Session,
@@ -2175,7 +2238,7 @@ def process_chat_message(
         db.flush()
 
         chat_session.context_slots = intent.model_dump()
-        db.commit()
+        _commit_or_raise(db)
 
         return ChatResponse(
             session_id=session_id,
@@ -2209,7 +2272,7 @@ def process_chat_message(
         db.flush()
 
         chat_session.context_slots = intent.model_dump()
-        db.commit()
+        _commit_or_raise(db)
 
         return ChatResponse(
             session_id=session_id,
@@ -2231,7 +2294,7 @@ def process_chat_message(
         db.flush()
 
         chat_session.context_slots = intent.model_dump()
-        db.commit()
+        _commit_or_raise(db)
 
         return ChatResponse(
             session_id=session_id,
@@ -2345,7 +2408,7 @@ def process_chat_message(
         logger.info("保存上一轮筛选结果公司集合: %d家公司", len(result_companies))
 
     chat_session.context_slots = context_slots_to_save
-    db.commit()
+    _commit_or_raise(db)
 
     return ChatResponse(
         session_id=session_id,
@@ -3626,17 +3689,18 @@ def _resolve_metric(metric_text: str) -> dict | None:
     return METRIC_ALIAS_MAP.get(metric_text)
 
 
-def get_chat_sessions(
+def _get_chat_sessions(
     db: Session, page: int = 1, page_size: int = 10
 ) -> PaginatedResponse:
-    query = db.query(ChatSession).filter(ChatSession.status == 0)
-    total = query.count()
+    base_stmt = select(ChatSession).where(ChatSession.status == 0)
+    total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
     offset = (page - 1) * page_size
     records = (
-        query.order_by(ChatSession.updated_at.desc())
-        .offset(offset)
-        .limit(page_size)
-        .all()
+        db.scalars(
+            base_stmt.order_by(ChatSession.updated_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        ).all()
     )
 
     items = [
@@ -3657,7 +3721,7 @@ def get_chat_sessions(
     return PaginatedResponse(lists=items, pagination=pagination)
 
 
-def get_chat_history(session_id: str, db: Session) -> list[ChatMessageResponse]:
+def _get_chat_history(session_id: str, db: Session) -> list[ChatMessageResponse]:
     chat_session = db.get(ChatSession, session_id)
     if chat_session is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
@@ -3685,18 +3749,18 @@ def get_chat_history(session_id: str, db: Session) -> list[ChatMessageResponse]:
     ]
 
 
-def close_chat_session(session_id: str, db: Session) -> bool:
+def _close_chat_session(session_id: str, db: Session) -> bool:
     chat_session = db.get(ChatSession, session_id)
     if chat_session is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
 
     chat_session.status = 1
-    db.commit()
+    _commit_or_raise(db)
     logger.info("会话已关闭: session_id=%s", session_id)
     return True
 
 
-def delete_chat_session(session_id: str, db: Session) -> bool:
+def _delete_chat_session(session_id: str, db: Session) -> bool:
     import os
 
     chat_session = db.get(ChatSession, session_id)
@@ -3723,23 +3787,23 @@ def delete_chat_session(session_id: str, db: Session) -> bool:
         db.delete(m)
 
     db.delete(chat_session)
-    db.commit()
+    _commit_or_raise(db)
     logger.info("会话已删除: session_id=%s", session_id)
     return True
 
 
-def rename_chat_session(session_id: str, name: str, db: Session) -> bool:
+def _rename_chat_session(session_id: str, name: str, db: Session) -> bool:
     chat_session = db.get(ChatSession, session_id)
     if chat_session is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
 
     chat_session.name = name
-    db.commit()
+    _commit_or_raise(db)
     logger.info("会话已重命名: session_id=%s, name=%s", session_id, name)
     return True
 
 
-def export_result_2(questions: list[dict], db: Session) -> str:
+def _export_result_2(questions: list[dict], db: Session) -> str:
     import os
 
     from openpyxl import Workbook

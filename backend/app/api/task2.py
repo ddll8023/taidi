@@ -10,13 +10,9 @@ from app.schemas.common import ErrorCode
 from app.schemas.response import error, success
 from app.schemas.task2 import (
     Task2ImportResponse,
-    Task2QuestionItemResponse,
     Task2QuestionListResponse,
-    Task2WorkspaceResponse,
 )
-from app.services import task2_import
-from app.services import task2_runner
-from app.services import task2_export
+from app.services import task2 as services_task2
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
@@ -30,10 +26,10 @@ async def get_workspace(
 ):
     """获取当前工作台概览"""
     try:
-        workspace = task2_import.get_workspace_info(db)
+        workspace = services_task2.get_workspace_info(db)
         if workspace is None:
             return success(data=None, message="工作台尚未初始化")
-        return success(Task2WorkspaceResponse.model_validate(workspace))
+        return success(workspace.model_dump())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
     except Exception as e:
@@ -57,12 +53,12 @@ async def import_fujian4(
             tmp_path = tmp_file.name
 
         try:
-            result = task2_import.import_fujian4(
+            result = services_task2.import_fujian4(
                 file_path=tmp_path,
                 original_filename=file.filename,
                 db=db,
             )
-            return success(Task2ImportResponse(**result))
+            return success(Task2ImportResponse(**result).model_dump())
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
@@ -71,7 +67,7 @@ async def import_fujian4(
         return error(code=e.code, message=e.message)
     except Exception as e:
         logger.error("导入附件4异常: %s", str(e), exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"导入失败: {str(e)}")
+        return error(code=ErrorCode.INTERNAL_ERROR, message="导入失败")
 
 
 @router.get("/questions")
@@ -81,27 +77,25 @@ async def get_questions(
 ):
     """获取题目列表"""
     try:
-        workspace = task2_import.get_workspace_info(db)
+        workspace = services_task2.get_workspace_info(db)
         if workspace is None:
-            return success(Task2QuestionListResponse())
+            return success(Task2QuestionListResponse().model_dump())
 
-        questions = task2_import.get_question_list(
+        questions = services_task2.get_question_list(
             db=db,
             workspace_id=workspace.id,
             status=status,
         )
 
-        stats = task2_import.get_question_stats(db, workspace.id)
-
-        items = [Task2QuestionItemResponse.model_validate(q) for q in questions]
+        stats = services_task2.get_question_stats(db, workspace.id)
 
         return success(Task2QuestionListResponse(
-            items=items,
+            items=questions,
             total=stats["total"],
             pending_count=stats["pending"],
             answered_count=stats["answered"],
             failed_count=stats["failed"],
-        ))
+        ).model_dump())
 
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -117,14 +111,8 @@ async def get_question_detail(
 ):
     """获取单题详情"""
     try:
-        from sqlalchemy import select
-        from app.models.task2_question_item import Task2QuestionItem
-
-        question = db.get(Task2QuestionItem, question_id)
-        if question is None:
-            return error(code=ErrorCode.DATA_NOT_FOUND, message="题目不存在")
-
-        return success(Task2QuestionItemResponse.model_validate(question))
+        question = services_task2.get_question_detail(question_id=question_id, db=db)
+        return success(question.model_dump())
 
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -140,19 +128,13 @@ async def answer_question(
 ):
     """回答本题"""
     try:
-        result = task2_runner.answer_single_question(question_id=question_id, db=db)
-        db.commit()
+        result = services_task2.answer_single_question(question_id=question_id, db=db)
         return success(result)
-    except ValueError as e:
-        db.rollback()
-        return error(code=ErrorCode.PARAM_ERROR, message=str(e))
     except ServiceException as e:
-        db.rollback()
         return error(code=e.code, message=e.message)
     except Exception as e:
-        db.rollback()
         logger.error("回答题目异常: %s", str(e), exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"回答失败: {str(e)}")
+        return error(code=ErrorCode.INTERNAL_ERROR, message="回答失败")
 
 
 @router.delete("/questions/{question_id}/answer")
@@ -162,19 +144,13 @@ async def delete_answer(
 ):
     """删除当前回答"""
     try:
-        result = task2_runner.delete_question_answer(question_id=question_id, db=db)
-        db.commit()
+        result = services_task2.delete_question_answer(question_id=question_id, db=db)
         return success(result)
-    except ValueError as e:
-        db.rollback()
-        return error(code=ErrorCode.PARAM_ERROR, message=str(e))
     except ServiceException as e:
-        db.rollback()
         return error(code=e.code, message=e.message)
     except Exception as e:
-        db.rollback()
         logger.error("删除回答异常: %s", str(e), exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"删除失败: {str(e)}")
+        return error(code=ErrorCode.INTERNAL_ERROR, message="删除失败")
 
 
 @router.post("/questions/{question_id}/rerun")
@@ -184,19 +160,13 @@ async def rerun_question(
 ):
     """重新回答（删除旧结果后重新执行）"""
     try:
-        result = task2_runner.rerun_question(question_id=question_id, db=db)
-        db.commit()
+        result = services_task2.rerun_question(question_id=question_id, db=db)
         return success(result)
-    except ValueError as e:
-        db.rollback()
-        return error(code=ErrorCode.PARAM_ERROR, message=str(e))
     except ServiceException as e:
-        db.rollback()
         return error(code=e.code, message=e.message)
     except Exception as e:
-        db.rollback()
         logger.error("重新回答异常: %s", str(e), exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"重新回答失败: {str(e)}")
+        return error(code=ErrorCode.INTERNAL_ERROR, message="重新回答失败")
 
 
 @router.post("/questions/batch-answer")
@@ -206,27 +176,21 @@ async def batch_answer(
 ):
     """批量回答题目"""
     try:
-        workspace = task2_import.get_workspace_info(db)
+        workspace = services_task2.get_workspace_info(db)
         if workspace is None:
             return error(code=ErrorCode.DATA_NOT_FOUND, message="工作台不存在，请先导入附件4")
 
-        result = task2_runner.batch_answer_questions(
+        result = services_task2.batch_answer_questions(
             workspace_id=workspace.id,
             scope=scope,
             db=db,
         )
-        db.commit()
         return success(result)
-    except ValueError as e:
-        db.rollback()
-        return error(code=ErrorCode.PARAM_ERROR, message=str(e))
     except ServiceException as e:
-        db.rollback()
         return error(code=e.code, message=e.message)
     except Exception as e:
-        db.rollback()
         logger.error("批量回答异常: %s", str(e), exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"批量回答失败: {str(e)}")
+        return error(code=ErrorCode.INTERNAL_ERROR, message="批量回答失败")
 
 
 @router.post("/export")
@@ -235,19 +199,13 @@ async def export_result(
 ):
     """导出result_2.xlsx"""
     try:
-        result = task2_export.export_result_2(db=db)
-        db.commit()
+        result = services_task2.export_result_2(db=db)
         return success(result)
-    except ValueError as e:
-        db.rollback()
-        return error(code=ErrorCode.PARAM_ERROR, message=str(e))
     except ServiceException as e:
-        db.rollback()
         return error(code=e.code, message=e.message)
     except Exception as e:
-        db.rollback()
         logger.error("导出异常: %s", str(e), exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"导出失败: {str(e)}")
+        return error(code=ErrorCode.INTERNAL_ERROR, message="导出失败")
 
 
 @router.get("/export/latest")
@@ -256,7 +214,7 @@ async def get_latest_export(
 ):
     """获取最近一次导出结果信息"""
     try:
-        result = task2_export.get_latest_export_info(db=db)
+        result = services_task2.get_latest_export_info(db=db)
         if result is None:
             return success(data=None, message="暂无导出记录")
         return success(result)

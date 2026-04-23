@@ -1,3 +1,4 @@
+"""任务二结果导出服务"""
 import json
 import os
 from datetime import datetime
@@ -7,12 +8,38 @@ from sqlalchemy.orm import Session
 
 from app.models.task2_question_item import Task2QuestionItem
 from app.models.task2_workspace import Task2Workspace
+from app.schemas.common import ErrorCode
 from app.schemas.task2 import QuestionStatus
+from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
 RESULT_DIR = os.path.join(os.getcwd(), "result")
+
+
+# ========== 公共入口函数 ==========
+
+def export_result_2(db: Session) -> dict:
+    """导出任务二结果文件并记录最近导出信息。"""
+    return _export_result_2(db=db)
+
+
+def get_latest_export_info(db: Session) -> dict | None:
+    """查询最近一次任务二导出结果信息。"""
+    return _get_latest_export_info(db=db)
+
+
+"""辅助函数"""
+
+
+def _commit_or_raise(db: Session) -> None:
+    """提交当前事务，失败时回滚并转换为业务异常。"""
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
 
 
 def _ensure_non_empty_qa_pairs(question_json_str: str, qa_pairs: list[dict]) -> list[dict]:
@@ -44,12 +71,12 @@ def _ensure_non_empty_qa_pairs(question_json_str: str, qa_pairs: list[dict]) -> 
     ]
 
 
-def export_result_2(db: Session) -> dict:
+def _export_result_2(db: Session) -> dict:
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 
     if workspace is None:
-        raise ValueError("工作台不存在，请先导入附件4")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "工作台不存在，请先导入附件4")
 
     stmt = select(Task2QuestionItem).where(
         Task2QuestionItem.workspace_id == workspace.id
@@ -57,7 +84,7 @@ def export_result_2(db: Session) -> dict:
     questions = list(db.execute(stmt).scalars().all())
 
     if not questions:
-        raise ValueError("没有可导出的题目")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "没有可导出的题目")
 
     from openpyxl import Workbook
 
@@ -123,6 +150,7 @@ def export_result_2(db: Session) -> dict:
     workspace.last_export_path = xlsx_path
     workspace.last_exported_at = datetime.now()
     db.flush()
+    _commit_or_raise(db)
 
     return {
         "xlsx_path": xlsx_path,
@@ -134,7 +162,7 @@ def export_result_2(db: Session) -> dict:
     }
 
 
-def get_latest_export_info(db: Session) -> dict | None:
+def _get_latest_export_info(db: Session) -> dict | None:
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 

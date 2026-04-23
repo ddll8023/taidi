@@ -1,3 +1,5 @@
+"""任务三工作台执行服务。"""
+
 import json
 from datetime import datetime
 from decimal import Decimal
@@ -8,27 +10,23 @@ from sqlalchemy.orm import Session
 
 from app.models.task3_question_item import Task3QuestionItem
 from app.models.task3_workspace import Task3Workspace
-from app.schemas.task3 import StepType, StepStatus
-from app.services.task3_planner import process_task3_question
-from app.services.task3_verifier import verify_execution_trace
+from app.schemas.common import ErrorCode
+from app.schemas.task3 import (
+    StepStatus,
+    StepType,
+    Task3BatchAnswerResponse,
+    Task3QuestionActionResponse,
+)
+from app.services.task3.planner import process_task3_question
+from app.services.task3.verifier import verify_execution_trace
+from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
-CHART_TYPE_MAP = {
-    "line": "折线图",
-    "bar": "柱状图",
-    "pie": "饼图",
-    "horizontal_bar": "条形图",
-    "grouped_bar": "分组柱状图",
-    "radar": "雷达图",
-    "histogram": "直方图",
-    "scatter": "散点图",
-    "box": "箱线图",
-}
-
 
 def _to_jsonable(value):
+    """将复杂对象递归转换为 JSON 可序列化结构。"""
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
     if isinstance(value, datetime):
@@ -43,6 +41,7 @@ def _to_jsonable(value):
 
 
 def _build_failure_message(verification: dict | None, fallback: str = "任务三回答未通过校验") -> str:
+    """根据校验结果拼接失败原因文本。"""
     if not verification:
         return fallback
 
@@ -54,21 +53,8 @@ def _build_failure_message(verification: dict | None, fallback: str = "任务三
     return "; ".join(messages)[:2000]
 
 
-def _convert_path_to_url(file_path: str) -> str:
-    if not file_path:
-        return ""
-    if file_path.startswith("./result/"):
-        return file_path
-    if file_path.startswith("/api/v1/"):
-        filename = file_path.split("/")[-1]
-        return f"./result/{filename}"
-    if "/" in file_path or "\\" in file_path:
-        filename = file_path.replace("\\", "/").split("/")[-1]
-        return f"./result/{filename}"
-    return f"./result/{file_path}"
-
-
 def _parse_question_rounds(question_json_str: str) -> list[dict]:
+    """解析题目原始 JSON 为轮次列表。"""
     try:
         parsed = json.loads(question_json_str)
     except (json.JSONDecodeError, TypeError):
@@ -92,6 +78,7 @@ def _parse_question_rounds(question_json_str: str) -> list[dict]:
 
 
 def _build_standalone_question(q_text: str, previous_rounds: list[dict]) -> str:
+    """将当前追问与历史轮次拼接为独立问题。"""
     if not previous_rounds:
         return q_text
 
@@ -114,6 +101,7 @@ def _build_standalone_question(q_text: str, previous_rounds: list[dict]) -> str:
 
 
 def _build_reference_json(ref) -> dict:
+    """将引用对象规范化为输出字典。"""
     if isinstance(ref, dict):
         return {
             "paper_path": ref.get("paper_path"),
@@ -127,25 +115,8 @@ def _build_reference_json(ref) -> dict:
     }
 
 
-def _extract_compose_output(trace) -> dict:
-    for result in trace.results:
-        if result.step_type == StepType.COMPOSE_ANSWER and result.status == StepStatus.COMPLETED:
-            return result.output or {}
-    return {}
-
-
-def _build_answer_item(q_text: str, response) -> tuple[dict, list[str], str | None]:
-    trace = response.execution_trace
-    compose_output = _extract_compose_output(trace)
-
-    image_paths = []
-    raw_images = compose_output.get("images") or compose_output.get("chart_path") or response.answer.image or []
-    if isinstance(raw_images, str):
-        raw_images = [raw_images]
-    for img_path in raw_images:
-        if isinstance(img_path, str) and img_path:
-            image_paths.append(_convert_path_to_url(img_path))
-
+def _build_answer_item(q_text: str, response) -> dict:
+    """构造单轮回答的输出对象。"""
     references = []
     for ref in response.answer.references:
         ref_json = _build_reference_json(ref)
@@ -153,22 +124,17 @@ def _build_answer_item(q_text: str, response) -> tuple[dict, list[str], str | No
             references.append(ref_json)
 
     answer_payload = {"content": response.answer.content}
-    if image_paths:
-        answer_payload["image"] = image_paths
     if references:
         answer_payload["references"] = references
 
-    return (
-        {
-            "Q": q_text,
-            "A": answer_payload,
-        },
-        image_paths,
-        compose_output.get("chart_type"),
-    )
+    return {
+        "Q": q_text,
+        "A": answer_payload,
+    }
 
 
 def _build_retrieval_summary(trace) -> dict | None:
+    """从执行轨迹中提取检索摘要。"""
     retrieve_steps = [
         r for r in trace.results
         if r.step_type == StepType.RETRIEVE_EVIDENCE and r.status == StepStatus.COMPLETED
@@ -201,10 +167,11 @@ def _build_retrieval_summary(trace) -> dict | None:
     }
 
 
-def answer_single_question(question_id: int, db: Session) -> dict:
+def answer_single_question(question_id: int, db: Session) -> Task3QuestionActionResponse:
+    """回答指定题目并持久化结果。"""
     question = db.get(Task3QuestionItem, question_id)
     if question is None:
-        raise ValueError(f"题目不存在: {question_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
 
     question.status = 1  # 回答中
     db.flush()
@@ -213,20 +180,16 @@ def answer_single_question(question_id: int, db: Session) -> dict:
         rounds = _parse_question_rounds(question.question_raw_json or "")
         answer_json = []
         all_sqls = []
-        all_chart_types = []
-        image_paths = []
         verifications = []
         retrieval_summaries = []
         execution_plans = []
         previous_rounds = []
-        chart_sequence = 1
 
         for round_idx, round_item in enumerate(rounds):
             q_text = round_item.get("Q", "")
             standalone_question = _build_standalone_question(q_text, previous_rounds)
             context = {
                 "question_id": question.question_code,
-                "chart_sequence": chart_sequence,
                 "previous_rounds": previous_rounds,
                 "previous_sqls": all_sqls,
                 "original_question": q_text,
@@ -255,13 +218,8 @@ def answer_single_question(question_id: int, db: Session) -> dict:
                     if sql:
                         all_sqls.append(sql)
 
-            answer_item, round_images, chart_type = _build_answer_item(q_text, response)
+            answer_item = _build_answer_item(q_text, response)
             answer_json.append(answer_item)
-            image_paths.extend(round_images)
-            chart_sequence += len(round_images)
-
-            if chart_type:
-                all_chart_types.append(CHART_TYPE_MAP.get(chart_type, "图表"))
 
             previous_rounds.append({
                 "Q": q_text,
@@ -269,7 +227,7 @@ def answer_single_question(question_id: int, db: Session) -> dict:
             })
 
         verification = {
-            "passed": bool(verifications) and all(item.get("passed", False) for item in verifications),
+            "passed": bool(verifications) and all(item.passed for item in verifications),
             "rounds": verifications,
         }
         retrieval_summary = {
@@ -279,8 +237,6 @@ def answer_single_question(question_id: int, db: Session) -> dict:
 
         question.answer_json = _to_jsonable(answer_json)
         question.sql_text = "\n\n".join(all_sqls) if all_sqls else None
-        question.chart_type = "、".join(all_chart_types) if all_chart_types else "无"
-        question.image_paths_json = _to_jsonable(image_paths)
         question.execution_plan = (
             {"rounds": _to_jsonable(execution_plans)}
             if execution_plans
@@ -300,7 +256,11 @@ def answer_single_question(question_id: int, db: Session) -> dict:
         db.commit()
         db.refresh(question)
 
-        return {"id": question.id, "status": question.status, "answered_at": question.answered_at}
+        return Task3QuestionActionResponse(
+            id=question.id,
+            status=question.status,
+            answered_at=question.answered_at,
+        )
 
     except Exception as e:
         logger.error("回答题目失败: question_id=%s, error=%s", question_id, str(e), exc_info=True)
@@ -319,15 +279,14 @@ def answer_single_question(question_id: int, db: Session) -> dict:
         raise
 
 
-def delete_question_answer(question_id: int, db: Session) -> dict:
+def delete_question_answer(question_id: int, db: Session) -> Task3QuestionActionResponse:
+    """删除指定题目的回答结果。"""
     question = db.get(Task3QuestionItem, question_id)
     if question is None:
-        raise ValueError(f"题目不存在: {question_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
 
     question.answer_json = None
     question.sql_text = None
-    question.chart_type = None
-    question.image_paths_json = None
     question.execution_plan = None
     question.verification = None
     question.retrieval_summary = None
@@ -337,18 +296,21 @@ def delete_question_answer(question_id: int, db: Session) -> dict:
     _sync_workspace_stats(db, question.workspace_id)
     db.commit()
 
-    return {"id": question_id, "status": question.status}
+    return Task3QuestionActionResponse(
+        id=question_id,
+        status=question.status,
+        answered_at=question.answered_at,
+    )
 
 
-def rerun_question(question_id: int, db: Session) -> dict:
+def rerun_question(question_id: int, db: Session) -> Task3QuestionActionResponse:
+    """清空旧结果并重新回答指定题目。"""
     question = db.get(Task3QuestionItem, question_id)
     if question is None:
-        raise ValueError(f"题目不存在: {question_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
 
     question.answer_json = None
     question.sql_text = None
-    question.chart_type = None
-    question.image_paths_json = None
     question.execution_plan = None
     question.verification = None
     question.retrieval_summary = None
@@ -360,6 +322,7 @@ def rerun_question(question_id: int, db: Session) -> dict:
 
 
 def _sync_workspace_stats(db: Session, workspace_id: int):
+    """同步工作台题目统计信息。"""
     workspace = db.get(Task3Workspace, workspace_id)
     if workspace is None:
         return
@@ -378,7 +341,8 @@ def batch_answer_questions(
     workspace_id: int,
     scope: str,
     db: Session,
-) -> dict:
+) -> Task3BatchAnswerResponse:
+    """按范围批量回答工作台中的题目。"""
     stmt = select(Task3QuestionItem).where(Task3QuestionItem.workspace_id == workspace_id)
     if scope == "unfinished":
         stmt = stmt.where(Task3QuestionItem.status.in_([0, 3]))
@@ -394,7 +358,7 @@ def batch_answer_questions(
     for q in questions:
         try:
             result = answer_single_question(q.id, db)
-            if result.get("status") == 2:
+            if result.status == 2:
                 success_count += 1
             else:
                 failed_count += 1
@@ -405,4 +369,4 @@ def batch_answer_questions(
     _sync_workspace_stats(db, workspace_id)
     db.commit()
 
-    return {"success": success_count, "failed": failed_count}
+    return Task3BatchAnswerResponse(success=success_count, failed=failed_count)

@@ -1,3 +1,4 @@
+"""任务二附件导入与工作台查询服务"""
 import json
 import os
 import zipfile
@@ -11,7 +12,14 @@ from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
 from app.models.task2_question_item import Task2QuestionItem
 from app.models.task2_workspace import Task2Workspace
-from app.schemas.task2 import ImportStatus, QuestionStatus
+from app.schemas.common import ErrorCode
+from app.schemas.task2 import (
+    ImportStatus,
+    QuestionStatus,
+    Task2QuestionItemResponse,
+    Task2WorkspaceResponse,
+)
+from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -21,6 +29,73 @@ REL_NS = {"r": "http://schemas.openxmlformats.org/package/2006/relationships"}
 OFFICE_REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
 
 UPLOAD_DIR = os.path.join(os.getcwd(), "uploads", "fujian4", "current")
+
+
+# ========== 公共入口函数 ==========
+
+def import_fujian4(file_path: str, original_filename: str, db: Session) -> dict:
+    """导入附件4文件，解析题目并初始化任务二工作台。"""
+    return _import_fujian4(
+        file_path=file_path,
+        original_filename=original_filename,
+        db=db,
+    )
+
+
+def get_workspace_info(db: Session) -> Task2WorkspaceResponse | None:
+    """查询最近一次任务二工作台概览。"""
+    workspace = _get_workspace_entity(db)
+    if workspace is None:
+        return None
+    return Task2WorkspaceResponse.model_validate(workspace)
+
+
+def get_question_list(
+    db: Session,
+    workspace_id: int,
+    status: int | None = None,
+) -> list[Task2QuestionItemResponse]:
+    """查询任务二工作台题目列表。"""
+    return [
+        Task2QuestionItemResponse.model_validate(item)
+        for item in _get_question_entities(db=db, workspace_id=workspace_id, status=status)
+    ]
+
+
+def get_question_detail(question_id: int, db: Session) -> Task2QuestionItemResponse:
+    """查询任务二单题详情。"""
+    question = db.get(Task2QuestionItem, question_id)
+    if question is None:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
+    return Task2QuestionItemResponse.model_validate(question)
+
+
+def get_question_stats(db: Session, workspace_id: int) -> dict:
+    """统计任务二工作台题目状态数量。"""
+    questions = _get_question_entities(db=db, workspace_id=workspace_id)
+    total = len(questions)
+    pending = sum(1 for q in questions if q.status == QuestionStatus.PENDING)
+    answered = sum(1 for q in questions if q.status == QuestionStatus.ANSWERED)
+    failed = sum(1 for q in questions if q.status == QuestionStatus.FAILED)
+
+    return {
+        "total": total,
+        "pending": pending,
+        "answered": answered,
+        "failed": failed,
+    }
+
+
+"""辅助函数"""
+
+
+def _commit_or_raise(db: Session) -> None:
+    """提交当前事务，失败时回滚并转换为业务异常。"""
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
 
 
 def _column_ref_to_index(cell_ref: str) -> int:
@@ -71,7 +146,7 @@ def _get_sheet_target(archive: zipfile.ZipFile, sheet_name: str) -> str:
             break
         target = rel_map[relation_id]
         return target if target.startswith("xl/") else f"xl/{target}"
-    raise ValueError(f"未找到工作表：{sheet_name}")
+    raise ServiceException(ErrorCode.PARAM_ERROR, f"未找到工作表：{sheet_name}")
 
 
 def _read_sheet_rows(archive: zipfile.ZipFile, sheet_target: str) -> list[list[str]]:
@@ -111,7 +186,7 @@ def _read_sheet_rows(archive: zipfile.ZipFile, sheet_target: str) -> list[list[s
 def _parse_fujian4_file(file_path: str) -> list[dict]:
     source_path = Path(file_path)
     if not source_path.exists():
-        raise FileNotFoundError(f"附件4文件不存在：{file_path}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "附件4文件不存在")
 
     questions = []
     with zipfile.ZipFile(source_path) as archive:
@@ -194,7 +269,7 @@ def _delete_chart_file(chart_path: str, chart_dir: str):
         logger.warning("删除图表文件失败: path=%s error=%s", chart_path, str(e))
 
 
-def get_or_create_workspace(db: Session) -> Task2Workspace:
+def _get_or_create_workspace(db: Session) -> Task2Workspace:
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 
@@ -213,8 +288,8 @@ def get_or_create_workspace(db: Session) -> Task2Workspace:
     return workspace
 
 
-def import_fujian4(file_path: str, original_filename: str, db: Session) -> dict:
-    workspace = get_or_create_workspace(db)
+def _import_fujian4(file_path: str, original_filename: str, db: Session) -> dict:
+    workspace = _get_or_create_workspace(db)
 
     if workspace.import_status == ImportStatus.IMPORTED and workspace.total_questions > 0:
         logger.info("工作台已有数据，将清空旧数据后重新导入")
@@ -263,7 +338,7 @@ def import_fujian4(file_path: str, original_filename: str, db: Session) -> dict:
         workspace.answered_count = 0
         workspace.failed_count = 0
         workspace.import_status = ImportStatus.IMPORTED
-        db.commit()
+        _commit_or_raise(db)
 
         logger.info("附件4导入完成: workspace_id=%d total=%d", workspace.id, len(questions))
 
@@ -274,19 +349,24 @@ def import_fujian4(file_path: str, original_filename: str, db: Session) -> dict:
             "message": f"成功导入 {len(questions)} 个问题",
         }
 
+    except ServiceException as e:
+        workspace.import_status = ImportStatus.IMPORT_FAILED
+        _commit_or_raise(db)
+        logger.error("附件4导入失败: %s", e.message)
+        raise
     except Exception as e:
         workspace.import_status = ImportStatus.IMPORT_FAILED
-        db.commit()
+        _commit_or_raise(db)
         logger.error("附件4导入失败: %s", str(e))
-        raise
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "导入失败") from e
 
 
-def get_workspace_info(db: Session) -> Task2Workspace | None:
+def _get_workspace_entity(db: Session) -> Task2Workspace | None:
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     return db.execute(stmt).scalar_one_or_none()
 
 
-def get_question_list(
+def _get_question_entities(
     db: Session,
     workspace_id: int,
     status: int | None = None,
@@ -296,20 +376,3 @@ def get_question_list(
         stmt = stmt.where(Task2QuestionItem.status == status)
     stmt = stmt.order_by(Task2QuestionItem.question_code)
     return list(db.execute(stmt).scalars().all())
-
-
-def get_question_stats(db: Session, workspace_id: int) -> dict:
-    stmt = select(Task2QuestionItem).where(Task2QuestionItem.workspace_id == workspace_id)
-    questions = list(db.execute(stmt).scalars().all())
-
-    total = len(questions)
-    pending = sum(1 for q in questions if q.status == QuestionStatus.PENDING)
-    answered = sum(1 for q in questions if q.status == QuestionStatus.ANSWERED)
-    failed = sum(1 for q in questions if q.status == QuestionStatus.FAILED)
-
-    return {
-        "total": total,
-        "pending": pending,
-        "answered": answered,
-        "failed": failed,
-    }

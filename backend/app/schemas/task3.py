@@ -102,7 +102,6 @@ class Reference(BaseModel):
 
 class Task3AnswerContent(BaseModel):
     content: str = Field(..., description="回答文本内容")
-    image: list[str] = Field(default_factory=list, description="图表路径列表")
     references: list[Reference] = Field(default_factory=list, description="引用来源列表")
 
     model_config = ConfigDict(from_attributes=True)
@@ -112,7 +111,6 @@ class Task3Response(BaseModel):
     question_id: str | None = Field(None, description="问题编号")
     answer: Task3AnswerContent = Field(..., description="回答内容")
     sql: str | None = Field(None, description="生成的SQL语句")
-    chart_type: str | None = Field(None, description="图表类型")
     execution_trace: ExecutionTrace | None = Field(None, description="执行轨迹")
 
     model_config = ConfigDict(from_attributes=True)
@@ -130,6 +128,43 @@ class Task3PlanRequest(BaseModel):
 class Task3PlanResponse(BaseModel):
     plan: ExecutionPlan = Field(..., description="生成的执行计划")
     reasoning: str | None = Field(None, description="规划推理过程")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3ExecuteResponse(BaseModel):
+    plan: ExecutionPlan = Field(..., description="执行计划")
+    trace: ExecutionTrace = Field(..., description="执行轨迹")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3VerifyResponse(BaseModel):
+    answer: str | None = Field(None, description="最终答案")
+    verification: "Task3VerificationResultResponse" = Field(
+        default_factory=lambda: Task3VerificationResultResponse(),
+        description="校验结果",
+    )
+    references: list[dict] = Field(default_factory=list, description="引用列表")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3VerificationResultResponse(BaseModel):
+    passed: bool = Field(True, description="是否通过校验")
+    errors: list[str] = Field(default_factory=list, description="错误列表")
+    warnings: list[str] = Field(default_factory=list, description="警告列表")
+    details: dict = Field(default_factory=dict, description="详细信息")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3AnswerQualityResponse(BaseModel):
+    has_answer: bool = Field(False, description="是否有答案")
+    answer_length: int = Field(0, description="答案长度")
+    has_references: bool = Field(False, description="是否包含引用")
+    reference_count: int = Field(0, description="引用数量")
+    warnings: list[str] = Field(default_factory=list, description="警告列表")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -177,8 +212,6 @@ class Task3QuestionItemResponse(BaseModel):
     status: int = Field(0, description="状态：0待处理 1回答中 2已完成 3失败")
     answer_json: list | None = Field(None, description="回答JSON数组")
     sql_text: str | None = Field(None, description="生成的SQL语句")
-    chart_type: str | None = Field(None, description="图表类型")
-    image_paths_json: list | None = Field(None, description="图表文件路径列表")
     execution_plan: dict | None = Field(None, description="执行计划对象")
     verification: dict | None = Field(None, description="校验结果对象")
     retrieval_summary: dict | None = Field(None, description="知识库检索摘要")
@@ -199,11 +232,71 @@ class Task3ImportResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class Task3QuestionActionResponse(BaseModel):
+    id: int = Field(..., description="题目ID")
+    status: int = Field(..., description="题目状态")
+    answered_at: datetime | None = Field(None, description="回答完成时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3BatchAnswerResponse(BaseModel):
+    success: int = Field(0, description="成功数量")
+    failed: int = Field(0, description="失败数量")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3ExportContentResponse(BaseModel):
+    content: str = Field(..., description="回答内容")
+    references: list[dict] = Field(default_factory=list, description="引用列表")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3SingleExportResponse(BaseModel):
+    id: str = Field(..., description="题目编号")
+    question: str = Field(..., description="问题内容")
+    sql: str | None = Field(None, description="生成的SQL")
+    answer: Task3ExportContentResponse = Field(..., description="导出答案")
+    success: bool = Field(..., description="是否成功")
+    error: str | None = Field(None, description="失败原因")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3WorkspaceExportResponse(BaseModel):
+    xlsx_path: str = Field(..., description="导出文件路径")
+    success_count: int = Field(0, description="成功数量")
+    fail_count: int = Field(0, description="失败数量")
+    total: int = Field(0, description="总题目数")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3LatestExportResponse(BaseModel):
+    xlsx_path: str = Field(..., description="导出文件路径")
+    exported_at: str | None = Field(None, description="导出时间")
+    total_questions: int = Field(0, description="总题目数")
+    answered_count: int = Field(0, description="已回答数量")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class Task3QuestionListResponse(BaseModel):
     items: list[Task3QuestionItemResponse] = Field(default_factory=list, description="题目列表")
     total: int = Field(0, description="总数")
     pending_count: int = Field(0, description="待处理数量")
     answered_count: int = Field(0, description="已回答数量")
     failed_count: int = Field(0, description="失败数量")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task3QuestionStatsResponse(BaseModel):
+    total: int = Field(0, description="总数")
+    pending: int = Field(0, description="待处理数量")
+    answered: int = Field(0, description="已回答数量")
+    failed: int = Field(0, description="失败数量")
 
     model_config = ConfigDict(from_attributes=True)

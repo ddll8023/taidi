@@ -1,3 +1,5 @@
+"""任务三结果导出服务。"""
+
 import json
 import os
 import re
@@ -6,31 +8,25 @@ from datetime import datetime
 from openpyxl import Workbook
 from sqlalchemy.orm import Session
 
-from app.schemas.task3 import Reference
-from app.services.task3_planner import process_task3_question
-from app.services.task3_verifier import verify_answer_quality
+from app.schemas.common import ErrorCode
+from app.schemas.task3 import (
+    Reference,
+    Task3ExportContentResponse,
+    Task3LatestExportResponse,
+    Task3SingleExportResponse,
+    Task3WorkspaceExportResponse,
+)
+from app.services.task3.planner import process_task3_question
+from app.services.task3.verifier import verify_answer_quality
+from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 TASK3_QUESTION_CODE_PATTERN = re.compile(r"^B2\d{3}$")
-TASK3_IMAGE_PATH_PATTERN = re.compile(
-    r"^\./result/(?P<question_id>B2\d{3})_(?P<sequence>[1-9]\d*)\.jpg$"
-)
-
-CHART_TYPE_MAP = {
-    "line": "折线图",
-    "bar": "柱状图",
-    "pie": "饼图",
-    "horizontal_bar": "条形图",
-    "grouped_bar": "分组柱状图",
-    "radar": "雷达图",
-    "histogram": "直方图",
-    "scatter": "散点图",
-    "box": "箱线图",
-}
 
 
 def _parse_question_rounds(question_value) -> list[dict]:
+    """解析题目文本为统一的轮次结构。"""
     if isinstance(question_value, list):
         parsed = question_value
     else:
@@ -56,13 +52,8 @@ def _parse_question_rounds(question_value) -> list[dict]:
     return rounds
 
 
-def _format_chart_type(chart_type: str | None) -> str:
-    if not chart_type:
-        return "无"
-    return CHART_TYPE_MAP.get(chart_type, chart_type)
-
-
 def _ensure_non_empty_qa_pairs(question_value, qa_pairs: list[dict]) -> list[dict]:
+    """确保导出时至少存在一组问答结果。"""
     if qa_pairs:
         return qa_pairs
 
@@ -78,46 +69,37 @@ def _ensure_non_empty_qa_pairs(question_value, qa_pairs: list[dict]) -> list[dic
     ]
 
 
-def _convert_path_to_url(file_path: str) -> str:
-    if not file_path:
-        return ""
-    filename = os.path.basename(file_path)
-    return f"./result/{filename}"
+def _remove_task3_answer_images(qa_pairs: list[dict]) -> list[dict]:
+    """移除任务三答案中的 image 字段。"""
+    normalized_pairs = []
+    for item in qa_pairs:
+        if not isinstance(item, dict):
+            normalized_pairs.append(item)
+            continue
+
+        normalized_item = dict(item)
+        answer = normalized_item.get("A")
+        if isinstance(answer, dict):
+            normalized_answer = dict(answer)
+            normalized_answer.pop("image", None)
+            normalized_item["A"] = normalized_answer
+        normalized_pairs.append(normalized_item)
+    return normalized_pairs
 
 
 def _validate_task3_question_id(question_id: str) -> None:
+    """校验任务三题目编号格式。"""
     if not TASK3_QUESTION_CODE_PATTERN.fullmatch(str(question_id or "").strip()):
-        raise ValueError(f"任务三题目编号非法: {question_id}")
-
-
-def _validate_task3_answer_images(question_id: str, answer_json) -> None:
-    _validate_task3_question_id(question_id)
-    if not isinstance(answer_json, list):
-        return
-
-    for item in answer_json:
-        if not isinstance(item, dict):
-            continue
-        answer = item.get("A")
-        if not isinstance(answer, dict):
-            continue
-        images = answer.get("image") or []
-        if isinstance(images, str):
-            images = [images]
-        for image_path in images:
-            if not isinstance(image_path, str) or not image_path:
-                continue
-            match = TASK3_IMAGE_PATH_PATTERN.fullmatch(image_path)
-            if not match or match.group("question_id") != question_id:
-                raise ValueError(f"图表路径命名不符合任务三要求: {image_path}")
+        raise ServiceException(ErrorCode.PARAM_ERROR, "任务三题目编号非法")
 
 
 def export_result_3(questions: list[dict], db: Session) -> str:
+    """按题目列表导出 result_3 结果文件。"""
     wb = Workbook()
     wb.remove(wb.active)
 
     ws = wb.create_sheet(title="结果汇总")
-    ws.append(["编号", "问题", "SQL查询语句", "图形格式", "回答"])
+    ws.append(["编号", "问题", "SQL 查询语法", "回答"])
 
     all_results = []
     success_count = 0
@@ -142,11 +124,6 @@ def export_result_3(questions: list[dict], db: Session) -> str:
 
             answer_content = response.answer
 
-            image_paths = []
-            if answer_content.image:
-                for img in answer_content.image:
-                    image_paths.append(_convert_path_to_url(img))
-
             references_list = []
             for ref in answer_content.references:
                 ref_dict = {
@@ -160,32 +137,25 @@ def export_result_3(questions: list[dict], db: Session) -> str:
             answer_data = {
                 "content": answer_content.content,
             }
-            if image_paths:
-                answer_data["image"] = image_paths
             if references_list:
                 answer_data["references"] = references_list
-            _validate_task3_answer_images(question_id, [{
-                "Q": merged_question_text,
-                "A": answer_data,
-            }])
 
             quality_check = verify_answer_quality(
                 answer_content.content,
                 answer_content.references,
                 merged_question_text,
-            )
+            ).model_dump(mode="json")
 
             qa_pairs = [{
                 "Q": merged_question_text,
                 "A": answer_data,
             }]
-            chart_type = _format_chart_type(response.chart_type)
+            qa_pairs = _remove_task3_answer_images(qa_pairs)
 
             result_item = {
                 "id": question_id,
                 "question": json.dumps(rounds, ensure_ascii=False),
                 "sql": response.sql or "",
-                "chart_type": chart_type,
                 "answer": qa_pairs,
                 "quality": quality_check,
             }
@@ -196,7 +166,6 @@ def export_result_3(questions: list[dict], db: Session) -> str:
                 question_id,
                 json.dumps(rounds, ensure_ascii=False),
                 response.sql or "",
-                chart_type,
                 json.dumps(qa_pairs, ensure_ascii=False),
             ])
 
@@ -208,7 +177,6 @@ def export_result_3(questions: list[dict], db: Session) -> str:
                 "id": question_id,
                 "question": json.dumps(rounds, ensure_ascii=False),
                 "sql": "",
-                "chart_type": "无",
                 "answer": [{
                     "Q": merged_question_text,
                     "A": {"content": f"处理失败: {str(exc)}"},
@@ -221,7 +189,6 @@ def export_result_3(questions: list[dict], db: Session) -> str:
                 question_id,
                 json.dumps(rounds, ensure_ascii=False),
                 "",
-                "无",
                 json.dumps(result_item["answer"], ensure_ascii=False),
             ])
 
@@ -274,7 +241,8 @@ def export_single_question_result(
     question_id: str,
     question: str,
     db: Session,
-) -> dict:
+) -> Task3SingleExportResponse:
+    """导出单个问题的任务三结果。"""
     try:
         _validate_task3_question_id(question_id)
         response = process_task3_question(
@@ -284,11 +252,6 @@ def export_single_question_result(
         )
 
         answer_content = response.answer
-
-        image_paths = []
-        if answer_content.image:
-            for img in answer_content.image:
-                image_paths.append(_convert_path_to_url(img))
 
         references_list = []
         for ref in answer_content.references:
@@ -300,40 +263,36 @@ def export_single_question_result(
             if ref.paper_image:
                 ref_dict["paper_image"] = ref.paper_image
             references_list.append(ref_dict)
-        _validate_task3_answer_images(question_id, [{
-            "Q": question,
-            "A": {
-                "content": answer_content.content,
-                "image": image_paths,
-                "references": references_list,
-            },
-        }])
 
-        return {
-            "id": question_id,
-            "question": question,
-            "sql": response.sql,
-            "answer": {
-                "content": answer_content.content,
-                "image": image_paths,
-                "references": references_list,
-            },
-            "success": True,
-        }
+        return Task3SingleExportResponse(
+            id=question_id,
+            question=question,
+            sql=response.sql,
+            answer=Task3ExportContentResponse(
+                content=answer_content.content,
+                references=references_list,
+            ),
+            success=True,
+            error=None,
+        )
 
     except Exception as exc:
         logger.error("单问题导出失败: question_id=%s, error=%s", question_id, str(exc))
-        return {
-            "id": question_id,
-            "question": question,
-            "sql": None,
-            "answer": {"content": f"处理失败: {str(exc)}"},
-            "success": False,
-            "error": str(exc),
-        }
+        return Task3SingleExportResponse(
+            id=question_id,
+            question=question,
+            sql=None,
+            answer=Task3ExportContentResponse(
+                content=f"处理失败: {str(exc)}",
+                references=[],
+            ),
+            success=False,
+            error=str(exc),
+        )
 
 
 def format_reference_for_output(ref: Reference) -> dict:
+    """将引用对象格式化为导出结构。"""
     return {
         "paper_path": ref.paper_path,
         "text": ref.text,
@@ -343,6 +302,7 @@ def format_reference_for_output(ref: Reference) -> dict:
 
 
 def validate_export_result(result: dict) -> dict:
+    """校验导出结果是否满足基础约束。"""
     validation = {
         "is_valid": True,
         "errors": [],
@@ -393,7 +353,8 @@ def validate_export_result(result: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # 工作台导出（基于数据库题目记录）
 # ─────────────────────────────────────────────────────────────────────────────
-def export_result_3_from_workspace(db: Session) -> dict:
+def export_result_3_from_workspace(db: Session) -> Task3WorkspaceExportResponse:
+    """从当前工作台记录导出 result_3.xlsx。"""
     from app.models.task3_workspace import Task3Workspace
     from app.models.task3_question_item import Task3QuestionItem
     from sqlalchemy import select, func
@@ -402,7 +363,7 @@ def export_result_3_from_workspace(db: Session) -> dict:
     workspace = db.execute(stmt).scalar_one_or_none()
 
     if workspace is None:
-        raise ValueError("工作台不存在，请先导入附件6")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "工作台不存在，请先导入附件6")
 
     stmt = select(Task3QuestionItem).where(
         Task3QuestionItem.workspace_id == workspace.id
@@ -410,7 +371,7 @@ def export_result_3_from_workspace(db: Session) -> dict:
     questions = list(db.execute(stmt).scalars().all())
 
     if not questions:
-        raise ValueError("没有可导出的题目")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "没有可导出的题目")
 
     workspace.total_questions = len(questions)
     workspace.answered_count = sum(1 for item in questions if item.status == 2)
@@ -421,7 +382,7 @@ def export_result_3_from_workspace(db: Session) -> dict:
     wb.remove(wb.active)
 
     ws = wb.create_sheet(title="结果汇总")
-    ws.append(["编号", "问题", "SQL查询语句", "图形格式", "回答"])
+    ws.append(["编号", "问题", "SQL 查询语法", "回答"])
 
     success_count = 0
     fail_count = 0
@@ -432,14 +393,12 @@ def export_result_3_from_workspace(db: Session) -> dict:
         rounds = _parse_question_rounds(question_text)
         try:
             answer_json = _ensure_non_empty_qa_pairs(question_text, question.answer_json or [])
-            _validate_task3_answer_images(question_id, answer_json)
-            chart_type = question.chart_type or "无"
+            answer_json = _remove_task3_answer_images(answer_json)
 
             ws.append([
                 question_id,
                 json.dumps(rounds, ensure_ascii=False),
                 question.sql_text or "",
-                chart_type,
                 json.dumps(answer_json, ensure_ascii=False),
             ])
 
@@ -456,7 +415,6 @@ def export_result_3_from_workspace(db: Session) -> dict:
                 question_id,
                 json.dumps(rounds, ensure_ascii=False),
                 "",
-                "无",
                 json.dumps(
                     [{
                         "Q": rounds[0].get("Q", "") if rounds else question_text,
@@ -486,7 +444,12 @@ def export_result_3_from_workspace(db: Session) -> dict:
     # 更新工作台导出信息
     workspace.last_export_path = result_path
     workspace.last_exported_at = datetime.now()
-    db.flush()
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.error("保存导出结果失败: %s", str(exc), exc_info=True)
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "导出失败") from exc
 
     logger.info(
         "result_3.xlsx 导出完成: path=%s, success=%d, failed=%d",
@@ -495,15 +458,16 @@ def export_result_3_from_workspace(db: Session) -> dict:
         fail_count,
     )
 
-    return {
-        "xlsx_path": result_path,
-        "success_count": success_count,
-        "fail_count": fail_count,
-        "total": len(questions),
-    }
+    return Task3WorkspaceExportResponse(
+        xlsx_path=result_path,
+        success_count=success_count,
+        fail_count=fail_count,
+        total=len(questions),
+    )
 
 
-def get_latest_export_info(db: Session) -> dict | None:
+def get_latest_export_info(db: Session) -> Task3LatestExportResponse | None:
+    """获取最近一次导出记录信息。"""
     from app.models.task3_workspace import Task3Workspace
     from sqlalchemy import select
 
@@ -513,9 +477,9 @@ def get_latest_export_info(db: Session) -> dict | None:
     if workspace is None or not workspace.last_export_path:
         return None
 
-    return {
-        "xlsx_path": workspace.last_export_path,
-        "exported_at": workspace.last_exported_at.isoformat() if workspace.last_exported_at else None,
-        "total_questions": workspace.total_questions,
-        "answered_count": workspace.answered_count,
-    }
+    return Task3LatestExportResponse(
+        xlsx_path=workspace.last_export_path,
+        exported_at=workspace.last_exported_at.isoformat() if workspace.last_exported_at else None,
+        total_questions=workspace.total_questions,
+        answered_count=workspace.answered_count,
+    )

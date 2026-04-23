@@ -24,10 +24,8 @@ class Task3QuestionItem(Base):
         server_default="0",
         comment="状态：0待处理 1回答中 2已完成 3失败",
     )
-    answer_json = Column(JSON, comment="回答JSON数组 [{Q, A{content,image,references}}]")
+    answer_json = Column(JSON, comment="回答JSON数组 [{Q, A{content,references}}]")
     sql_text = Column(Text, comment="生成的SQL语句")
-    chart_type = Column(String(50), comment="图表类型")
-    image_paths_json = Column(JSON, comment="图表文件路径列表")
     execution_plan = Column(JSON, comment="执行计划对象")
     verification = Column(JSON, comment="校验结果对象")
     retrieval_summary = Column(JSON, comment="知识库检索摘要")
