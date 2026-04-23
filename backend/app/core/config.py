@@ -20,16 +20,10 @@ class Settings(BaseSettings):
             f"@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}?charset=utf8mb4"
         )
 
-    SECRET_KEY: str
-    ALGORITHM: str
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
-
     UPLOAD_DIR: str = "uploads"
     fujian2_DIR: str = "fujian2"
     fujian5_DIR: str = "fujian5"
     JSON_SUBDIR: str = "json"
-
-    MAX_FILE_SIZE: int = 10 * 1024 * 1024
 
     @property
     def fujian2_UPLOAD_DIR(self) -> str:
