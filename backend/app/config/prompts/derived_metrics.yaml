@@ -1,0 +1,217 @@
+yoy_growth:
+  name: "同比增长率"
+  description: "计算本期与去年同期的增长率"
+  keywords: ["同比", "同比增长", "同比增速", "年同比", "去年同期比"]
+  sql_template: |
+    SELECT 
+      t1.stock_abbr,
+      t1.report_year,
+      t1.report_period,
+      t1.{metric_field} as current_value,
+      t2.{metric_field} as last_year_value,
+      CASE 
+        WHEN t2.{metric_field} IS NULL OR t2.{metric_field} = 0 THEN NULL
+        ELSE ROUND((t1.{metric_field} - t2.{metric_field}) / ABS(t2.{metric_field}) * 100, 2)
+      END as yoy_growth_rate
+    FROM {table_name} t1
+    LEFT JOIN {table_name} t2 
+      ON t1.stock_code = t2.stock_code 
+      AND t2.report_year = t1.report_year - 1
+      AND t2.report_period = t1.report_period
+    WHERE {company_filter}
+      AND t1.report_year = {report_year}
+      AND t1.report_period = '{report_period}'
+    ORDER BY t1.stock_abbr
+
+qoq_growth:
+  name: "环比增长率"
+  description: "计算本期与上一期的增长率"
+  keywords: ["环比", "环比增长", "环比增速", "季度环比", "较上季度"]
+  period_sequence:
+    Q1: {prev_year_offset: -1, prev_period: "FY"}
+    HY: {prev_year_offset: 0, prev_period: "Q1"}
+    Q3: {prev_year_offset: 0, prev_period: "HY"}
+    FY: {prev_year_offset: 0, prev_period: "Q3"}
+  sql_template: |
+    SELECT 
+      t1.stock_abbr,
+      t1.report_year,
+      t1.report_period,
+      t1.{metric_field} as current_value,
+      t2.{metric_field} as prev_value,
+      CASE 
+        WHEN t2.{metric_field} IS NULL OR t2.{metric_field} = 0 THEN NULL
+        ELSE ROUND((t1.{metric_field} - t2.{metric_field}) / ABS(t2.{metric_field}) * 100, 2)
+      END as qoq_growth_rate
+    FROM {table_name} t1
+    LEFT JOIN {table_name} t2 
+      ON t1.stock_code = t2.stock_code 
+      AND t2.report_year = t1.report_year + {prev_year_offset}
+      AND t2.report_period = '{prev_period}'
+    WHERE {company_filter}
+      AND t1.report_year = {report_year}
+      AND t1.report_period = '{report_period}'
+    ORDER BY t1.stock_abbr
+
+cagr:
+  name: "复合增长率"
+  description: "计算多年复合年均增长率"
+  keywords: ["复合增长率", "年均复合增长率", "CAGR", "年化增长率", "年均增长率"]
+  sql_template: |
+    SELECT 
+      stock_abbr,
+      MIN(report_year) as start_year,
+      MAX(report_year) as end_year,
+      MAX(report_year) - MIN(report_year) as years,
+      FIRST_VALUE({metric_field}) OVER (PARTITION BY stock_abbr ORDER BY report_year) as start_value,
+      LAST_VALUE({metric_field}) OVER (PARTITION BY stock_abbr ORDER BY report_year ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as end_value,
+      ROUND(
+        (POWER(
+          LAST_VALUE({metric_field}) OVER (PARTITION BY stock_abbr ORDER BY report_year ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) 
+          / NULLIF(FIRST_VALUE({metric_field}) OVER (PARTITION BY stock_abbr ORDER BY report_year), 0),
+          1.0 / NULLIF(MAX(report_year) - MIN(report_year), 0)
+        ) - 1) * 100, 2
+      ) as cagr_rate
+    FROM {table_name}
+    WHERE {company_filter}
+      AND report_year BETWEEN {start_year} AND {end_year}
+      AND report_period = '{report_period}'
+    GROUP BY stock_abbr, report_year, {metric_field}
+    ORDER BY stock_abbr
+
+ratio:
+  name: "占比计算"
+  description: "计算某指标占总体的比例"
+  keywords: ["占比", "比例", "比重", "百分比", "占"]
+  common_ratios:
+    research_expense_ratio:
+      name: "研发费用占比"
+      numerator: "research_expense"
+      denominator: "total_operating_income"
+      description: "研发费用占营业总收入比例"
+    accounts_receivable_ratio:
+      name: "应收账款占比"
+      numerator: "accounts_receivable"
+      denominator: "total_operating_income"
+      description: "应收账款占营业总收入比例"
+    cash_ratio:
+      name: "货币资金占比"
+      numerator: "cash_and_cash_equivalents"
+      denominator: "total_assets"
+      description: "货币资金占总资产比例"
+  sql_template: |
+    SELECT 
+      stock_abbr,
+      report_year,
+      report_period,
+      {numerator_field} as numerator,
+      {denominator_field} as denominator,
+      CASE 
+        WHEN {denominator_field} IS NULL OR {denominator_field} = 0 THEN NULL
+        ELSE ROUND({numerator_field} / ABS({denominator_field}) * 100, 2)
+      END as ratio_percent
+    FROM {table_name}
+    WHERE {company_filter}
+      AND report_year = {report_year}
+      AND report_period = '{report_period}'
+    ORDER BY stock_abbr
+
+industry_avg:
+  name: "行业均值"
+  description: "计算全行业某指标的平均值"
+  keywords: ["行业均值", "行业平均", "全行业平均", "平均数"]
+  sql_template: |
+    SELECT 
+      '{metric_name}' as metric_name,
+      COUNT(*) as company_count,
+      ROUND(AVG({metric_field}), 2) as industry_avg,
+      ROUND(MIN({metric_field}), 2) as min_value,
+      ROUND(MAX({metric_field}), 2) as max_value,
+      ROUND(STDDEV({metric_field}), 2) as std_dev
+    FROM {table_name}
+    WHERE report_year = {report_year}
+      AND report_period = '{report_period}'
+      AND {metric_field} IS NOT NULL
+
+median:
+  name: "中位数"
+  description: "计算某指标的中位数"
+  keywords: ["中位数", "中位值", "中间值"]
+  sql_template: |
+    SELECT 
+      stock_abbr,
+      {metric_field}
+    FROM {table_name}
+    WHERE report_year = {report_year}
+      AND report_period = '{report_period}'
+      AND {metric_field} IS NOT NULL
+    ORDER BY {metric_field}
+
+difference:
+  name: "差值计算"
+  description: "计算两期或两公司之间的差值"
+  keywords: ["差值", "差额", "差异", "相差", "差", "波动"]
+  sql_template: |
+    SELECT 
+      t1.stock_abbr,
+      t1.report_year as year_1,
+      t2.report_year as year_2,
+      t1.{metric_field} as value_1,
+      t2.{metric_field} as value_2,
+      t1.{metric_field} - t2.{metric_field} as difference,
+      ROUND(ABS(t1.{metric_field} - t2.{metric_field}), 2) as abs_difference
+    FROM {table_name} t1
+    CROSS JOIN {table_name} t2
+    WHERE t1.report_year = {year_1}
+      AND t1.report_period = '{report_period}'
+      AND t2.report_year = {year_2}
+      AND t2.report_period = '{report_period}'
+      AND t1.stock_abbr = t2.stock_abbr
+    ORDER BY ABS(t1.{metric_field} - t2.{metric_field}) DESC
+
+correlation:
+  name: "相关性分析"
+  description: "计算两个指标之间的相关性"
+  keywords: ["相关性", "相关系数", "关联度"]
+  sql_template: |
+    SELECT 
+      stock_abbr,
+      {metric_field_1},
+      {metric_field_2}
+    FROM {table_name}
+    WHERE {company_filter}
+      AND report_year BETWEEN {start_year} AND {end_year}
+      AND {metric_field_1} IS NOT NULL
+      AND {metric_field_2} IS NOT NULL
+    ORDER BY report_year
+
+business_definitions:
+  loss:
+    keyword: "亏钱"
+    keyword_aliases: ["亏损", "赔钱", "亏损企业"]
+    definition: "净利润为负值"
+    clarification: "请问您说的'亏钱'是指净利润为负吗？还是指扣非净利润为负？"
+    fallback_metric: "net_profit"
+    fallback_condition: "< 0"
+  
+  main_business_income:
+    keyword: "主营业务收入"
+    keyword_aliases: ["主营收入", "主要业务收入"]
+    definition: "企业主要经营业务产生的收入"
+    clarification: "数据库中没有'主营业务收入'字段，是否使用'营业总收入'代替？"
+    fallback_metric: "total_operating_income"
+  
+  export_business_ratio:
+    keyword: "出口业务占比"
+    keyword_aliases: ["出口占比", "海外业务占比"]
+    definition: "出口业务收入占总收入的比例"
+    clarification: "当前数据库没有出口业务相关字段，无法直接计算出口业务占比。"
+    unsupported: true
+  
+  inventory_turnover:
+    keyword: "存货周转率"
+    keyword_aliases: ["存货周转"]
+    definition: "营业成本与平均存货的比值"
+    clarification: "数据库中没有存货周转率字段，需通过营业成本和存货计算，是否继续？"
+    formula: "营业成本 / 平均存货"
+    requires_fields: ["operating_cost", "inventory"]
