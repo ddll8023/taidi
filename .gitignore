@@ -3,6 +3,16 @@
 .idea
 .superpowers
 __pycache__/
+.gitignore
+doc
+
+规范文档
+CLAUDE.md
+start_backend.bat
+start_frontend.bat
+任务三审核清单.md
+任务二审核清单.md
+泰迪杯论文_转换版.md
 
 backend/.venv
 backend/uploads
