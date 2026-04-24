@@ -45,8 +45,6 @@ class Settings(BaseSettings):
         return path
 
     MINIMAX_BASE_URL: str = "https://api.minimaxi.com/anthropic"
-    AUDIO_MODEL: str = "qwen3-asr-flash-filetrans"
-    AUDIO_MODEL_TIMEOUT: int = 600
     CHAT_MODEL: str = "MiniMax-M2.7"
     EMBEDDING_MODEL: str = "text-embedding-v2"
     EMBEDDING_DIM: int = 1024
