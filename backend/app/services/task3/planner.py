@@ -1218,3 +1218,41 @@ def process_task3_question(
         sql=sql,
         execution_trace=trace,
     )
+
+
+def create_plan_response(question: str, context: dict | None, db: Session):
+    """生成执行计划并返回 Task3PlanResponse。"""
+    from app.schemas.task3 import Task3PlanResponse
+
+    plan = plan_task3_question(question, context, db)
+    return Task3PlanResponse(
+        plan=plan,
+        reasoning=f"已生成包含 {len(plan.steps)} 个步骤的执行计划",
+    )
+
+
+def plan_and_execute(question: str, context: dict | None, db: Session):
+    """生成计划并执行，返回 Task3ExecuteResponse。"""
+    from app.schemas.task3 import Task3ExecuteResponse
+
+    plan = plan_task3_question(question, context, db)
+    trace = execute_plan(plan, db)
+    return Task3ExecuteResponse(
+        plan=plan,
+        trace=trace,
+    )
+
+
+def plan_execute_and_verify(question: str, context: dict | None, db: Session):
+    """生成计划、执行并验证，返回 Task3VerifyResponse。"""
+    from app.schemas.task3 import Task3VerifyResponse
+    from app.services.task3.verifier import verify_execution_trace
+
+    plan = plan_task3_question(question, context, db)
+    trace = execute_plan(plan, db)
+    verification = verify_execution_trace(db, trace)
+    return Task3VerifyResponse(
+        answer=trace.final_answer,
+        verification=verification,
+        references=trace.references,
+    )

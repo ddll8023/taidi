@@ -207,14 +207,10 @@ async def upload_archive_batch(
     - 遍历文件列表调用 upload_archive_only()
     - 统计成功/失败数量
     - 返回处理结果统计
-
-    Args:
-        db: 数据库会话
-        files: 上传的PDF文件列表
-
-    Returns:
-        BatchUploadResponse: 批量上传响应
     """
+    if not files or len(files) == 0:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "请选择至少一个文件")
+
     total = len(files)
     success_count = 0
     failed_count = 0

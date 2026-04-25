@@ -1,25 +1,23 @@
-from fastapi import APIRouter, Depends, Query, Body, File, UploadFile, BackgroundTasks, Path
+"""知识库管理 API 路由"""
 from typing import Annotated, Optional
+
+from fastapi import APIRouter, Depends, Query, Body, File, UploadFile, BackgroundTasks, Path
 from sqlalchemy.orm import Session
-import os
-import tempfile
 
 from app.db.database import get_db
 from app.services import knowledge_base as services_knowledge_base
 from app.schemas import knowledge_base as schemas_kb
 from app.schemas.response import success, error
-from app.schemas.common import ErrorCode
+from app.schemas.common import ApiResponse
 from app.utils.exception import ServiceException
-from app.utils.logger_config import setup_logger
 
 router = APIRouter(prefix="/api/v1/knowledge-base", tags=["知识库管理"])
-logger = setup_logger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 切块处理接口
 # ─────────────────────────────────────────────────────────────────────────────
-@router.post("/chunk/{document_id}")
+@router.post("/chunk/{document_id}", response_model=ApiResponse)
 async def chunk_document(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
@@ -36,15 +34,12 @@ async def chunk_document(
                 document_id,
             )
 
-        return success(data=result)
+        return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"提交切块任务异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message="系统内部错误")
 
 
-@router.post("/chunk/batch")
+@router.post("/chunk/batch", response_model=ApiResponse)
 async def chunk_documents_batch(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
@@ -60,19 +55,12 @@ async def chunk_documents_batch(
                 result.submitted_ids,
             )
 
-        return success(data={
-            "submitted": result.submitted,
-            "skipped": result.skipped,
-            "message": f"已提交{result.submitted}个文档的切块任务",
-        })
+        return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"提交批量切块任务异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message="系统内部错误")
 
 
-@router.post("/chunk/all")
+@router.post("/chunk/all", response_model=ApiResponse)
 async def chunk_all_pending(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
@@ -92,21 +80,15 @@ async def chunk_all_pending(
                 result.submitted_ids,
             )
 
-        return success(data={
-            "submitted": result.submitted,
-            "message": f"已提交{result.submitted}个文档的切块任务",
-        })
+        return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"提交一键切块任务异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message="系统内部错误")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 向量化接口
 # ─────────────────────────────────────────────────────────────────────────────
-@router.post("/vectorize/{document_id}")
+@router.post("/vectorize/{document_id}", response_model=ApiResponse)
 async def vectorize_document(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
@@ -125,15 +107,12 @@ async def vectorize_document(
                 batch_size,
             )
 
-        return success(data=result)
+        return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"提交向量化任务异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message="系统内部错误")
 
 
-@router.post("/vectorize")
+@router.post("/vectorize", response_model=ApiResponse)
 async def vectorize_chunks(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
@@ -154,18 +133,12 @@ async def vectorize_chunks(
                 result.chunk_ids,
             )
 
-        return success(data={
-            "submitted": result.submitted_count,
-            "message": f"已提交{result.submitted_count}个切块的向量化任务",
-        })
+        return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"提交批量向量化任务异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message="系统内部错误")
 
 
-@router.post("/reset-vector-status/{document_id}")
+@router.post("/reset-vector-status/{document_id}", response_model=ApiResponse)
 def reset_vector_status(
     db: Annotated[Session, Depends(get_db)],
     document_id: Annotated[int, Path(description="文档ID")],
@@ -181,23 +154,24 @@ def reset_vector_status(
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"重置向量状态异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message="系统内部错误")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 状态查询接口
 # ─────────────────────────────────────────────────────────────────────────────
-@router.get("/stats")
+@router.get("/stats", response_model=ApiResponse)
 def get_stats(
     db: Annotated[Session, Depends(get_db)],
 ):
     """获取知识库整体统计信息"""
-    return services_knowledge_base.get_knowledge_base_stats(db)
+    try:
+        result = services_knowledge_base.get_knowledge_base_stats(db)
+        return success(data=result)
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
 
 
-@router.get("/documents")
+@router.get("/documents", response_model=ApiResponse)
 def list_documents(
     db: Annotated[Session, Depends(get_db)],
     doc_type: Annotated[Optional[str], Query(description="按文档类型筛选")] = None,
@@ -209,38 +183,39 @@ def list_documents(
     page_size: Annotated[int, Query(ge=1, le=100, description="每页数量")] = 20,
 ):
     """分页查询知识库文档列表"""
-    items, total = services_knowledge_base.get_document_list(
-        db,
-        doc_type=doc_type,
-        stock_code=stock_code,
-        metadata_status=metadata_status,
-        chunk_status=chunk_status,
-        vector_status=vector_status,
-        page=page,
-        page_size=page_size,
-    )
-    return {
-        "items": items,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
+    try:
+        result = services_knowledge_base.get_document_list(
+            db,
+            doc_type=doc_type,
+            stock_code=stock_code,
+            metadata_status=metadata_status,
+            chunk_status=chunk_status,
+            vector_status=vector_status,
+            page=page,
+            page_size=page_size,
+        )
+        return success(data=result)
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
 
 
-@router.post("/documents/status/batch")
+@router.post("/documents/status/batch", response_model=ApiResponse)
 def get_documents_status_batch(
     db: Annotated[Session, Depends(get_db)],
     request: Annotated[schemas_kb.BatchStatusRequest, Body()],
 ):
     """批量查询文档状态"""
-    results = services_knowledge_base.get_documents_status_batch(db, request.document_ids)
-    return success(data=results)
+    try:
+        results = services_knowledge_base.get_documents_status_batch(db, request.document_ids)
+        return success(data=results)
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 切块列表接口
 # ─────────────────────────────────────────────────────────────────────────────
-@router.get("/chunks")
+@router.get("/chunks", response_model=ApiResponse)
 def list_chunks(
     db: Annotated[Session, Depends(get_db)],
     document_id: Annotated[Optional[int], Query(description="按文档ID筛选")] = None,
@@ -249,42 +224,43 @@ def list_chunks(
     page_size: Annotated[int, Query(ge=1, le=100, description="每页数量")] = 20,
 ):
     """分页查询知识库切块列表"""
-    items, total = services_knowledge_base.get_chunk_list(
-        db,
-        document_id=document_id,
-        vector_status=vector_status,
-        page=page,
-        page_size=page_size,
-    )
-    return {
-        "items": items,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
+    try:
+        result = services_knowledge_base.get_chunk_list(
+            db,
+            document_id=document_id,
+            vector_status=vector_status,
+            page=page,
+            page_size=page_size,
+        )
+        return success(data=result)
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 知识检索接口
 # ─────────────────────────────────────────────────────────────────────────────
-@router.post("/search")
+@router.post("/search", response_model=ApiResponse)
 def search_knowledge(
     request: schemas_kb.SearchRequest,
 ):
     """知识库语义检索（调试用）"""
-    results = services_knowledge_base.search_and_format_evidence(
-        query_text=request.query,
-        stock_code=request.stock_code,
-        doc_type=request.doc_type,
-        top_k=request.top_k,
-    )
-    return {"results": results}
+    try:
+        results = services_knowledge_base.search_and_format_evidence(
+            query_text=request.query,
+            stock_code=request.stock_code,
+            doc_type=request.doc_type,
+            top_k=request.top_k,
+        )
+        return success(data={"results": results})
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 增量处理模式接口
 # ─────────────────────────────────────────────────────────────────────────────
-@router.post("/init")
+@router.post("/init", response_model=ApiResponse)
 async def init_system(
     db: Annotated[Session, Depends(get_db)],
     stock_excel: Annotated[UploadFile, File(description="个股研报Excel文件")],
@@ -293,29 +269,18 @@ async def init_system(
 ):
     """系统初始化：加载Excel元数据到knowledge_document表"""
     try:
-        if not stock_excel.filename or not stock_excel.filename.lower().endswith(('.xlsx', '.xls')):
-            return error(code=ErrorCode.PARAM_ERROR, message="个股研报文件仅支持 Excel 格式（.xlsx/.xls）")
-        if not industry_excel.filename or not industry_excel.filename.lower().endswith(('.xlsx', '.xls')):
-            return error(code=ErrorCode.PARAM_ERROR, message="行业研报文件仅支持 Excel 格式（.xlsx/.xls）")
-
-        stock_content = await stock_excel.read()
-        industry_content = await industry_excel.read()
-
-        result = await services_knowledge_base.init_knowledge_base_metadata(
+        result = await services_knowledge_base.init_system_from_upload(
             db=db,
-            stock_excel_content=stock_content,
-            industry_excel_content=industry_content,
+            stock_excel=stock_excel,
+            industry_excel=industry_excel,
             force_reload=force_reload,
         )
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"系统初始化异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"初始化失败: {str(e)[:200]}")
 
 
-@router.post("/upload-pdf")
+@router.post("/upload-pdf", response_model=ApiResponse)
 async def upload_pdf_incremental(
     db: Annotated[Session, Depends(get_db)],
     pdfs: Annotated[list[UploadFile], File(description="PDF文件列表")],
@@ -323,13 +288,6 @@ async def upload_pdf_incremental(
 ):
     """增量上传PDF文件，立即处理（匹配元数据+切块）"""
     try:
-        if not pdfs or len(pdfs) == 0:
-            return error(code=ErrorCode.PARAM_ERROR, message="请选择至少一个PDF文件")
-
-        for pdf_file in pdfs:
-            if not pdf_file.filename or not pdf_file.filename.lower().endswith('.pdf'):
-                return error(code=ErrorCode.PARAM_ERROR, message="仅支持PDF文件")
-
         result = await services_knowledge_base.upload_pdf_incremental(
             db=db,
             pdfs=pdfs,
@@ -338,12 +296,9 @@ async def upload_pdf_incremental(
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"增量上传PDF异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"上传失败: {str(e)[:200]}")
 
 
-@router.get("/progress")
+@router.get("/progress", response_model=ApiResponse)
 def get_progress(
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -351,12 +306,11 @@ def get_progress(
     try:
         result = services_knowledge_base.get_processing_progress(db)
         return success(data=result)
-    except Exception as e:
-        logger.error(f"查询进度异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message="查询进度失败")
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
 
 
-@router.get("/init-status")
+@router.get("/init-status", response_model=ApiResponse)
 def get_init_status(
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -364,12 +318,11 @@ def get_init_status(
     try:
         result = services_knowledge_base.get_init_status(db)
         return success(data=result)
-    except Exception as e:
-        logger.error(f"查询初始化状态异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message="查询初始化状态失败")
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
 
 
-@router.post("/upload-single-pdf")
+@router.post("/upload-single-pdf", response_model=ApiResponse)
 async def upload_single_pdf(
     db: Annotated[Session, Depends(get_db)],
     document_id: Annotated[int, Query(description="文档ID")],
@@ -377,9 +330,6 @@ async def upload_single_pdf(
 ):
     """上传单个文档的PDF（用于文档列表中的"上传PDF"按钮）"""
     try:
-        if not pdf_file.filename or not pdf_file.filename.lower().endswith('.pdf'):
-            return error(code=ErrorCode.PARAM_ERROR, message="仅支持PDF文件")
-
         result = await services_knowledge_base.upload_single_pdf_for_document(
             db=db,
             document_id=document_id,
@@ -388,12 +338,9 @@ async def upload_single_pdf(
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"单文档上传PDF异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"上传失败: {str(e)[:200]}")
 
 
-@router.post("/retry-failed")
+@router.post("/retry-failed", response_model=ApiResponse)
 async def retry_failed(
     db: Annotated[Session, Depends(get_db)],
     document_id: Annotated[int, Query(description="文档ID")],
@@ -401,9 +348,6 @@ async def retry_failed(
 ):
     """重试失败的文档"""
     try:
-        if not pdf_file.filename or not pdf_file.filename.lower().endswith('.pdf'):
-            return error(code=ErrorCode.PARAM_ERROR, message="仅支持PDF文件")
-
         result = await services_knowledge_base.retry_failed_document(
             db=db,
             document_id=document_id,
@@ -412,9 +356,3 @@ async def retry_failed(
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
-    except Exception as e:
-        logger.error(f"重试文档异常：{e}", exc_info=True)
-        return error(code=ErrorCode.INTERNAL_ERROR, message=f"重试失败: {str(e)[:200]}")
-
-
-

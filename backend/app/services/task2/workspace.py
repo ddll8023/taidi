@@ -1,10 +1,12 @@
 """任务二附件导入与工作台查询服务"""
 import json
 import os
+import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from fastapi import UploadFile
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -16,7 +18,9 @@ from app.schemas.common import ErrorCode
 from app.schemas.task2 import (
     ImportStatus,
     QuestionStatus,
+    Task2ImportResponse,
     Task2QuestionItemResponse,
+    Task2QuestionListResponse,
     Task2WorkspaceResponse,
 )
 from app.utils.exception import ServiceException
@@ -84,6 +88,54 @@ def get_question_stats(db: Session, workspace_id: int):
         "answered": answered,
         "failed": failed,
     }
+
+
+def get_workspace_or_raise(db: Session):
+    """获取工作台，不存在时抛异常。"""
+    workspace = get_workspace_info(db)
+    if workspace is None:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "工作台不存在，请先导入附件4")
+    return workspace
+
+
+def get_question_list_response(db: Session, status: int | None = None):
+    """查询题目列表并组装完整响应（含工作台校验和统计）。"""
+    workspace = get_workspace_info(db)
+    if workspace is None:
+        return Task2QuestionListResponse()
+
+    questions = get_question_list(db=db, workspace_id=workspace.id, status=status)
+    stats = get_question_stats(db, workspace.id)
+
+    return Task2QuestionListResponse(
+        items=questions,
+        total=stats["total"],
+        pending_count=stats["pending"],
+        answered_count=stats["answered"],
+        failed_count=stats["failed"],
+    )
+
+
+async def import_fujian4_from_upload(db: Session, file: UploadFile):
+    """接收上传文件，校验格式后导入附件4。"""
+    if not file.filename or not file.filename.endswith(".xlsx"):
+        raise ServiceException(ErrorCode.PARAM_ERROR, "请上传xlsx格式的附件4文件")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_file:
+        content = await file.read()
+        tmp_file.write(content)
+        tmp_path = tmp_file.name
+
+    try:
+        result = import_fujian4(
+            file_path=tmp_path,
+            original_filename=file.filename,
+            db=db,
+        )
+        return Task2ImportResponse(**result)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 """辅助函数"""

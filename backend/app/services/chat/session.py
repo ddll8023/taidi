@@ -84,6 +84,7 @@ def get_chat_history(
 
 
 def close_chat_session(session_id: str, db: Session):
+    """关闭会话"""
     chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
@@ -91,10 +92,11 @@ def close_chat_session(session_id: str, db: Session):
     chat_session.status = 1
     commit_or_rollback(db)
     logger.info("会话已关闭: session_id=%s", session_id)
-    return True
+    return {"session_id": session_id, "message": "会话已关闭"}
 
 
 def delete_chat_session(session_id: str, db: Session):
+    """删除会话及其消息"""
     import os
 
     chat_session = db.get(models_chat_session.ChatSession, session_id)
@@ -125,10 +127,11 @@ def delete_chat_session(session_id: str, db: Session):
     db.delete(chat_session)
     commit_or_rollback(db)
     logger.info("会话已删除: session_id=%s", session_id)
-    return True
+    return {"session_id": session_id, "message": "会话已删除"}
 
 
 def rename_chat_session(session_id: str, name: str, db: Session):
+    """重命名会话"""
     chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
@@ -136,7 +139,7 @@ def rename_chat_session(session_id: str, name: str, db: Session):
     chat_session.name = name
     commit_or_rollback(db)
     logger.info("会话已重命名: session_id=%s, name=%s", session_id, name)
-    return True
+    return {"session_id": session_id, "name": name, "message": "会话已重命名"}
 
 
 def export_result_2(questions: list[dict], db: Session):
@@ -303,4 +306,4 @@ def export_result_2(questions: list[dict], db: Session):
         json.dump(all_results, f, ensure_ascii=False, indent=2)
     logger.info("result_2.json 已生成: %s", json_path)
 
-    return result_path
+    return {"file_path": result_path}

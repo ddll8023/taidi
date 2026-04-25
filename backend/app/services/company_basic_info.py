@@ -1,9 +1,12 @@
 """企业基本信息处理服务"""
 from __future__ import annotations
 
+import os
+import tempfile
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -140,3 +143,20 @@ def upsert_company_basic_info_records(
         "inserted": inserted_count,
         "updated": updated_count,
     }
+
+
+async def import_companies_from_upload(db: Session, file: UploadFile):
+    """接收上传文件，校验格式后导入公司基本信息"""
+    if not file.filename or not file.filename.endswith(('.xlsx', '.xls')):
+        raise ServiceException(ErrorCode.PARAM_ERROR, "仅支持 Excel 文件（.xlsx 或 .xls）")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        return upsert_company_basic_info_records(db, tmp_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)

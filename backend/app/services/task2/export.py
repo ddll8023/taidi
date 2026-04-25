@@ -25,11 +25,6 @@ def export_result_2(db: Session):
     return _export_result_2(db=db)
 
 
-def get_latest_export_info(db: Session):
-    """查询最近一次任务二导出结果信息。"""
-    return _get_latest_export_info(db=db)
-
-
 """辅助函数"""
 
 
@@ -162,12 +157,13 @@ def _export_result_2(db: Session):
     }
 
 
-def _get_latest_export_info(db: Session):
+def get_latest_export_info(db: Session):
+    """查询最近一次任务二导出结果信息，无导出记录时返回带 message 的默认结构。"""
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 
     if workspace is None or not workspace.last_export_path:
-        return None
+        return {"message": "暂无导出记录"}
 
     return {
         "xlsx_path": workspace.last_export_path,

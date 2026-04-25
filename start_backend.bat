@@ -33,7 +33,7 @@ if not exist ".venv\Scripts\activate.bat" (
 call .venv\Scripts\activate
 
 echo [INFO] Starting FastAPI server...
-uvicorn app.main:app --reload --host 0.0.0.0 --port 7389
+.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 7389
 @REM uvicorn app.main:app --host 0.0.0.0 --port 7389
 popd
 pause

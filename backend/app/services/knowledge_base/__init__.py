@@ -7,6 +7,7 @@ from app.services.knowledge_base.document import (
     extract_pdf_full_text,
     extract_pdf_pages,
     init_knowledge_base_metadata,
+    init_system_from_upload,
     upload_pdf_incremental,
     upload_single_pdf_for_document,
     retry_failed_document,

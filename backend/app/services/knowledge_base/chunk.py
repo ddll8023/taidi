@@ -246,12 +246,27 @@ class ChunkSubmitResult:
         self.status = status
         self.message = message
 
+    def to_dict(self):
+        return {
+            "document_id": self.document_id,
+            "status": self.status,
+            "message": self.message,
+        }
+
 
 class BatchChunkSubmitResult:
     def __init__(self):
         self.submitted: int = 0
         self.skipped: int = 0
         self.submitted_ids: list[int] = []
+
+    def to_dict(self):
+        return {
+            "submitted": self.submitted,
+            "skipped": self.skipped,
+            "submitted_ids": self.submitted_ids,
+            "message": f"已提交{self.submitted}个文档的切块任务",
+        }
 
 
 def submit_chunk_task(

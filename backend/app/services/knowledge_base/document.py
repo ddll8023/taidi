@@ -26,7 +26,7 @@ from app.schemas.knowledge_base import (
     KnowledgeChunkItem,
     KnowledgeDocumentItem,
 )
-from app.schemas.common import ErrorCode
+from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
@@ -134,6 +134,7 @@ def get_document_list(
     page: int = 1,
     page_size: int = 20,
 ):
+    """分页查询知识库文档列表"""
     query = db.query(KnowledgeDocument)
 
     if doc_type:
@@ -156,7 +157,17 @@ def get_document_list(
         .limit(page_size)
         .all()
     )
-    return [KnowledgeDocumentItem.model_validate(item) for item in items], total
+    lists = [KnowledgeDocumentItem.model_validate(item) for item in items]
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+    return PaginatedResponse(
+        lists=lists,
+        pagination=PaginationInfo(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=total_pages,
+        ),
+    )
 
 
 def get_chunk_list(
@@ -167,6 +178,7 @@ def get_chunk_list(
     page: int = 1,
     page_size: int = 20,
 ):
+    """分页查询知识库切块列表"""
     query = db.query(KnowledgeChunk)
 
     if document_id:
@@ -181,7 +193,17 @@ def get_chunk_list(
         .limit(page_size)
         .all()
     )
-    return [KnowledgeChunkItem.model_validate(item) for item in items], total
+    lists = [KnowledgeChunkItem.model_validate(item) for item in items]
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+    return PaginatedResponse(
+        lists=lists,
+        pagination=PaginationInfo(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=total_pages,
+        ),
+    )
 
 
 def extract_pdf_full_text(file_path: str):
@@ -213,12 +235,34 @@ def extract_pdf_pages(file_path: str):
     return pages
 
 
+async def init_system_from_upload(
+    db: Session,
+    stock_excel: "UploadFile",
+    industry_excel: "UploadFile",
+    force_reload: bool = False,
+):
+    """系统初始化：校验并加载Excel元数据"""
+    for label, f in [("个股研报", stock_excel), ("行业研报", industry_excel)]:
+        if not f.filename or not f.filename.lower().endswith(('.xlsx', '.xls')):
+            raise ServiceException(ErrorCode.PARAM_ERROR, f"{label}文件仅支持 Excel 格式（.xlsx/.xls）")
+
+    stock_content = await stock_excel.read()
+    industry_content = await industry_excel.read()
+    return await init_knowledge_base_metadata(
+        db=db,
+        stock_excel_content=stock_content,
+        industry_excel_content=industry_content,
+        force_reload=force_reload,
+    )
+
+
 async def init_knowledge_base_metadata(
     db: Session,
     stock_excel_content: bytes,
     industry_excel_content: bytes,
     force_reload: bool = False,
 ):
+    """加载Excel元数据到knowledge_document表"""
     from app.services.fujian5_data_processor import (
         parse_stock_research_excel_from_upload,
         parse_industry_research_excel_from_upload,
@@ -374,6 +418,15 @@ async def upload_pdf_incremental(
     doc_type: str,
     manual_match: dict | None = None,
 ):
+    """增量上传PDF文件，匹配元数据并切块"""
+    if not pdfs:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "请选择至少一个PDF文件")
+
+    for pdf_file in pdfs:
+        filename = getattr(pdf_file, "filename", None)
+        if not filename or not filename.lower().endswith('.pdf'):
+            raise ServiceException(ErrorCode.PARAM_ERROR, "仅支持PDF文件")
+
     processed_count = 0
     failed_documents: list[dict] = []
     errors: list[dict] = []
@@ -522,6 +575,11 @@ async def upload_single_pdf_for_document(
     document_id: int,
     pdf_file,
 ):
+    """上传单个文档的PDF"""
+    filename = getattr(pdf_file, "filename", None)
+    if not filename or not filename.lower().endswith('.pdf'):
+        raise ServiceException(ErrorCode.PARAM_ERROR, "仅支持PDF文件")
+
     doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
     if not doc:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "文档不存在")
@@ -529,8 +587,7 @@ async def upload_single_pdf_for_document(
     if doc.metadata_status != METADATA_STATUS_LOADED:
         raise ServiceException(ErrorCode.PARAM_ERROR, "文档元数据未加载或PDF已上传")
 
-    filename = getattr(pdf_file, "filename", "")
-    pdf_name = os.path.splitext(filename)[0] if filename else ""
+    pdf_name = os.path.splitext(filename)[0]
 
     upload_dir = os.path.join(settings.fujian5_UPLOAD_DIR, doc.doc_type)
     os.makedirs(upload_dir, exist_ok=True)
@@ -606,6 +663,11 @@ async def retry_failed_document(
     document_id: int,
     pdf_file,
 ):
+    """重试失败的文档"""
+    filename = getattr(pdf_file, "filename", None)
+    if not filename or not filename.lower().endswith('.pdf'):
+        raise ServiceException(ErrorCode.PARAM_ERROR, "仅支持PDF文件")
+
     doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
     if not doc:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "文档不存在")

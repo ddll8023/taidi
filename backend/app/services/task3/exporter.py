@@ -399,7 +399,7 @@ def export_result_3_from_workspace(db: Session):
 
 
 def get_latest_export_info(db: Session):
-    """获取最近一次导出记录信息。"""
+    """获取最近一次导出记录信息，无记录时返回带 message 的默认结构。"""
     from app.models.task3_workspace import Task3Workspace
     from sqlalchemy import select
 
@@ -407,7 +407,7 @@ def get_latest_export_info(db: Session):
     workspace = db.execute(stmt).scalar_one_or_none()
 
     if workspace is None or not workspace.last_export_path:
-        return None
+        return {"message": "暂无导出记录"}
 
     return Task3LatestExportResponse(
         xlsx_path=workspace.last_export_path,

@@ -2,11 +2,13 @@
 
 import json
 import os
+import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
+from fastapi import UploadFile
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ from app.schemas.task3 import (
     Task3ImportResponse,
     Task3ImportStatus,
     Task3QuestionItemResponse,
+    Task3QuestionListResponse,
     Task3QuestionStatsResponse,
     Task3WorkspaceResponse,
 )
@@ -94,6 +97,61 @@ def get_question_stats(
         answered=answered,
         failed=failed,
     )
+
+
+def get_workspace_or_raise(db: Session):
+    """获取工作台，不存在时抛异常。"""
+    workspace = get_workspace_info(db)
+    if workspace is None:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "工作台不存在，请先导入附件6")
+    return workspace
+
+
+def get_question_list_response(db: Session, status: int | None = None):
+    """查询题目列表并组装完整响应（含工作台校验和统计）。"""
+    workspace = get_workspace_info(db)
+    if workspace is None:
+        return Task3QuestionListResponse()
+
+    questions = get_question_list(db=db, workspace_id=workspace.id, status=status)
+    stats = get_question_stats(db, workspace.id)
+
+    return Task3QuestionListResponse(
+        items=questions,
+        total=stats.total,
+        pending_count=stats.pending,
+        answered_count=stats.answered,
+        failed_count=stats.failed,
+    )
+
+
+def get_question_detail_or_raise(db: Session, question_id: int):
+    """获取单个题目详情，不存在时抛异常。"""
+    result = get_question_detail(db=db, question_id=question_id)
+    if result is None:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
+    return result
+
+
+async def import_fujian6_from_upload(db: Session, file: UploadFile):
+    """接收上传文件，校验格式后导入附件6。"""
+    if not file.filename or not file.filename.endswith(".xlsx"):
+        raise ServiceException(ErrorCode.PARAM_ERROR, "请上传xlsx格式的附件6文件")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_file:
+        content = await file.read()
+        tmp_file.write(content)
+        tmp_path = tmp_file.name
+
+    try:
+        return import_fujian6(
+            file_path=tmp_path,
+            original_filename=file.filename,
+            db=db,
+        )
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 def get_or_create_workspace(db: Session):

@@ -539,11 +539,25 @@ class VectorizeSubmitResult:
         self.message = message
         self.total_chunks = total_chunks
 
+    def to_dict(self):
+        return {
+            "document_id": self.document_id,
+            "status": self.status,
+            "message": self.message,
+            "total_chunks": self.total_chunks,
+        }
+
 
 class BatchVectorizeSubmitResult:
     def __init__(self):
         self.submitted_count: int = 0
         self.chunk_ids: list[int] = []
+
+    def to_dict(self):
+        return {
+            "submitted": self.submitted_count,
+            "message": f"已提交{self.submitted_count}个切块的向量化任务",
+        }
 
 
 def submit_vectorize_task(

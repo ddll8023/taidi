@@ -375,3 +375,10 @@ def batch_answer_questions(
     db.commit()
 
     return Task3BatchAnswerResponse(success=success_count, failed=failed_count)
+
+
+def batch_answer_with_workspace_check(scope: str, db: Session):
+    """校验工作台后批量回答题目。"""
+    from app.services.task3.importer import get_workspace_or_raise
+    workspace = get_workspace_or_raise(db)
+    return batch_answer_questions(workspace_id=workspace.id, scope=scope, db=db)

@@ -210,6 +210,13 @@ def batch_answer_questions(workspace_id: int, scope: str, db: Session):
     return _batch_answer_questions(workspace_id=workspace_id, scope=scope, db=db)
 
 
+def batch_answer_with_workspace_check(scope: str, db: Session):
+    """校验工作台后批量回答题目。"""
+    from app.services.task2.workspace import get_workspace_or_raise
+    workspace = get_workspace_or_raise(db)
+    return _batch_answer_questions(workspace_id=workspace.id, scope=scope, db=db)
+
+
 """辅助函数"""
 
 
