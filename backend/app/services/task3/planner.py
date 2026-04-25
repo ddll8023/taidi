@@ -183,13 +183,16 @@ MULTI_INTENT_ACTION_KEYWORDS = [
 ]
 
 
-def _is_attribution_with_financial_data(question: str) -> bool:
+"""辅助函数"""
+
+
+def _is_attribution_with_financial_data(question: str):
     has_attribution = any(kw in question for kw in ATTRIBUTION_KEYWORDS)
     has_financial = any(kw in question for kw in FINANCIAL_DATA_KEYWORDS)
     return has_attribution and has_financial
 
 
-def _get_task3_config() -> dict:
+def _get_task3_config():
     """获取任务三提示词配置。"""
     return settings.PROMPT_CONFIG.get_task3_config
 
@@ -199,7 +202,7 @@ def _invoke_llm(
     user_prompt: str,
     max_tokens: int = 8192,
     temperature: float = 0.1,
-) -> str:
+):
     """调用大模型并返回文本响应。"""
     logger.info("调用LLM: prompt_chars=%d", len(system_prompt) + len(user_prompt))
     try:
@@ -227,7 +230,7 @@ def _invoke_llm(
     return ""
 
 
-def _extract_json_from_response(response_text: str) -> dict | None:
+def _extract_json_from_response(response_text: str):
     """从模型响应中提取 JSON 结构。"""
     json_match = re.search(r"\{[\s\S]*\}", response_text)
     if json_match:
@@ -241,7 +244,9 @@ def _extract_json_from_response(response_text: str) -> dict | None:
         return None
 
 
-def analyze_question(question: str, context: dict | None = None) -> dict:
+# ========== 公共入口函数 ==========
+
+def analyze_question(question: str, context: dict | None = None):
     """分析问题意图并返回结构化结果。"""
     config = _get_task3_config()
     planner_config = config.get("planner", {})
@@ -272,7 +277,7 @@ def analyze_question(question: str, context: dict | None = None) -> dict:
     return parsed
 
 
-def _create_default_plan(question: str) -> dict:
+def _create_default_plan(question: str):
     """为未识别场景构造默认执行计划。"""
     if _is_hybrid_question(question):
         return {
@@ -385,12 +390,12 @@ def _create_default_plan(question: str) -> dict:
     }
 
 
-def _is_knowledge_only_question(question: str) -> bool:
+def _is_knowledge_only_question(question: str):
     """判断问题是否属于知识库检索优先场景。"""
     return any(keyword.lower() in question.lower() for keyword in KNOWLEDGE_ONLY_KEYWORDS)
 
 
-def _is_hybrid_question(question: str) -> bool:
+def _is_hybrid_question(question: str):
     """判断问题是否属于混合型（需要SQL查询+知识库检索）。"""
     has_financial = any(kw in question for kw in FINANCIAL_DATA_KEYWORDS)
     has_knowledge = any(kw in question for kw in KNOWLEDGE_ONLY_KEYWORDS)
@@ -403,14 +408,14 @@ def _is_hybrid_question(question: str) -> bool:
     return (has_financial and has_knowledge) or has_explicit_research
 
 
-def _infer_doc_types_for_question(question: str) -> list[str]:
+def _infer_doc_types_for_question(question: str):
     """根据问题内容推断文档类型过滤条件。"""
     if any(keyword.lower() in question.lower() for keyword in INDUSTRY_KNOWLEDGE_KEYWORDS):
         return ["INDUSTRY_REPORT"]
     return ["RESEARCH_REPORT", "INDUSTRY_REPORT"]
 
 
-def _extract_stock_code_from_context(context: dict | None) -> str | None:
+def _extract_stock_code_from_context(context: dict | None):
     """从上下文中提取股票代码。"""
     if not context:
         return None
@@ -427,7 +432,7 @@ def _extract_stock_code_from_context(context: dict | None) -> str | None:
     return None
 
 
-def _resolve_stock_code_from_question(question: str, db: Session | None = None) -> str | None:
+def _resolve_stock_code_from_question(question: str, db: Session | None = None):
     """从问题文本中提取公司名称并解析股票代码。"""
     if not db:
         return None
@@ -451,7 +456,7 @@ def _resolve_stock_code_from_question(question: str, db: Session | None = None) 
     return None
 
 
-def _extract_company_name_from_question(question: str) -> str | None:
+def _extract_company_name_from_question(question: str):
     """从问题文本中直接提取公司名称（不依赖数据库）。
 
     当公司不在 company_basic_info 表中时，作为检索过滤的兜底手段。
@@ -532,7 +537,7 @@ def _extract_company_name_from_question(question: str) -> str | None:
     return None
 
 
-def _resolve_companies_from_question(question: str, db: Session | None = None) -> list[dict]:
+def _resolve_companies_from_question(question: str, db: Session | None = None):
     """从问题文本中解析所有提及的公司信息。"""
     if not db:
         return []
@@ -565,7 +570,7 @@ def _question_mentions_company(
     question: str,
     stock_abbr: str,
     company_name: str,
-) -> bool:
+):
     """判断问题是否命中公司标准名或别名。"""
     candidates = {stock_abbr, company_name}
     if stock_abbr in COMPANY_ALIAS_MAP:
@@ -578,7 +583,7 @@ def _question_mentions_company(
     return False
 
 
-def _create_knowledge_plan_dict(question: str, context: dict | None = None, db: Session | None = None) -> dict:
+def _create_knowledge_plan_dict(question: str, context: dict | None = None, db: Session | None = None):
     """为知识库型问题生成计划字典。"""
     params: dict[str, Any] = {
         "query": question,
@@ -620,7 +625,7 @@ def _create_knowledge_plan_dict(question: str, context: dict | None = None, db: 
     }
 
 
-def _create_knowledge_plan(question: str, context: dict | None = None, db: Session | None = None) -> ExecutionPlan:
+def _create_knowledge_plan(question: str, context: dict | None = None, db: Session | None = None):
     """创建知识库检索优先的执行计划。"""
     plan_dict = _create_knowledge_plan_dict(question, context, db)
     merged_context = dict(context) if context else {}
@@ -648,7 +653,7 @@ def _create_hybrid_plan(
     question: str,
     context: dict | None = None,
     db: Session | None = None,
-) -> ExecutionPlan:
+):
     """创建混合型执行计划（SQL查询+知识库检索+答案组装）。"""
     stock_code = _extract_stock_code_from_context(context)
     if not stock_code:
@@ -731,7 +736,7 @@ def _create_hybrid_plan(
 def create_execution_plan(
     question: str,
     context: dict | None = None,
-) -> ExecutionPlan:
+):
     """根据问题分析结果创建执行计划。"""
     plan_dict = analyze_question(question, context)
 
@@ -798,7 +803,7 @@ def create_execution_plan(
     return plan
 
 
-def detect_multi_intent(question: str) -> bool:
+def detect_multi_intent(question: str):
     """检测问题是否包含多个子意图。"""
     multi_intent_keywords = [
         "并", "同时", "分别", "各自", "以及",
@@ -824,7 +829,7 @@ def detect_multi_intent(question: str) -> bool:
     return False
 
 
-def estimate_complexity(question: str) -> str:
+def estimate_complexity(question: str):
     """估算问题复杂度等级。"""
     score = 0
     action_count = _count_multi_intent_actions(question)
@@ -873,7 +878,7 @@ def plan_task3_question(
     question: str,
     context: dict | None = None,
     db: Session | None = None,
-) -> ExecutionPlan:
+):
     """规划任务三问题并返回执行计划。"""
     if db:
         context = _ensure_context_resolved(question, context, db)
@@ -916,7 +921,7 @@ def plan_task3_question(
     return plan
 
 
-def _has_multiple_explicit_steps(question: str) -> bool:
+def _has_multiple_explicit_steps(question: str):
     """检测问题是否包含显式的多步骤标记（如 ①②③④ 或 1. 2. 3. 4.）。"""
     step_markers = re.findall(r"[①②③④⑤⑥⑦⑧⑨⑩]|\d+\.", question)
     return len(step_markers) >= 3 or _count_question_clauses(question) >= 3
@@ -926,7 +931,7 @@ def _ensure_context_resolved(
     question: str,
     context: dict | None,
     db: Session,
-) -> dict:
+):
     """确保上下文中包含从问题文本解析的公司信息。"""
     merged = dict(context) if context else {}
     resolution_question = question
@@ -947,7 +952,7 @@ def _ensure_context_resolved(
     return merged
 
 
-def _create_simple_plan(question: str, context: dict | None = None) -> ExecutionPlan:
+def _create_simple_plan(question: str, context: dict | None = None):
     """构造简单问题的降级计划。"""
     steps = [
         TaskStep(
@@ -976,7 +981,7 @@ def _create_simple_plan(question: str, context: dict | None = None) -> Execution
     )
 
 
-def _count_question_clauses(question: str) -> int:
+def _count_question_clauses(question: str):
     """按分号、句号等分隔估算题目中的独立子句数量。"""
     clauses = [
         item.strip()
@@ -986,12 +991,12 @@ def _count_question_clauses(question: str) -> int:
     return len(clauses)
 
 
-def _count_multi_intent_actions(question: str) -> int:
+def _count_multi_intent_actions(question: str):
     """统计题目中出现的核心动作词数量。"""
     return sum(1 for keyword in MULTI_INTENT_ACTION_KEYWORDS if keyword in question)
 
 
-def _enrich_context_from_db(context: dict, db: Session) -> dict:
+def _enrich_context_from_db(context: dict, db: Session):
     """补充上下文中的公司解析信息。"""
     from app.models.company_basic_info import CompanyBasicInfo
     from sqlalchemy import select
@@ -1025,7 +1030,7 @@ def _enrich_context_from_db(context: dict, db: Session) -> dict:
     return enriched
 
 
-def validate_plan(plan: ExecutionPlan) -> tuple[bool, list[str]]:
+def validate_plan(plan: ExecutionPlan):
     """校验执行计划的依赖关系与关键步骤。"""
     errors = []
 
@@ -1057,7 +1062,7 @@ def get_next_executable_steps(
     plan: ExecutionPlan,
     completed_step_ids: set[str],
     failed_step_ids: set[str] | None = None,
-) -> list[TaskStep]:
+):
     """获取当前可以执行的步骤列表。"""
     if failed_step_ids is None:
         failed_step_ids = set()
@@ -1088,7 +1093,7 @@ def execute_plan(
     plan: ExecutionPlan,
     db: Session,
     stop_on_failure: bool = False,
-) -> "ExecutionTrace":
+):
     """执行任务三计划并返回执行轨迹。"""
     from app.services.task3 import executor as services_task3_executor
 
@@ -1177,7 +1182,7 @@ def process_task3_question(
     question: str,
     db: Session,
     context: dict | None = None,
-) -> "Task3Response":
+):
     """处理任务三问题并组装最终回答。"""
     plan = plan_task3_question(question, context, db)
 

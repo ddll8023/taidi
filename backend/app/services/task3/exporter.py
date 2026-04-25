@@ -25,75 +25,10 @@ logger = setup_logger(__name__)
 TASK3_QUESTION_CODE_PATTERN = re.compile(r"^B2\d{3}$")
 
 
-def _parse_question_rounds(question_value) -> list[dict]:
-    """解析题目文本为统一的轮次结构。"""
-    if isinstance(question_value, list):
-        parsed = question_value
-    else:
-        try:
-            parsed = json.loads(question_value)
-        except (json.JSONDecodeError, TypeError):
-            parsed = [{"Q": str(question_value or "")}]
-
-    if not isinstance(parsed, list):
-        parsed = [{"Q": str(parsed)}]
-
-    rounds = []
-    for item in parsed:
-        if isinstance(item, dict):
-            q_text = str(item.get("Q", "")).strip()
-        else:
-            q_text = str(item).strip()
-        if q_text:
-            rounds.append({"Q": q_text})
-
-    if not rounds:
-        rounds.append({"Q": str(question_value or "").strip()})
-    return rounds
+# ========== 公共入口函数 ==========
 
 
-def _ensure_non_empty_qa_pairs(question_value, qa_pairs: list[dict]) -> list[dict]:
-    """确保导出时至少存在一组问答结果。"""
-    if qa_pairs:
-        return qa_pairs
-
-    rounds = _parse_question_rounds(question_value)
-    first_question = rounds[0].get("Q", "") if rounds else str(question_value or "")
-    return [
-        {
-            "Q": first_question,
-            "A": {
-                "content": "回答生成失败：未生成任何有效轮次结果，请重新执行该题。"
-            },
-        }
-    ]
-
-
-def _remove_task3_answer_images(qa_pairs: list[dict]) -> list[dict]:
-    """移除任务三答案中的 image 字段。"""
-    normalized_pairs = []
-    for item in qa_pairs:
-        if not isinstance(item, dict):
-            normalized_pairs.append(item)
-            continue
-
-        normalized_item = dict(item)
-        answer = normalized_item.get("A")
-        if isinstance(answer, dict):
-            normalized_answer = dict(answer)
-            normalized_answer.pop("image", None)
-            normalized_item["A"] = normalized_answer
-        normalized_pairs.append(normalized_item)
-    return normalized_pairs
-
-
-def _validate_task3_question_id(question_id: str) -> None:
-    """校验任务三题目编号格式。"""
-    if not TASK3_QUESTION_CODE_PATTERN.fullmatch(str(question_id or "").strip()):
-        raise ServiceException(ErrorCode.PARAM_ERROR, "任务三题目编号非法")
-
-
-def export_result_3(questions: list[dict], db: Session) -> str:
+def export_result_3(questions: list[dict], db: Session):
     """按题目列表导出 result_3 结果文件。"""
     wb = Workbook()
     wb.remove(wb.active)
@@ -241,7 +176,7 @@ def export_single_question_result(
     question_id: str,
     question: str,
     db: Session,
-) -> Task3SingleExportResponse:
+):
     """导出单个问题的任务三结果。"""
     try:
         _validate_task3_question_id(question_id)
@@ -291,7 +226,7 @@ def export_single_question_result(
         )
 
 
-def format_reference_for_output(ref: Reference) -> dict:
+def format_reference_for_output(ref: Reference):
     """将引用对象格式化为导出结构。"""
     return {
         "paper_path": ref.paper_path,
@@ -301,7 +236,7 @@ def format_reference_for_output(ref: Reference) -> dict:
     }
 
 
-def validate_export_result(result: dict) -> dict:
+def validate_export_result(result: dict):
     """校验导出结果是否满足基础约束。"""
     validation = {
         "is_valid": True,
@@ -350,10 +285,7 @@ def validate_export_result(result: dict) -> dict:
     return validation
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 工作台导出（基于数据库题目记录）
-# ─────────────────────────────────────────────────────────────────────────────
-def export_result_3_from_workspace(db: Session) -> Task3WorkspaceExportResponse:
+def export_result_3_from_workspace(db: Session):
     """从当前工作台记录导出 result_3.xlsx。"""
     from app.models.task3_workspace import Task3Workspace
     from app.models.task3_question_item import Task3QuestionItem
@@ -466,7 +398,7 @@ def export_result_3_from_workspace(db: Session) -> Task3WorkspaceExportResponse:
     )
 
 
-def get_latest_export_info(db: Session) -> Task3LatestExportResponse | None:
+def get_latest_export_info(db: Session):
     """获取最近一次导出记录信息。"""
     from app.models.task3_workspace import Task3Workspace
     from sqlalchemy import select
@@ -483,3 +415,74 @@ def get_latest_export_info(db: Session) -> Task3LatestExportResponse | None:
         total_questions=workspace.total_questions,
         answered_count=workspace.answered_count,
     )
+
+
+"""辅助函数"""
+
+
+def _parse_question_rounds(question_value):
+    """解析题目文本为统一的轮次结构。"""
+    if isinstance(question_value, list):
+        parsed = question_value
+    else:
+        try:
+            parsed = json.loads(question_value)
+        except (json.JSONDecodeError, TypeError):
+            parsed = [{"Q": str(question_value or "")}]
+
+    if not isinstance(parsed, list):
+        parsed = [{"Q": str(parsed)}]
+
+    rounds = []
+    for item in parsed:
+        if isinstance(item, dict):
+            q_text = str(item.get("Q", "")).strip()
+        else:
+            q_text = str(item).strip()
+        if q_text:
+            rounds.append({"Q": q_text})
+
+    if not rounds:
+        rounds.append({"Q": str(question_value or "").strip()})
+    return rounds
+
+
+def _ensure_non_empty_qa_pairs(question_value, qa_pairs: list[dict]):
+    """确保导出时至少存在一组问答结果。"""
+    if qa_pairs:
+        return qa_pairs
+
+    rounds = _parse_question_rounds(question_value)
+    first_question = rounds[0].get("Q", "") if rounds else str(question_value or "")
+    return [
+        {
+            "Q": first_question,
+            "A": {
+                "content": "回答生成失败：未生成任何有效轮次结果，请重新执行该题。"
+            },
+        }
+    ]
+
+
+def _remove_task3_answer_images(qa_pairs: list[dict]):
+    """移除任务三答案中的 image 字段。"""
+    normalized_pairs = []
+    for item in qa_pairs:
+        if not isinstance(item, dict):
+            normalized_pairs.append(item)
+            continue
+
+        normalized_item = dict(item)
+        answer = normalized_item.get("A")
+        if isinstance(answer, dict):
+            normalized_answer = dict(answer)
+            normalized_answer.pop("image", None)
+            normalized_item["A"] = normalized_answer
+        normalized_pairs.append(normalized_item)
+    return normalized_pairs
+
+
+def _validate_task3_question_id(question_id: str):
+    """校验任务三题目编号格式。"""
+    if not TASK3_QUESTION_CODE_PATTERN.fullmatch(str(question_id or "").strip()):
+        raise ServiceException(ErrorCode.PARAM_ERROR, "任务三题目编号非法")

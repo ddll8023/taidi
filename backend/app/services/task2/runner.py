@@ -24,7 +24,7 @@ CHART_DIR = os.path.join(os.getcwd(), "result")
 
 # ========== 公共入口函数 ==========
 
-def answer_single_question(question_id: int, db: Session) -> dict:
+def answer_single_question(question_id: int, db: Session):
     """回答指定任务二题目并保存问答结果。"""
     question = db.get(Task2QuestionItem, question_id)
     if question is None:
@@ -136,7 +136,7 @@ def answer_single_question(question_id: int, db: Session) -> dict:
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "回答失败") from exc
 
 
-def delete_question_answer(question_id: int, db: Session) -> dict:
+def delete_question_answer(question_id: int, db: Session):
     """删除指定任务二题目的已生成回答。"""
     question = db.get(Task2QuestionItem, question_id)
     if question is None:
@@ -175,7 +175,7 @@ def delete_question_answer(question_id: int, db: Session) -> dict:
     }
 
 
-def rerun_question(question_id: int, db: Session) -> dict:
+def rerun_question(question_id: int, db: Session):
     """清理指定题目旧结果后重新回答。"""
     question = db.get(Task2QuestionItem, question_id)
     if question is None:
@@ -205,7 +205,7 @@ def rerun_question(question_id: int, db: Session) -> dict:
     return answer_single_question(question_id, db)
 
 
-def batch_answer_questions(workspace_id: int, scope: str, db: Session) -> dict:
+def batch_answer_questions(workspace_id: int, scope: str, db: Session):
     """按范围批量回答任务二工作台题目。"""
     return _batch_answer_questions(workspace_id=workspace_id, scope=scope, db=db)
 
@@ -213,7 +213,7 @@ def batch_answer_questions(workspace_id: int, scope: str, db: Session) -> dict:
 """辅助函数"""
 
 
-def _commit_or_raise(db: Session) -> None:
+def _commit_or_raise(db: Session):
     """提交当前事务，失败时回滚并转换为业务异常。"""
     try:
         db.commit()
@@ -279,7 +279,7 @@ def _update_workspace_stats(db: Session, workspace_id: int):
         db.flush()
 
 
-def _batch_answer_questions(workspace_id: int, scope: str, db: Session) -> dict:
+def _batch_answer_questions(workspace_id: int, scope: str, db: Session):
     workspace = db.get(Task2Workspace, workspace_id)
     if workspace is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "工作台不存在")

@@ -13,7 +13,7 @@ from app.schemas.common import ErrorCode
 from app.schemas import financial_report as schemas_financial_report
 from app.services import structured_report_extraction as services_structured_report_extraction
 from app.services import validation_log as services_validation_log
-from app.services.analysis_data._constants import UNSET, MAX_CONCURRENT_PARSES
+from app.constants.analysis_data import UNSET, MAX_CONCURRENT_PARSES
 from app.services.analysis_data.normalize import _normalize_structured_payload
 from app.services.analysis_data.persist import _build_report_persistence_bundle, _persist_report_bundle
 from app.utils.exception import ServiceException
@@ -31,7 +31,7 @@ _parse_executor = ThreadPoolExecutor(
 
 def submit_single_parse(
     db: Session, report_id: int, force: bool = False
-) -> schemas_analysis_data.SingleParseSubmitResponse:
+):
     """
     提交单个财报解析任务
     - 检查报告是否存在
@@ -77,7 +77,7 @@ def submit_single_parse(
 
 def submit_batch_parse(
     db: Session, report_ids: list[int]
-) -> schemas_analysis_data.BatchParseSubmitResponse:
+):
     """
     提交批量解析任务
     - 遍历检查每个报告状态
@@ -120,7 +120,7 @@ def submit_batch_parse(
 
 def submit_all_pending_parse(
     db: Session, limit: int = 100
-) -> schemas_analysis_data.BatchParseSubmitResponse:
+):
     """
     提交所有待处理财报的解析任务
     - 查询所有待解析报告
@@ -160,7 +160,7 @@ def submit_all_pending_parse(
 
 def get_batch_parse_status(
     db: Session, report_ids: list[int]
-) -> schemas_analysis_data.BatchParseStatusResponse:
+):
     """
     批量查询解析状态
 
@@ -212,7 +212,7 @@ def get_batch_parse_status(
     )
 
 
-def parse_report(db: Session, report_id: int) -> bool:
+def parse_report(db: Session, report_id: int):
     """
     阶段二：解析结构化并入库
     - 从 financial_report 获取 storage_path
@@ -509,7 +509,7 @@ def parse_report(db: Session, report_id: int) -> bool:
     return True
 
 
-def run_parse_in_background(report_id: int) -> None:
+def run_parse_in_background(report_id: int):
     """
     后台任务：执行财报解析（单个）
     使用独立的数据库会话，确保与请求会话隔离
@@ -546,7 +546,7 @@ def run_parse_in_background(report_id: int) -> None:
         db.close()
 
 
-def run_parse_batch_in_background(report_ids: list[int]) -> None:
+def run_parse_batch_in_background(report_ids: list[int]):
     """
     后台任务：批量执行财报解析（同步包装，供 BackgroundTasks 调用）
 
@@ -568,7 +568,7 @@ def run_parse_batch_in_background(report_ids: list[int]) -> None:
 
 def _load_financial_report_or_raise(
     db: Session, report_id: int
-) -> models_financial_report.FinancialReport:
+):
     financial_report = db.get(models_financial_report.FinancialReport, report_id)
     if financial_report is None:
         raise ServiceException(
@@ -587,7 +587,7 @@ def _update_financial_report_state(
     validate_status: schemas_financial_report.ValidateStatus | int | object = UNSET,
     validate_message: str | None | object = UNSET,
     import_status: schemas_financial_report.ImportStatus | int | object = UNSET,
-) -> models_financial_report.FinancialReport:
+):
     financial_report = _load_financial_report_or_raise(db, report_id)
     if structured_json_path is not UNSET:
         financial_report.structured_json_path = structured_json_path
@@ -604,7 +604,7 @@ def _update_financial_report_state(
 
 def _update_parse_status_to_processing(
     db: Session, report_id: int
-) -> models_financial_report.FinancialReport:
+):
     """将解析状态更新为"处理中" """
     financial_report = _load_financial_report_or_raise(db, report_id)
     financial_report.parse_status = schemas_financial_report.ParseStatus.PROCESSING
@@ -616,7 +616,7 @@ def _update_parse_status_to_processing(
 
 def _update_parse_status_by_result(
     db: Session, report_id: int, success: bool, error_message: str | None = None
-) -> models_financial_report.FinancialReport:
+):
     """根据解析结果更新状态"""
     financial_report = _load_financial_report_or_raise(db, report_id)
     if success:
@@ -632,7 +632,7 @@ def _update_parse_status_by_result(
 
 def _get_pending_parse_reports(
     db: Session, limit: int = 100
-) -> list[models_financial_report.FinancialReport]:
+):
     """获取待解析的报告列表"""
     stmt = (
         select(models_financial_report.FinancialReport)
@@ -651,7 +651,7 @@ def _get_pending_parse_reports(
 def _cleanup_report_files(
     storage_path: str | None = None,
     structured_json_path: str | None = None,
-) -> None:
+):
     """清理财报相关文件"""
     if storage_path:
         try:
@@ -670,7 +670,7 @@ def _cleanup_report_files(
             logger.warning("清理JSON文件失败: %s, 错误: %s", structured_json_path, exc)
 
 
-def _parse_report_with_own_session(report_id: int) -> tuple[int, bool, str | None]:
+def _parse_report_with_own_session(report_id: int):
     """在独立线程中执行解析，使用独立的数据库会话"""
     from app.db.database import get_background_db_session
 
@@ -704,7 +704,7 @@ def _parse_report_with_own_session(report_id: int) -> tuple[int, bool, str | Non
         db.close()
 
 
-async def _parse_single_async(report_id: int) -> tuple[int, bool, str | None]:
+async def _parse_single_async(report_id: int):
     """异步包装：在线程池中执行单个解析任务"""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
@@ -712,7 +712,7 @@ async def _parse_single_async(report_id: int) -> tuple[int, bool, str | None]:
     )
 
 
-async def _run_parse_batch_in_background_async(report_ids: list[int]) -> dict:
+async def _run_parse_batch_in_background_async(report_ids: list[int]):
     """后台任务：批量执行财报解析（异步并行，最大并发数为 MAX_CONCURRENT_PARSES）"""
     logger.info(
         "后台批量解析任务开始: report_ids=%s, max_concurrent=%d",
@@ -722,7 +722,7 @@ async def _run_parse_batch_in_background_async(report_ids: list[int]) -> dict:
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_PARSES)
 
-    async def parse_with_semaphore(rid: int) -> tuple[int, bool, str | None]:
+    async def parse_with_semaphore(rid: int):
         async with semaphore:
             return await _parse_single_async(rid)
 

@@ -33,7 +33,7 @@ UPLOAD_DIR = os.path.join(os.getcwd(), "uploads", "fujian4", "current")
 
 # ========== 公共入口函数 ==========
 
-def import_fujian4(file_path: str, original_filename: str, db: Session) -> dict:
+def import_fujian4(file_path: str, original_filename: str, db: Session):
     """导入附件4文件，解析题目并初始化任务二工作台。"""
     return _import_fujian4(
         file_path=file_path,
@@ -42,7 +42,7 @@ def import_fujian4(file_path: str, original_filename: str, db: Session) -> dict:
     )
 
 
-def get_workspace_info(db: Session) -> Task2WorkspaceResponse | None:
+def get_workspace_info(db: Session):
     """查询最近一次任务二工作台概览。"""
     workspace = _get_workspace_entity(db)
     if workspace is None:
@@ -62,7 +62,7 @@ def get_question_list(
     ]
 
 
-def get_question_detail(question_id: int, db: Session) -> Task2QuestionItemResponse:
+def get_question_detail(question_id: int, db: Session):
     """查询任务二单题详情。"""
     question = db.get(Task2QuestionItem, question_id)
     if question is None:
@@ -70,7 +70,7 @@ def get_question_detail(question_id: int, db: Session) -> Task2QuestionItemRespo
     return Task2QuestionItemResponse.model_validate(question)
 
 
-def get_question_stats(db: Session, workspace_id: int) -> dict:
+def get_question_stats(db: Session, workspace_id: int):
     """统计任务二工作台题目状态数量。"""
     questions = _get_question_entities(db=db, workspace_id=workspace_id)
     total = len(questions)
@@ -89,7 +89,7 @@ def get_question_stats(db: Session, workspace_id: int) -> dict:
 """辅助函数"""
 
 
-def _commit_or_raise(db: Session) -> None:
+def _commit_or_raise(db: Session):
     """提交当前事务，失败时回滚并转换为业务异常。"""
     try:
         db.commit()
@@ -98,7 +98,7 @@ def _commit_or_raise(db: Session) -> None:
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
 
 
-def _column_ref_to_index(cell_ref: str) -> int:
+def _column_ref_to_index(cell_ref: str):
     letters = "".join(char for char in cell_ref if char.isalpha())
     if not letters:
         return 0
@@ -108,7 +108,7 @@ def _column_ref_to_index(cell_ref: str) -> int:
     return index - 1
 
 
-def _load_shared_strings(archive: zipfile.ZipFile) -> list[str]:
+def _load_shared_strings(archive: zipfile.ZipFile):
     if "xl/sharedStrings.xml" not in archive.namelist():
         return []
     root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
@@ -122,7 +122,7 @@ def _load_shared_strings(archive: zipfile.ZipFile) -> list[str]:
     return values
 
 
-def _get_all_sheet_names(archive: zipfile.ZipFile) -> list[str]:
+def _get_all_sheet_names(archive: zipfile.ZipFile):
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
     sheets = workbook.find("a:sheets", MAIN_NS)
     if sheets is None:
@@ -130,7 +130,7 @@ def _get_all_sheet_names(archive: zipfile.ZipFile) -> list[str]:
     return [sheet.attrib.get("name", "") for sheet in sheets]
 
 
-def _get_sheet_target(archive: zipfile.ZipFile, sheet_name: str) -> str:
+def _get_sheet_target(archive: zipfile.ZipFile, sheet_name: str):
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
     relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
     rel_map = {
@@ -149,7 +149,7 @@ def _get_sheet_target(archive: zipfile.ZipFile, sheet_name: str) -> str:
     raise ServiceException(ErrorCode.PARAM_ERROR, f"未找到工作表：{sheet_name}")
 
 
-def _read_sheet_rows(archive: zipfile.ZipFile, sheet_target: str) -> list[list[str]]:
+def _read_sheet_rows(archive: zipfile.ZipFile, sheet_target: str):
     shared_strings = _load_shared_strings(archive)
     root = ET.fromstring(archive.read(sheet_target))
     sheet_data = root.find("a:sheetData", MAIN_NS)
@@ -183,7 +183,7 @@ def _read_sheet_rows(archive: zipfile.ZipFile, sheet_target: str) -> list[list[s
     return rows
 
 
-def _parse_fujian4_file(file_path: str) -> list[dict]:
+def _parse_fujian4_file(file_path: str):
     source_path = Path(file_path)
     if not source_path.exists():
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "附件4文件不存在")
@@ -269,7 +269,7 @@ def _delete_chart_file(chart_path: str, chart_dir: str):
         logger.warning("删除图表文件失败: path=%s error=%s", chart_path, str(e))
 
 
-def _get_or_create_workspace(db: Session) -> Task2Workspace:
+def _get_or_create_workspace(db: Session):
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 
@@ -288,7 +288,7 @@ def _get_or_create_workspace(db: Session) -> Task2Workspace:
     return workspace
 
 
-def _import_fujian4(file_path: str, original_filename: str, db: Session) -> dict:
+def _import_fujian4(file_path: str, original_filename: str, db: Session):
     workspace = _get_or_create_workspace(db)
 
     if workspace.import_status == ImportStatus.IMPORTED and workspace.total_questions > 0:
@@ -361,7 +361,7 @@ def _import_fujian4(file_path: str, original_filename: str, db: Session) -> dict
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "导入失败") from e
 
 
-def _get_workspace_entity(db: Session) -> Task2Workspace | None:
+def _get_workspace_entity(db: Session):
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     return db.execute(stmt).scalar_one_or_none()
 

@@ -1,3 +1,4 @@
+"""企业基本信息处理服务"""
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
@@ -7,6 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import company_basic_info as models_company_basic_info
+from app.db.database import commit_or_rollback
+from app.schemas.common import ErrorCode
+from app.utils.exception import ServiceException
 from app.utils.xlsx_reader import read_sheet_as_dicts
 
 
@@ -26,8 +30,9 @@ ATTACHMENT1_FIELD_MAP = {
     "管理人员人数": "management_count",
 }
 
+# ========== 公共入口函数 ==========
 
-def normalize_registered_capital_to_yuan(raw_value: str | None) -> Decimal | None:
+def normalize_registered_capital_to_yuan(raw_value: str | None):
     """将附件1中的注册资本文本换算为元。"""
     if raw_value is None:
         return None
@@ -47,26 +52,26 @@ def normalize_registered_capital_to_yuan(raw_value: str | None) -> Decimal | Non
             try:
                 return Decimal(number_part) * factor
             except (InvalidOperation, ValueError) as exc:
-                raise ValueError(f"无法解析注册资本：{raw_value}") from exc
+                raise ServiceException(ErrorCode.PARAM_ERROR, f"无法解析注册资本：{raw_value}") from exc
 
     try:
         return Decimal(text)
     except (InvalidOperation, ValueError) as exc:
-        raise ValueError(f"无法解析注册资本：{raw_value}") from exc
+        raise ServiceException(ErrorCode.PARAM_ERROR, f"无法解析注册资本：{raw_value}") from exc
 
 
-def load_company_basic_info_rows(source_file_path: str | Path) -> list[dict[str, str]]:
+def load_company_basic_info_rows(source_file_path: str | Path):
     """直接从附件1读取公司基础信息行。"""
     rows = read_sheet_as_dicts(source_file_path, ATTACHMENT1_SHEET_NAME)
     if not rows:
-        raise ValueError("附件1-基本信息表为空")
+        raise ServiceException(ErrorCode.PARAM_ERROR, "附件1-基本信息表为空")
     return rows
 
 
 def build_company_basic_info_payload(
     raw_row: dict[str, str],
     source_file_name: str,
-) -> dict[str, object]:
+):
     """将附件1原始行映射为 ORM 入库载荷。"""
     payload = {
         target_field: raw_row.get(source_field, "").strip()
@@ -79,7 +84,7 @@ def build_company_basic_info_payload(
         if not raw_row.get(source_field, "").strip()
     ]
     if missing_fields:
-        raise ValueError(f"附件1存在缺失关键字段：{', '.join(missing_fields)}")
+        raise ServiceException(ErrorCode.PARAM_ERROR, f"附件1存在缺失关键字段：{', '.join(missing_fields)}")
 
     listed_exchange = str(payload["listed_exchange"]).strip()
     payload["stock_code"] = models_company_basic_info.normalize_company_stock_code(
@@ -103,7 +108,7 @@ def build_company_basic_info_payload(
 def upsert_company_basic_info_records(
     db: Session,
     source_file_path: str | Path,
-) -> dict[str, int]:
+):
     """将附件1中的公司基础信息幂等写入 company_basic_info。"""
     source_path = Path(source_file_path)
     rows = load_company_basic_info_rows(source_path)
@@ -129,7 +134,7 @@ def upsert_company_basic_info_records(
             setattr(existing, field, value)
         updated_count += 1
 
-    db.commit()
+    commit_or_rollback(db)
     return {
         "total": len(rows),
         "inserted": inserted_count,

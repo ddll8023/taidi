@@ -896,8 +896,8 @@ onUnmounted(() => {
           description="上传财报文件后，记录会出现在这里，并直接展示解析状态和向量化状态。"
         />
 
-        <div v-else class="overflow-hidden rounded-[28px] border border-black/5 bg-white" style="height: 600px;">
-          <div class="h-full w-full overflow-auto">
+        <div v-else class="flex flex-col overflow-hidden rounded-[28px] border border-black/5 bg-white" style="height: 600px;">
+          <div class="min-h-0 flex-1 overflow-auto">
             <table class="shell-grid-table min-w-[860px]">
               <thead class="sticky top-0 z-10">
                 <tr>

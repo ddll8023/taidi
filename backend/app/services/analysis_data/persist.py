@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.schemas import financial_report as schemas_financial_report
 from app.services import financial_report as services_financial_report
-from app.services.analysis_data._constants import FACT_MODEL_MAP, FACT_IDENTITY_FIELDS
+from app.constants.analysis_data import FACT_MODEL_MAP, FACT_IDENTITY_FIELDS
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
@@ -27,7 +27,7 @@ class _ReportPersistenceBundle(NamedTuple):
 def _build_report_persistence_bundle(
     financial_report,
     normalized_records: dict[str, dict[str, Any]],
-) -> _ReportPersistenceBundle:
+):
     """基于已通过校验的结构化结果，准备事实表快照入库数据。"""
     report_identity = services_financial_report.build_report_fact_identity_payload(
         financial_report
@@ -54,7 +54,7 @@ def _build_report_persistence_bundle(
     )
 
 
-def _persist_report_bundle(db: Session, bundle: _ReportPersistenceBundle) -> None:
+def _persist_report_bundle(db: Session, bundle: _ReportPersistenceBundle):
     """同步主表与四张事实表，空表结果会清理旧残留行。"""
     prepared_map = {record.table_name: record for record in bundle.fact_records}
     report_id = bundle.financial_report.id
@@ -89,7 +89,7 @@ def _build_fact_record_payload(
     model_class,
     record: dict[str, Any],
     report_identity: dict[str, Any],
-) -> dict[str, Any]:
+):
     """只接收模型指标字段，并由主表统一回填事实身份字段。"""
     if not isinstance(record, dict):
         raise ServiceException(

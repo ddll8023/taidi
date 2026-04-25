@@ -1,3 +1,4 @@
+"""校验日志记录服务"""
 import json
 from typing import Any
 
@@ -5,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models import financial_report as models_financial_report
 from app.models import validation_log as models_validation_log
+from app.db.database import commit_or_rollback
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
 
@@ -27,6 +29,8 @@ COMPANY_MATCH_MESSAGE_KEYWORDS = (
 )
 
 
+# ========== 公共入口函数 ==========
+
 def start_validation_stage(
     db: Session,
     *,
@@ -36,7 +40,8 @@ def start_validation_stage(
     source_file_name: str | None = None,
     report: models_financial_report.FinancialReport | None = None,
     details: dict[str, Any] | None = None,
-) -> int:
+):
+    """创建一条处理中状态的校验日志并返回其ID"""
     entity = models_validation_log.ValidationLog(
         stage=stage,
         check_type=check_type,
@@ -49,7 +54,7 @@ def start_validation_stage(
     _sync_source_file_name(entity, source_file_name)
     _sync_report_snapshot(entity, report)
     db.add(entity)
-    db.commit()
+    commit_or_rollback(db)
     db.refresh(entity)
     return int(entity.id)
 
@@ -63,7 +68,8 @@ def mark_validation_stage_passed(
     source_file_name: str | None = None,
     report: models_financial_report.FinancialReport | None = None,
     check_type: str | None = None,
-) -> None:
+):
+    """将指定校验日志标记为通过"""
     entity = _load_validation_log(db, log_id)
     if check_type is not None:
         entity.check_type = check_type
@@ -74,7 +80,7 @@ def mark_validation_stage_passed(
     entity.details_json = _serialize_details(details)
     _sync_source_file_name(entity, source_file_name)
     _sync_report_snapshot(entity, report)
-    db.commit()
+    commit_or_rollback(db)
 
 
 def mark_validation_stage_failed(
@@ -88,7 +94,8 @@ def mark_validation_stage_failed(
     report: models_financial_report.FinancialReport | None = None,
     check_type: str | None = None,
     is_blocking: bool = True,
-) -> None:
+):
+    """将指定校验日志标记为失败"""
     entity = _load_validation_log(db, log_id)
     if check_type is not None:
         entity.check_type = check_type
@@ -99,17 +106,19 @@ def mark_validation_stage_failed(
     entity.details_json = _serialize_details(details)
     _sync_source_file_name(entity, source_file_name)
     _sync_report_snapshot(entity, report)
-    db.commit()
+    commit_or_rollback(db)
 
 
-def infer_report_identity_check_type(message: str) -> str:
+def infer_report_identity_check_type(message: str):
+    """根据消息内容推断报告身份校验的检查类型"""
     normalized = _normalize_message(message)
     if any(keyword in normalized for keyword in COMPANY_MATCH_MESSAGE_KEYWORDS):
         return models_validation_log.VALIDATION_CHECK_TYPE_COMPANY_MATCH
     return models_validation_log.VALIDATION_CHECK_TYPE_PDF_METADATA
 
 
-def infer_structured_validation_check_type(message: str) -> str:
+def infer_structured_validation_check_type(message: str):
+    """根据消息内容推断结构化数据校验的检查类型"""
     normalized = _normalize_message(message)
     if any(keyword in normalized for keyword in STRUCT_SCHEMA_MESSAGE_KEYWORDS):
         return models_validation_log.VALIDATION_CHECK_TYPE_STRUCT_SCHEMA
@@ -119,7 +128,8 @@ def infer_structured_validation_check_type(message: str) -> str:
 def build_validation_failure_details(
     exc: Exception,
     details: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+):
+    """从异常对象构建校验失败详情字典"""
     payload = dict(details or {})
     payload["exception_type"] = type(exc).__name__
     payload["error_message"] = _get_exception_message(exc)
@@ -128,33 +138,41 @@ def build_validation_failure_details(
     return payload
 
 
-def get_service_error_code(exc: Exception) -> int:
+def get_service_error_code(exc: Exception):
+    """从异常中提取业务错误码"""
     if isinstance(exc, ServiceException):
         return int(exc.code)
     return int(ErrorCode.INTERNAL_ERROR)
 
 
-def _load_validation_log(db: Session, log_id: int) -> models_validation_log.ValidationLog:
+"""辅助函数"""
+
+
+def _load_validation_log(db: Session, log_id: int):
+    """根据ID加载校验日志实体，不存在则抛出异常"""
     entity = db.get(models_validation_log.ValidationLog, log_id)
     if entity is None:
-        raise ValueError(f"validation_log 不存在，log_id={log_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"validation_log 不存在，log_id={log_id}")
     return entity
 
 
-def _serialize_details(details: dict[str, Any] | None) -> str | None:
+def _serialize_details(details: dict[str, Any] | None):
+    """将详情字典序列化为JSON字符串"""
     if not details:
         return None
     return json.dumps(details, ensure_ascii=False, sort_keys=True, default=str)
 
 
-def _normalize_message(message: str) -> str:
+def _normalize_message(message: str):
+    """规范化消息文本，为空时抛出异常"""
     normalized = str(message).strip()
     if not normalized:
-        raise ValueError("validation_log.message 不能为空")
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "validation_log.message 不能为空")
     return normalized
 
 
-def _get_exception_message(exc: Exception) -> str:
+def _get_exception_message(exc: Exception):
+    """从异常对象中提取可读的错误消息"""
     if isinstance(exc, ServiceException):
         return exc.message
     normalized = str(exc).strip()
@@ -164,7 +182,8 @@ def _get_exception_message(exc: Exception) -> str:
 def _sync_source_file_name(
     entity: models_validation_log.ValidationLog,
     source_file_name: str | None,
-) -> None:
+):
+    """同步源文件名到校验日志实体"""
     if source_file_name is None:
         return
     normalized = str(source_file_name).strip()
@@ -174,7 +193,8 @@ def _sync_source_file_name(
 def _sync_report_snapshot(
     entity: models_validation_log.ValidationLog,
     report: models_financial_report.FinancialReport | None,
-) -> None:
+):
+    """同步财报主表快照字段到校验日志实体"""
     if report is None:
         return
     entity.report_id = report.id

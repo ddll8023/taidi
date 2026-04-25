@@ -230,7 +230,7 @@ SQL_FUNCTIONS = {
 }
 
 
-def _get_task3_config() -> dict:
+def _get_task3_config():
     """获取任务三执行阶段配置。"""
     return settings.PROMPT_CONFIG.get_task3_config
 
@@ -240,7 +240,7 @@ def _invoke_llm(
     user_prompt: str,
     max_tokens: int = 8192,
     temperature: float = 0.1,
-) -> str:
+):
     """调用大模型并返回文本结果。"""
     try:
         model = get_model.build_chat_model(
@@ -267,7 +267,7 @@ def _invoke_llm(
     return ""
 
 
-def _extract_json_from_response(response_text: str) -> dict | None:
+def _extract_json_from_response(response_text: str):
     """从模型响应中提取 JSON 对象。"""
     json_match = re.search(r"\{[\s\S]*\}", response_text)
     if json_match:
@@ -281,7 +281,7 @@ def _extract_json_from_response(response_text: str) -> dict | None:
         return None
 
 
-def _extract_sql_from_response(response_text: str) -> str | None:
+def _extract_sql_from_response(response_text: str):
     """从模型响应中提取 SQL 语句。"""
     cleaned_text = response_text.strip()
 
@@ -306,7 +306,7 @@ def _extract_sql_from_response(response_text: str) -> str | None:
     return None
 
 
-def _strip_sql_literals(sql: str) -> str:
+def _strip_sql_literals(sql: str):
     """移除 SQL 中的注释和字面量。"""
     cleaned = re.sub(r"--.*$", " ", sql, flags=re.MULTILINE)
     cleaned = re.sub(r"/\*[\s\S]*?\*/", " ", cleaned)
@@ -315,7 +315,7 @@ def _strip_sql_literals(sql: str) -> str:
     return cleaned
 
 
-def _extract_cte_names(sql: str) -> set[str]:
+def _extract_cte_names(sql: str):
     """提取 SQL 中定义的 CTE 名称。"""
     cleaned = _strip_sql_literals(sql)
     if not re.match(r"^\s*WITH\b", cleaned, flags=re.IGNORECASE):
@@ -331,7 +331,7 @@ def _extract_cte_names(sql: str) -> set[str]:
     return cte_names
 
 
-def _extract_referenced_table_names(sql: str) -> list[str]:
+def _extract_referenced_table_names(sql: str):
     """提取 SQL 中引用的表名。"""
     cleaned = _strip_sql_literals(sql)
     cte_names = _extract_cte_names(sql)
@@ -346,7 +346,7 @@ def _extract_referenced_table_names(sql: str) -> list[str]:
     ]
 
 
-def _extract_table_aliases(sql: str) -> dict[str, str]:
+def _extract_table_aliases(sql: str):
     """提取 SQL 中的表别名映射。"""
     cleaned = _strip_sql_literals(sql)
     cte_names = _extract_cte_names(sql)
@@ -373,7 +373,7 @@ def _extract_table_aliases(sql: str) -> dict[str, str]:
     return aliases
 
 
-def _extract_select_aliases(sql: str) -> set[str]:
+def _extract_select_aliases(sql: str):
     """提取 SELECT 语句中的列别名。"""
     cleaned = _strip_sql_literals(sql)
     return {
@@ -384,7 +384,7 @@ def _extract_select_aliases(sql: str) -> set[str]:
     }
 
 
-def _validate_sql_identifiers(sql: str) -> tuple[bool, str]:
+def _validate_sql_identifiers(sql: str):
     """校验 SQL 中字段和别名是否合法。"""
     table_aliases = _extract_table_aliases(sql)
     referenced_tables = {
@@ -444,7 +444,7 @@ def _validate_sql_identifiers(sql: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _validate_sql(sql: str) -> tuple[bool, str]:
+def _validate_sql(sql: str):
     """校验 SQL 是否满足安全约束。"""
     sql_upper = sql.upper().strip()
 
@@ -468,7 +468,7 @@ def _validate_sql(sql: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _execute_sql(sql: str, db: Session) -> list[dict]:
+def _execute_sql(sql: str, db: Session):
     """执行只读 SQL 并返回字典列表。"""
     try:
         result = db.execute(text(sql))
@@ -482,7 +482,7 @@ def _execute_sql(sql: str, db: Session) -> list[dict]:
         ) from exc
 
 
-def _to_jsonable(value: Any) -> Any:
+def _to_jsonable(value: Any):
     """将执行结果转换为 JSON 可序列化结构。"""
     if isinstance(value, Decimal):
         return float(value)
@@ -504,7 +504,7 @@ def execute_step(
     context: dict[str, Any],
     results: dict[str, StepResult],
     references: list[Reference],
-) -> StepResult:
+):
     """执行单个任务三步骤并更新执行状态。"""
     start_time = time.time()
     logger.info(
@@ -564,7 +564,7 @@ def build_execution_trace(
     plan: ExecutionPlan,
     results: dict[str, StepResult],
     references: list[Reference],
-) -> ExecutionTrace:
+):
     """根据当前执行状态构造任务三执行轨迹。"""
     final_answer = _get_final_answer(plan, results, references)
     return ExecutionTrace(
@@ -580,7 +580,7 @@ def build_execution_trace(
 """辅助函数"""
 
 
-def _execute_sql_query(step: TaskStep, db: Session, context: dict[str, Any]) -> dict:
+def _execute_sql_query(step: TaskStep, db: Session, context: dict[str, Any]):
     """执行 SQL 查询步骤。"""
     params = step.params
     sql = params.get("sql")
@@ -635,7 +635,7 @@ def _execute_sql_query(step: TaskStep, db: Session, context: dict[str, Any]) -> 
     return {"sql": sql, "data": data, "row_count": len(data)}
 
 
-def _generate_sql_for_step(step: TaskStep, context: dict[str, Any]) -> str | None:
+def _generate_sql_for_step(step: TaskStep, context: dict[str, Any]):
     """为步骤生成 SQL 语句。"""
     deterministic_sql = _build_rule_based_sql(step, context)
     if deterministic_sql:
@@ -696,7 +696,7 @@ def _generate_sql_for_step(step: TaskStep, context: dict[str, Any]) -> str | Non
     return sql
 
 
-def _build_rule_based_sql(step: TaskStep, context: dict[str, Any]) -> str | None:
+def _build_rule_based_sql(step: TaskStep, context: dict[str, Any]):
     """按题型生成规则化 SQL，降低关键场景对 LLM 自由生成的依赖。"""
     question = _get_step_question_text(step, context)
     resolved_companies = _get_resolved_companies(context)
@@ -880,7 +880,7 @@ def _build_rule_based_sql(step: TaskStep, context: dict[str, Any]) -> str | None
     return None
 
 
-def _get_step_question_text(step: TaskStep, context: dict[str, Any]) -> str:
+def _get_step_question_text(step: TaskStep, context: dict[str, Any]):
     """提取当前步骤实际对应的问题文本。"""
     for key in ["original_question", "standalone_question"]:
         value = context.get(key)
@@ -892,7 +892,7 @@ def _get_step_question_text(step: TaskStep, context: dict[str, Any]) -> str:
     return step.goal
 
 
-def _get_resolved_companies(context: dict[str, Any]) -> list[dict[str, Any]]:
+def _get_resolved_companies(context: dict[str, Any]):
     """读取上下文中已解析的公司列表。"""
     resolved_companies = context.get("resolved_companies")
     if isinstance(resolved_companies, list):
@@ -900,23 +900,23 @@ def _get_resolved_companies(context: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _extract_years(question: str, default_years: list[int]) -> list[int]:
+def _extract_years(question: str, default_years: list[int]):
     """从问题文本提取年份列表。"""
     years = sorted({int(item) for item in re.findall(r"20\d{2}", question)})
     return years or default_years
 
 
-def _format_number_in_clause(values: list[int]) -> str:
+def _format_number_in_clause(values: list[int]):
     """格式化数字 IN 子句。"""
     return ", ".join(str(value) for value in values)
 
 
-def _format_text_in_clause(values: list[str]) -> str:
+def _format_text_in_clause(values: list[str]):
     """格式化文本 IN 子句。"""
     return ", ".join(f"'{value}'" for value in values)
 
 
-def _extract_company_name_from_question(question: str) -> str | None:
+def _extract_company_name_from_question(question: str):
     """从问题文本提取单个公司名称。"""
     match = re.search(r"([\u4e00-\u9fa5]{2,8}(?:药业|集团|制药|股份|医药))", question)
     if match:
@@ -929,7 +929,7 @@ def _build_single_company_filter(
     context: dict[str, Any],
     question: str,
     alias: str = "",
-) -> str | None:
+):
     """构造单主体查询条件，优先使用 stock_code。"""
     prefix = f"{alias}." if alias else ""
 
@@ -952,7 +952,7 @@ def _build_single_company_filter(
     return None
 
 
-def _build_schema_ddl() -> str:
+def _build_schema_ddl():
     """构造供模型参考的表结构说明。"""
     lines = []
     lines.append("-- 重要提示：只允许使用以下列出的表，严禁使用任何不存在的表（如 top_cash_flow_companies、temp_table 等）。")
@@ -970,7 +970,7 @@ def _build_schema_ddl() -> str:
     return "\n".join(lines)
 
 
-def _execute_derive_metric(step: TaskStep, context: dict[str, Any]) -> dict:
+def _execute_derive_metric(step: TaskStep, context: dict[str, Any]):
     """执行派生指标计算步骤。"""
     params = step.params
     formula = params.get("formula", "")
@@ -1019,7 +1019,7 @@ def _execute_derive_metric(step: TaskStep, context: dict[str, Any]) -> dict:
     }
 
 
-def _calculate_yoy_growth(data: list[dict], metric_name: str, formula: str) -> dict:
+def _calculate_yoy_growth(data: list[dict], metric_name: str, formula: str):
     """按年度顺序计算同比增长结果。"""
     metric_field = None
     for field in [
@@ -1110,7 +1110,7 @@ def _calculate_yoy_growth(data: list[dict], metric_name: str, formula: str) -> d
     }
 
 
-def _evaluate_formula(formula: str, row: dict) -> Decimal | None:
+def _evaluate_formula(formula: str, row: dict):
     """在单行数据上执行安全公式计算。"""
     expr = formula
     for field, value in row.items():
@@ -1129,7 +1129,7 @@ def _execute_retrieve_evidence(
     step: TaskStep,
     context: dict[str, Any],
     references: list[Reference],
-) -> dict:
+):
     """执行证据检索步骤并收集引用。"""
     params = step.params
     query = params.get("query", step.goal)
@@ -1208,7 +1208,7 @@ def _execute_retrieve_evidence(
     }
 
 
-def _execute_aggregate(step: TaskStep, context: dict[str, Any]) -> dict:
+def _execute_aggregate(step: TaskStep, context: dict[str, Any]):
     """执行聚合统计步骤。"""
     params = step.params
     operation = params.get("operation", "avg")
@@ -1267,7 +1267,7 @@ def _execute_aggregate(step: TaskStep, context: dict[str, Any]) -> dict:
     return output
 
 
-def _execute_verify(step: TaskStep, context: dict[str, Any]) -> dict:
+def _execute_verify(step: TaskStep, context: dict[str, Any]):
     """执行计划内轻量校验步骤。"""
     params = step.params
     check_type = params.get("check_type", "consistency")
@@ -1320,7 +1320,7 @@ def _execute_verify(step: TaskStep, context: dict[str, Any]) -> dict:
     return verification_result
 
 
-def _aggregate_count_and_avg(step: TaskStep, dep_data: list[dict[str, Any]]) -> dict:
+def _aggregate_count_and_avg(step: TaskStep, dep_data: list[dict[str, Any]]):
     """按净利润率分组，统计公司数量并计算平均资产负债率。"""
     merged_rows: dict[str, dict[str, Any]] = {}
     for row in dep_data:
@@ -1386,7 +1386,7 @@ def _execute_compose_answer(
     plan: ExecutionPlan,
     results: dict[str, StepResult],
     references: list[Reference],
-) -> dict:
+):
     """基于执行结果生成最终回答文本。"""
     config = _get_task3_config()
     answer_config = config.get("answer_builder", {})
@@ -1402,7 +1402,7 @@ def _execute_compose_answer(
     return {"answer": answer_text, "has_references": len(references) > 0}
 
 
-def _build_execution_summary(results: dict[str, StepResult]) -> str:
+def _build_execution_summary(results: dict[str, StepResult]):
     """将执行结果汇总为模型可读摘要。"""
     summary_parts = []
     for step_id, result in results.items():
@@ -1458,7 +1458,7 @@ def _get_final_answer(
     plan: ExecutionPlan,
     results: dict[str, StepResult],
     references: list[Reference],
-) -> Task3AnswerContent:
+):
     """从执行结果中提取最终答案。"""
     answer_content = ""
     for step_id in reversed(list(results.keys())):
@@ -1479,7 +1479,7 @@ def _get_final_answer(
 def _generate_fallback_answer(
     plan: ExecutionPlan,
     results: dict[str, StepResult],
-) -> str:
+):
     """在无法生成答案时构造降级回答。"""
     parts = []
     for step in plan.get_ordered_steps():

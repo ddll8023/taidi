@@ -25,6 +25,9 @@ from app.utils.logger_config import setup_logger
 logger = setup_logger(__name__)
 
 
+"""辅助函数"""
+
+
 def _to_jsonable(value):
     """将复杂对象递归转换为 JSON 可序列化结构。"""
     if isinstance(value, BaseModel):
@@ -40,7 +43,7 @@ def _to_jsonable(value):
     return value
 
 
-def _build_failure_message(verification: dict | None, fallback: str = "任务三回答未通过校验") -> str:
+def _build_failure_message(verification: dict | None, fallback: str = "任务三回答未通过校验"):
     """根据校验结果拼接失败原因文本。"""
     if not verification:
         return fallback
@@ -53,7 +56,7 @@ def _build_failure_message(verification: dict | None, fallback: str = "任务三
     return "; ".join(messages)[:2000]
 
 
-def _parse_question_rounds(question_json_str: str) -> list[dict]:
+def _parse_question_rounds(question_json_str: str):
     """解析题目原始 JSON 为轮次列表。"""
     try:
         parsed = json.loads(question_json_str)
@@ -77,7 +80,7 @@ def _parse_question_rounds(question_json_str: str) -> list[dict]:
     return rounds
 
 
-def _build_standalone_question(q_text: str, previous_rounds: list[dict]) -> str:
+def _build_standalone_question(q_text: str, previous_rounds: list[dict]):
     """将当前追问与历史轮次拼接为独立问题。"""
     if not previous_rounds:
         return q_text
@@ -100,7 +103,7 @@ def _build_standalone_question(q_text: str, previous_rounds: list[dict]) -> str:
     )
 
 
-def _build_reference_json(ref) -> dict:
+def _build_reference_json(ref):
     """将引用对象规范化为输出字典。"""
     if isinstance(ref, dict):
         return {
@@ -115,7 +118,7 @@ def _build_reference_json(ref) -> dict:
     }
 
 
-def _build_answer_item(q_text: str, response) -> dict:
+def _build_answer_item(q_text: str, response):
     """构造单轮回答的输出对象。"""
     references = []
     for ref in response.answer.references:
@@ -133,7 +136,7 @@ def _build_answer_item(q_text: str, response) -> dict:
     }
 
 
-def _build_retrieval_summary(trace) -> dict | None:
+def _build_retrieval_summary(trace):
     """从执行轨迹中提取检索摘要。"""
     retrieve_steps = [
         r for r in trace.results
@@ -167,7 +170,9 @@ def _build_retrieval_summary(trace) -> dict | None:
     }
 
 
-def answer_single_question(question_id: int, db: Session) -> Task3QuestionActionResponse:
+# ========== 公共入口函数 ==========
+
+def answer_single_question(question_id: int, db: Session):
     """回答指定题目并持久化结果。"""
     question = db.get(Task3QuestionItem, question_id)
     if question is None:
@@ -279,7 +284,7 @@ def answer_single_question(question_id: int, db: Session) -> Task3QuestionAction
         raise
 
 
-def delete_question_answer(question_id: int, db: Session) -> Task3QuestionActionResponse:
+def delete_question_answer(question_id: int, db: Session):
     """删除指定题目的回答结果。"""
     question = db.get(Task3QuestionItem, question_id)
     if question is None:
@@ -303,7 +308,7 @@ def delete_question_answer(question_id: int, db: Session) -> Task3QuestionAction
     )
 
 
-def rerun_question(question_id: int, db: Session) -> Task3QuestionActionResponse:
+def rerun_question(question_id: int, db: Session):
     """清空旧结果并重新回答指定题目。"""
     question = db.get(Task3QuestionItem, question_id)
     if question is None:
@@ -341,7 +346,7 @@ def batch_answer_questions(
     workspace_id: int,
     scope: str,
     db: Session,
-) -> Task3BatchAnswerResponse:
+):
     """按范围批量回答工作台中的题目。"""
     stmt = select(Task3QuestionItem).where(Task3QuestionItem.workspace_id == workspace_id)
     if scope == "unfinished":

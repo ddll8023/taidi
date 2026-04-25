@@ -68,7 +68,6 @@ class KnowledgeDocument(Base):
     source_path = Column(String(500), nullable=False, comment="PDF源文件路径")
     stock_code = Column(
         CHAR(6),
-        ForeignKey("company_basic_info.stock_code"),
         nullable=True,
         comment="股票代码，行业研报可为空",
     )

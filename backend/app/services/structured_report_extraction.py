@@ -1,3 +1,4 @@
+"""结构化报告抽取服务"""
 from __future__ import annotations
 
 import json
@@ -130,29 +131,33 @@ class TableExtractionResult:
     used_core_supplement: bool
 
 
+# ========== 公共入口函数 ==========
+
+
 def extract_structured_report(
     file_path: str,
     financial_report: models_financial_report.FinancialReport,
-) -> StructuredExtractionArtifact:
+):
+    """分表结构化抽取主流程，返回抽取结果和跟踪信息"""
     report_id = getattr(financial_report, "id", None)
     logger.info("开始结构化抽取流程: report_id=%s file_path=%s", report_id, file_path)
     total_start_time = time.time()
 
     config = settings.PROMPT_CONFIG.get_struct_config
-    page_texts = read_pdf_pages(file_path)
+    page_texts = _read_pdf_pages(file_path)
     
-    is_summary = is_summary_report(page_texts)
+    is_summary = _is_summary_report(page_texts)
     if is_summary:
         logger.info("检测到摘要版报告，使用全PDF模式: report_id=%s", report_id)
     
-    table_contexts = build_table_contexts(page_texts, config, force_full_pdf=is_summary)
+    table_contexts = _build_table_contexts(page_texts, config, force_full_pdf=is_summary)
 
     use_full_pdf = any(
         context.source_mode == "full_pdf" for context in table_contexts.values()
     ) or is_summary
 
     extraction_start_time = time.time()
-    table_results = extract_tables_parallel(
+    table_results = _extract_tables_parallel(
         financial_report=financial_report,
         table_contexts=table_contexts,
         config=config,
@@ -171,10 +176,10 @@ def extract_structured_report(
             getattr(financial_report, "id", None),
             ",".join(empty_tables),
         )
-        fallback_contexts = build_fallback_contexts(page_texts, empty_tables, config)
+        fallback_contexts = _build_fallback_contexts(page_texts, empty_tables, config)
         for table_name in empty_tables:
             if table_name in fallback_contexts:
-                fallback_result = extract_single_table(
+                fallback_result = _extract_single_table(
                     financial_report=financial_report,
                     table_name=table_name,
                     context=fallback_contexts[table_name],
@@ -200,8 +205,8 @@ def extract_structured_report(
         )
         for table_name in TABLE_ORDER
     }
-    structured_json_path = save_structured_payload(file_path, payload)
-    trace = build_extraction_trace(table_contexts, table_results)
+    structured_json_path = _save_structured_payload(file_path, payload)
+    trace = _build_extraction_trace(table_contexts, table_results)
 
     total_elapsed = time.time() - total_start_time
     logger.info(
@@ -220,7 +225,11 @@ def extract_structured_report(
     )
 
 
-def read_pdf_pages(file_path: str) -> tuple[PdfPageText, ...]:
+"""辅助函数"""
+
+
+def _read_pdf_pages(file_path: str):
+    """读取PDF文件全部页面的文本内容"""
     logger.info("开始读取 PDF 文件: file_path=%s", file_path)
     try:
         reader = PdfReader(file_path)
@@ -233,7 +242,7 @@ def read_pdf_pages(file_path: str) -> tuple[PdfPageText, ...]:
     pages: list[PdfPageText] = []
     for index, page in enumerate(reader.pages, start=1):
         raw_text = page.extract_text() or ""
-        text = normalize_pdf_page_text(raw_text)
+        text = _normalize_pdf_page_text(raw_text)
         pages.append(PdfPageText(page_number=index, text=text))
     logger.info(
         "PDF 文件读取完成: total_pages=%d total_chars=%d",
@@ -243,7 +252,8 @@ def read_pdf_pages(file_path: str) -> tuple[PdfPageText, ...]:
     return tuple(pages)
 
 
-def normalize_pdf_page_text(text: str) -> str:
+def _normalize_pdf_page_text(text: str):
+    """规范化单页PDF文本，去除控制字符和多余空白"""
     normalized = text.replace("\r", "\n")
     normalized = re.sub(r"[\x00-\x08\x0b-\x0c\x0e-\x1f]", " ", normalized)
     normalized = re.sub(r"[ \t]+", " ", normalized)
@@ -257,7 +267,7 @@ MISSING_ANCHOR_THRESHOLD = 2
 SUMMARY_KEYWORDS = ("摘要", "年报摘要", "年度报告摘要")
 
 
-def is_summary_report(page_texts: tuple[PdfPageText, ...]) -> bool:
+def _is_summary_report(page_texts: tuple[PdfPageText, ...]):
     """检测是否为摘要版报告"""
     if not page_texts:
         return False
@@ -271,11 +281,12 @@ def is_summary_report(page_texts: tuple[PdfPageText, ...]) -> bool:
     return False
 
 
-def build_table_contexts(
+def _build_table_contexts(
     page_texts: tuple[PdfPageText, ...],
     config: dict[str, Any],
     force_full_pdf: bool = False,
-) -> dict[str, TableExtractionContext]:
+):
+    """为每张目标表构建抽取上下文窗口"""
     page_map = {page.page_number: page for page in page_texts}
     total_pages = len(page_texts)
     logger.info(
@@ -284,7 +295,7 @@ def build_table_contexts(
         force_full_pdf,
     )
     anchor_pages = {
-        table_name: find_best_anchor_page(page_texts, SECTION_SPECS[table_name])
+        table_name: _find_best_anchor_page(page_texts, SECTION_SPECS[table_name])
         for table_name in TABLE_ORDER
     }
     logger.info(
@@ -301,9 +312,9 @@ def build_table_contexts(
             total_pages,
             missing_anchor_count,
         )
-        return build_full_pdf_contexts(page_texts, page_map, anchor_pages, config)
+        return _build_full_pdf_contexts(page_texts, page_map, anchor_pages, config)
 
-    core_context_pages = build_context_window_pages(
+    core_context_pages = _build_context_window_pages(
         page_map=page_map,
         anchor_page=anchor_pages[CORE_TABLE_NAME],
         next_anchor_page=min(
@@ -335,7 +346,7 @@ def build_table_contexts(
             table_contexts[table_name] = TableExtractionContext(
                 table_name=table_name,
                 page_numbers=tuple(page.page_number for page in context_pages),
-                context_text=render_table_context(
+                context_text=_render_table_context(
                     table_name=table_name,
                     table_pages=context_pages,
                     core_pages=tuple(),
@@ -361,7 +372,7 @@ def build_table_contexts(
             ),
             default=None,
         )
-        statement_pages = build_context_window_pages(
+        statement_pages = _build_context_window_pages(
             page_map=page_map,
             anchor_page=statement_anchor,
             next_anchor_page=next_anchor,
@@ -373,7 +384,7 @@ def build_table_contexts(
             ),
         )
 
-        deduplicated_page_numbers = dedupe_page_numbers(
+        deduplicated_page_numbers = _dedupe_page_numbers(
             tuple(page.page_number for page in statement_pages),
             tuple(page.page_number for page in core_context_pages),
         )
@@ -390,7 +401,7 @@ def build_table_contexts(
         table_contexts[table_name] = TableExtractionContext(
             table_name=table_name,
             page_numbers=deduplicated_page_numbers,
-            context_text=render_table_context(
+            context_text=_render_table_context(
                 table_name=table_name,
                 table_pages=statement_pages,
                 core_pages=core_context_pages,
@@ -413,15 +424,16 @@ def build_table_contexts(
     return table_contexts
 
 
-def build_full_pdf_contexts(
+def _build_full_pdf_contexts(
     page_texts: tuple[PdfPageText, ...],
     page_map: dict[int, PdfPageText],
     anchor_pages: dict[str, int | None],
     config: dict[str, Any],
-) -> dict[str, TableExtractionContext]:
+):
+    """为所有表构建使用完整PDF内容的上下文"""
     all_pages = tuple(page_texts)
     all_page_numbers = tuple(page.page_number for page in all_pages)
-    full_context_text = render_full_pdf_context(all_pages)
+    full_context_text = _render_full_pdf_context(all_pages)
 
     table_contexts: dict[str, TableExtractionContext] = {}
     for table_name in TABLE_ORDER:
@@ -443,20 +455,22 @@ def build_full_pdf_contexts(
     return table_contexts
 
 
-def render_full_pdf_context(pages: tuple[PdfPageText, ...]) -> str:
+def _render_full_pdf_context(pages: tuple[PdfPageText, ...]):
+    """将全部页面渲染为完整PDF上下文文本"""
     rendered_pages = [f"[第{page.page_number}页]\n{page.text}" for page in pages]
     return "【完整PDF内容】\n" + "\n\n".join(rendered_pages)
 
 
-def find_best_anchor_page(
+def _find_best_anchor_page(
     page_texts: tuple[PdfPageText, ...],
     section_spec: dict[str, Any],
-) -> int | None:
+):
+    """根据关键词评分定位最佳锚点页码"""
     best_page_number: int | None = None
     best_score = 0
 
     for page in page_texts:
-        score = score_anchor_page(page.text, section_spec)
+        score = _score_anchor_page(page.text, section_spec)
         if score > best_score:
             best_score = score
             best_page_number = page.page_number
@@ -464,7 +478,8 @@ def find_best_anchor_page(
     return best_page_number
 
 
-def score_anchor_page(page_text: str, section_spec: dict[str, Any]) -> int:
+def _score_anchor_page(page_text: str, section_spec: dict[str, Any]):
+    """对单页文本计算锚点匹配评分"""
     text = page_text.strip()
     if not text:
         return 0
@@ -498,12 +513,13 @@ def score_anchor_page(page_text: str, section_spec: dict[str, Any]) -> int:
     return score
 
 
-def build_context_window_pages(
+def _build_context_window_pages(
     page_map: dict[int, PdfPageText],
     anchor_page: int | None,
     next_anchor_page: int | None,
     max_pages: int,
-) -> tuple[PdfPageText, ...]:
+):
+    """从锚点页开始构建指定长度的上下文页面窗口"""
     if anchor_page is None:
         return tuple()
 
@@ -520,7 +536,8 @@ def build_context_window_pages(
     return tuple(pages)
 
 
-def dedupe_page_numbers(*groups: tuple[int, ...]) -> tuple[int, ...]:
+def _dedupe_page_numbers(*groups: tuple[int, ...]):
+    """合并多组页码并去重，保持原始顺序"""
     ordered: list[int] = []
     seen: set[int] = set()
     for group in groups:
@@ -532,34 +549,37 @@ def dedupe_page_numbers(*groups: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(ordered)
 
 
-def render_table_context(
+def _render_table_context(
     table_name: str,
     table_pages: tuple[PdfPageText, ...],
     core_pages: tuple[PdfPageText, ...],
-) -> str:
+):
+    """将报表页面和核心指标补充页面渲染为上下文文本"""
     sections: list[str] = []
     if table_pages:
         sections.append(
-            render_context_section(
+            _render_context_section(
                 SECTION_SPECS[table_name]["primary_context_label"],
                 table_pages,
             )
         )
     if core_pages and table_name != CORE_TABLE_NAME:
-        sections.append(render_context_section("主要财务数据补充页段", core_pages))
+        sections.append(_render_context_section("主要财务数据补充页段", core_pages))
     return "\n\n".join(section for section in sections if section).strip()
 
 
-def render_context_section(label: str, pages: tuple[PdfPageText, ...]) -> str:
+def _render_context_section(label: str, pages: tuple[PdfPageText, ...]):
+    """将一组页面渲染为带标签的上下文段落"""
     rendered_pages = [f"[第{page.page_number}页]\n{page.text}" for page in pages]
     return f"【{label}】\n" + "\n\n".join(rendered_pages)
 
 
-def extract_tables_parallel(
+def _extract_tables_parallel(
     financial_report: models_financial_report.FinancialReport,
     table_contexts: dict[str, TableExtractionContext],
     config: dict[str, Any],
-) -> list[TableExtractionResult]:
+):
+    """并行抽取所有目标表的数据"""
     report_id = getattr(financial_report, "id", None)
     logger.info(
         "开始并行抽取: report_id=%s tables=%s max_workers=%d",
@@ -574,7 +594,7 @@ def extract_tables_parallel(
     with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_TABLES) as executor:
         future_to_table = {
             executor.submit(
-                extract_single_table,
+                _extract_single_table,
                 financial_report,
                 table_name,
                 table_contexts[table_name],
@@ -628,12 +648,13 @@ def extract_tables_parallel(
     return ordered_results
 
 
-def extract_single_table(
+def _extract_single_table(
     financial_report: models_financial_report.FinancialReport,
     table_name: str,
     context: TableExtractionContext,
     config: dict[str, Any],
-) -> TableExtractionResult:
+):
+    """抽取单张表的记录，调用AI模型并解析返回结果"""
     report_id = getattr(financial_report, "id", None)
     if not context.context_text:
         logger.info(
@@ -651,7 +672,7 @@ def extract_single_table(
             used_core_supplement=context.used_core_supplement,
         )
 
-    prompt = build_table_prompt(
+    prompt = _build_table_prompt(
         table_name=table_name,
         financial_report=financial_report,
         context=context,
@@ -677,13 +698,13 @@ def extract_single_table(
     )
 
     start_time = time.time()
-    response, stop_reason = invoke_structured_model(
+    response, stop_reason = _invoke_structured_model(
         prompt=prompt,
         max_tokens=max_tokens,
     )
     elapsed_time = time.time() - start_time
 
-    response_text = extract_text_from_response(response)
+    response_text = _extract_text_from_response(response)
     logger.info(
         "AI 模型响应完成: report_id=%s table=%s response_length=%d elapsed=%.2fs stop_reason=%s",
         report_id,
@@ -699,7 +720,7 @@ def extract_single_table(
         response_text[:1000] + "..." if len(response_text) > 1000 else response_text,
     )
 
-    records = parse_table_records(
+    records = _parse_table_records(
         table_name=table_name,
         response_text=response_text,
         field_map=config["table_prompts"][table_name]["fields"],
@@ -723,12 +744,13 @@ def extract_single_table(
     )
 
 
-def build_table_prompt(
+def _build_table_prompt(
     table_name: str,
     financial_report: FinancialReport,
     context: TableExtractionContext,
     config: dict[str, Any],
-) -> str:
+):
+    """为单表抽取构建AI提示词"""
     table_config = config["table_prompts"][table_name]
     shared_rules = config.get("shared_rules", [])
     field_map = table_config["fields"]
@@ -772,18 +794,20 @@ def build_table_prompt(
             context.context_text,
             "",
             "你必须只返回 JSON 数组，格式示例如下：",
-            build_json_array_example(field_map),
+            _build_json_array_example(field_map),
         ]
     )
     return "\n".join(lines).strip()
 
 
-def build_json_array_example(field_map: dict[str, str]) -> str:
+def _build_json_array_example(field_map: dict[str, str]):
+    """根据字段映射生成JSON数组示例"""
     example_record = {field_name: None for field_name in field_map}
     return json.dumps([example_record], ensure_ascii=False, indent=2)
 
 
-def invoke_structured_model(prompt: str, max_tokens: int) -> tuple[Any, str | None]:
+def _invoke_structured_model(prompt: str, max_tokens: int):
+    """调用AI模型获取结构化抽取结果"""
     logger.info(
         "调用 AI 模型: model=%s max_tokens=%d prompt_chars=%d",
         settings.CHAT_MODEL,
@@ -816,7 +840,8 @@ def invoke_structured_model(prompt: str, max_tokens: int) -> tuple[Any, str | No
     return response, stop_reason
 
 
-def extract_text_from_response(response: Any) -> str:
+def _extract_text_from_response(response: Any):
+    """从AI模型响应对象中提取文本内容"""
     content = getattr(response, "content", None)
     if isinstance(content, str):
         return content.strip()
@@ -840,18 +865,19 @@ def extract_text_from_response(response: Any) -> str:
     return ""
 
 
-def parse_table_records(
+def _parse_table_records(
     table_name: str,
     response_text: str,
     field_map: dict[str, str],
-) -> list[dict[str, Any]]:
+):
+    """解析AI返回的JSON文本为表记录列表，并校验字段合法性"""
     if not response_text:
         raise ServiceException(
             ErrorCode.AI_SERVICE_ERROR,
             f"{table_name} 未返回可解析文本",
         )
 
-    normalized_text = strip_code_fence(response_text)
+    normalized_text = _strip_code_fence(response_text)
     try:
         parsed = json.loads(normalized_text)
     except json.JSONDecodeError as exc:
@@ -895,7 +921,8 @@ def parse_table_records(
     return [normalized_record]
 
 
-def strip_code_fence(text: str) -> str:
+def _strip_code_fence(text: str):
+    """去除AI返回文本两侧的Markdown代码围栏"""
     normalized = text.strip()
     if normalized.startswith("```json"):
         normalized = normalized.removeprefix("```json").strip()
@@ -906,10 +933,11 @@ def strip_code_fence(text: str) -> str:
     return normalized
 
 
-def save_structured_payload(
+def _save_structured_payload(
     file_path: str,
     payload: dict[str, list[dict[str, Any]]],
-) -> str:
+):
+    """将结构化抽取结果保存为JSON文件"""
     pdf_name = os.path.splitext(os.path.basename(file_path))[0]
     json_file_name = f"{pdf_name}_structured_{int(time.time())}.json"
     saved_path = save_json(settings.json_UPLOAD_DIR, json_file_name, payload)
@@ -917,10 +945,11 @@ def save_structured_payload(
     return saved_path
 
 
-def build_extraction_trace(
+def _build_extraction_trace(
     table_contexts: dict[str, TableExtractionContext],
     table_results: list[TableExtractionResult],
-) -> dict[str, Any]:
+):
+    """构建抽取过程的跟踪信息字典"""
     result_map = {result.table_name: result for result in table_results}
     return {
         "table_contexts": {
@@ -946,11 +975,11 @@ def build_extraction_trace(
     }
 
 
-def build_fallback_contexts(
+def _build_fallback_contexts(
     page_texts: tuple[PdfPageText, ...],
     empty_tables: list[str],
     config: dict[str, Any],
-) -> dict[str, TableExtractionContext]:
+):
     """为抽取失败的表构建扩大搜索范围的上下文"""
     page_map = {page.page_number: page for page in page_texts}
     total_pages = len(page_texts)
@@ -970,7 +999,7 @@ def build_fallback_contexts(
             total_pages,
         )
 
-        anchor_page = find_best_anchor_page(page_texts, spec)
+        anchor_page = _find_best_anchor_page(page_texts, spec)
         if anchor_page is None:
             scored_pages = []
             for page in page_texts:
@@ -988,7 +1017,7 @@ def build_fallback_contexts(
             else:
                 anchor_page = 1
 
-        context_pages = build_context_window_pages(
+        context_pages = _build_context_window_pages(
             page_map=page_map,
             anchor_page=anchor_page,
             next_anchor_page=None,
@@ -998,7 +1027,7 @@ def build_fallback_contexts(
         if not context_pages:
             context_pages = page_texts[:max_pages]
 
-        context_text = render_table_context(
+        context_text = _render_table_context(
             table_name=table_name,
             table_pages=context_pages,
             core_pages=tuple(),

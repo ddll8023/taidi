@@ -20,12 +20,12 @@ RESULT_DIR = os.path.join(os.getcwd(), "result")
 
 # ========== 公共入口函数 ==========
 
-def export_result_2(db: Session) -> dict:
+def export_result_2(db: Session):
     """导出任务二结果文件并记录最近导出信息。"""
     return _export_result_2(db=db)
 
 
-def get_latest_export_info(db: Session) -> dict | None:
+def get_latest_export_info(db: Session):
     """查询最近一次任务二导出结果信息。"""
     return _get_latest_export_info(db=db)
 
@@ -33,7 +33,7 @@ def get_latest_export_info(db: Session) -> dict | None:
 """辅助函数"""
 
 
-def _commit_or_raise(db: Session) -> None:
+def _commit_or_raise(db: Session):
     """提交当前事务，失败时回滚并转换为业务异常。"""
     try:
         db.commit()
@@ -42,7 +42,7 @@ def _commit_or_raise(db: Session) -> None:
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
 
 
-def _ensure_non_empty_qa_pairs(question_json_str: str, qa_pairs: list[dict]) -> list[dict]:
+def _ensure_non_empty_qa_pairs(question_json_str: str, qa_pairs: list[dict]):
     if qa_pairs:
         return qa_pairs
 
@@ -71,7 +71,7 @@ def _ensure_non_empty_qa_pairs(question_json_str: str, qa_pairs: list[dict]) -> 
     ]
 
 
-def _export_result_2(db: Session) -> dict:
+def _export_result_2(db: Session):
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 
@@ -162,7 +162,7 @@ def _export_result_2(db: Session) -> dict:
     }
 
 
-def _get_latest_export_info(db: Session) -> dict | None:
+def _get_latest_export_info(db: Session):
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 

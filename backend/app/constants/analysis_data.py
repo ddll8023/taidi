@@ -9,7 +9,7 @@ from app.models import income_sheet as models_income_sheet
 
 UNSET = object()
 
-MAX_CONCURRENT_PARSES = 3
+MAX_CONCURRENT_PARSES = 5
 
 FACT_MODEL_MAP = {
     "core_performance_indicators_sheet": models_core_performance_indicators_sheet.CorePerformanceIndicatorsSheet,

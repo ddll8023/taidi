@@ -1,3 +1,4 @@
+"""财报元数据解析与入库服务"""
 from __future__ import annotations
 
 import re
@@ -41,12 +42,14 @@ PDF_STOCK_CODE_PATTERNS = (
         flags=re.IGNORECASE,
     ),
 )
-PDF_STOCK_ABBR_PATTERNS = (
+PDF_PRIMARY_STOCK_ABBR_PATTERNS = (
     re.compile(
         r"(?:证券简称|股票简称|公司简称)(?:\s*[:：]\s*|\s+)(?P<stock_abbr>[\u4e00-\u9fa5A-Za-z0-9·()（） \t\u3000]{2,30}?)"
         r"(?=(?:\s+(?:股票代码|证券代码|公司代码|Stock\s+Code)\b)|[\r\n]|$)",
         flags=re.IGNORECASE,
     ),
+)
+PDF_FALLBACK_STOCK_ABBR_PATTERNS = (
     re.compile(
         r"(?:公司的中文简称(?:\s*[（(]如有[)）])?)(?:\s*[:：]\s*|\s+)(?P<stock_abbr>[\u4e00-\u9fa5A-Za-z0-9·()（） \t\u3000]{2,30})"
         r"(?=[\r\n]|$)",
@@ -57,6 +60,15 @@ PDF_STOCK_ABBR_PATTERNS = (
         r"(?=[\r\n]|$)",
         flags=re.IGNORECASE,
     ),
+)
+STOCK_ABBR_HEADER_KEYWORDS = (
+    "股票代码",
+    "证券代码",
+    "公司代码",
+    "变更前股票简称",
+    "股票上市交易所",
+    "上市交易所",
+    "股票种类",
 )
 EXPLICIT_DATE_PATTERN = re.compile(
     r"(?P<year>20\d{2})\s*[年/-]\s*(?P<month>\d{1,2})\s*[月/-]\s*(?P<day>\d{1,2})\s*日?"
@@ -91,21 +103,27 @@ class ResolvedFinancialReportMetadata:
     report_date: date | None
 
 
-def _normalize_file_name(source_file_name: str) -> str:
+"""辅助函数"""
+
+
+def _normalize_file_name(source_file_name: str):
+    """规范化文件名并校验非空"""
     normalized = str(source_file_name).strip()
     if not normalized:
         raise ServiceException(ErrorCode.PARAM_ERROR, "上传文件名不能为空")
     return normalized
 
 
-def _normalize_preview_text(text: str) -> str:
+def _normalize_preview_text(text: str):
+    """规范化PDF预读文本，合并空白和换行"""
     normalized = text.replace("\r", "\n")
     normalized = re.sub(r"[ \t]+", " ", normalized)
     normalized = re.sub(r"\n+", "\n", normalized)
     return normalized.strip()
 
 
-def _normalize_name_token(raw_value: str | None) -> str:
+def _normalize_name_token(raw_value: str | None):
+    """将名称令牌统一格式化，去除空白并统一括号"""
     if raw_value is None:
         return ""
 
@@ -115,7 +133,8 @@ def _normalize_name_token(raw_value: str | None) -> str:
     return normalized
 
 
-def _normalize_stock_abbr_value(raw_value: str | None) -> str:
+def _normalize_stock_abbr_value(raw_value: str | None):
+    """规范化股票简称，去除前缀修饰和多余空白"""
     if raw_value is None:
         return ""
 
@@ -126,16 +145,30 @@ def _normalize_stock_abbr_value(raw_value: str | None) -> str:
     return normalized
 
 
+def _is_valid_stock_abbr_candidate(value: str):
+    """判断股票简称候选值是否为真实简称，过滤 PDF 表格表头误命中"""
+    normalized = _normalize_name_token(value)
+    if not normalized:
+        return False
+
+    return not any(
+        _normalize_name_token(keyword) in normalized
+        for keyword in STOCK_ABBR_HEADER_KEYWORDS
+    )
+
+
 def _is_equivalent_stock_abbr(
     preferred: object | None,
     fallback: object | None,
-) -> bool:
+):
+    """判断两个股票简称在归一化后是否等价"""
     if preferred in (None, "") or fallback in (None, ""):
         return False
     return _normalize_name_token(str(preferred)) == _normalize_name_token(str(fallback))
 
 
-def _extract_pdf_preview_text(file_path: str, max_pages: int = 12) -> str:
+def _extract_pdf_preview_text(file_path: str, max_pages: int = 12):
+    """从PDF文件提取前N页预读文本"""
     try:
         reader = PdfReader(file_path)
     except Exception as exc:
@@ -159,11 +192,13 @@ def _extract_pdf_preview_text(file_path: str, max_pages: int = 12) -> str:
     return preview_text
 
 
-def _parse_report_date_token(raw_value: str) -> date:
+def _parse_report_date_token(raw_value: str):
+    """将YYYYMMDD格式字符串解析为日期对象"""
     return datetime.strptime(raw_value, "%Y%m%d").date()
 
 
-def _parse_explicit_date_from_text(preview_text: str) -> date | None:
+def _parse_explicit_date_from_text(preview_text: str):
+    """从PDF预读文本中提取唯一的显式日期"""
     dates: set[date] = set()
     for match in EXPLICIT_DATE_PATTERN.finditer(preview_text):
         try:
@@ -182,7 +217,8 @@ def _parse_explicit_date_from_text(preview_text: str) -> date | None:
     return None
 
 
-def _parse_report_title_meta(preview_text: str) -> dict[str, object] | None:
+def _parse_report_title_meta(preview_text: str):
+    """从PDF预读文本中解析报告标题元数据"""
     match = REPORT_TITLE_PATTERN.search(preview_text)
     if match is None:
         return None
@@ -203,7 +239,8 @@ def _parse_report_title_meta(preview_text: str) -> dict[str, object] | None:
 
 def _parse_szse_file_name_meta(
     normalized_file_name: str,
-) -> dict[str, str | int] | None:
+):
+    """解析深交所格式文件名中的报告元数据"""
     match = SZSE_FILE_NAME_PATTERN.match(normalized_file_name)
     if match is None:
         return None
@@ -241,13 +278,17 @@ def _extract_unique_pattern_value(
     display_name: str,
     normalizer,
     dedupe_key_builder,
-) -> str | None:
+    candidate_filter=None,
+):
+    """从文本中通过正则模式提取唯一值，冲突时报错"""
     unique_values: dict[str, str] = {}
     for pattern in patterns:
         for match in pattern.finditer(preview_text):
             raw_value = match.group(group_name)
             normalized_value = normalizer(raw_value)
             if not normalized_value:
+                continue
+            if candidate_filter is not None and not candidate_filter(normalized_value):
                 continue
 
             dedupe_key = dedupe_key_builder(normalized_value)
@@ -266,7 +307,29 @@ def _extract_unique_pattern_value(
     return resolved_values[0]
 
 
-def _parse_pdf_security_meta(preview_text: str) -> dict[str, str | None]:
+def _parse_pdf_security_meta(preview_text: str):
+    """从PDF预读文本中解析证券代码和简称"""
+    primary_stock_abbr = _extract_unique_pattern_value(
+        preview_text=preview_text,
+        patterns=PDF_PRIMARY_STOCK_ABBR_PATTERNS,
+        group_name="stock_abbr",
+        display_name="股票简称",
+        normalizer=_normalize_stock_abbr_value,
+        dedupe_key_builder=_normalize_name_token,
+        candidate_filter=_is_valid_stock_abbr_candidate,
+    )
+    fallback_stock_abbr = None
+    if primary_stock_abbr is None:
+        fallback_stock_abbr = _extract_unique_pattern_value(
+            preview_text=preview_text,
+            patterns=PDF_FALLBACK_STOCK_ABBR_PATTERNS,
+            group_name="stock_abbr",
+            display_name="股票简称",
+            normalizer=_normalize_stock_abbr_value,
+            dedupe_key_builder=_normalize_name_token,
+            candidate_filter=_is_valid_stock_abbr_candidate,
+        )
+
     return {
         "stock_code": _extract_unique_pattern_value(
             preview_text=preview_text,
@@ -276,14 +339,7 @@ def _parse_pdf_security_meta(preview_text: str) -> dict[str, str | None]:
             normalizer=models_company_basic_info.normalize_company_stock_code,
             dedupe_key_builder=lambda value: value,
         ),
-        "stock_abbr": _extract_unique_pattern_value(
-            preview_text=preview_text,
-            patterns=PDF_STOCK_ABBR_PATTERNS,
-            group_name="stock_abbr",
-            display_name="股票简称",
-            normalizer=_normalize_stock_abbr_value,
-            dedupe_key_builder=_normalize_name_token,
-        ),
+        "stock_abbr": primary_stock_abbr or fallback_stock_abbr,
     }
 
 
@@ -291,7 +347,8 @@ def _merge_field(
     field_name: str,
     preferred: object | None,
     fallback: object | None,
-) -> object | None:
+):
+    """合并文件名与PDF内容中同一字段的值，冲突时报错"""
     if preferred is None:
         return fallback
     if fallback is None:
@@ -306,7 +363,8 @@ def _merge_field(
     return preferred
 
 
-def _require_report_field(field_name: str, value: object | None) -> object:
+def _require_report_field(field_name: str, value: object | None):
+    """校验报告必要字段非空，为空时抛出异常"""
     field_label_map = {
         "report_year": "报告年份",
         "report_period": "报告期间",
@@ -323,7 +381,8 @@ def _require_report_field(field_name: str, value: object | None) -> object:
 
 def _load_company_by_stock_code(
     db: Session, stock_code: str
-) -> models_company_basic_info.CompanyBasicInfo:
+):
+    """根据股票代码查询公司主数据"""
     normalized_code = models_company_basic_info.normalize_company_stock_code(stock_code)
     company = db.execute(
         select(models_company_basic_info.CompanyBasicInfo).where(
@@ -340,7 +399,8 @@ def _load_company_by_stock_code(
 
 def _load_company_by_stock_abbr(
     db: Session, stock_abbr: str
-) -> models_company_basic_info.CompanyBasicInfo:
+):
+    """根据股票简称查询公司主数据，支持模糊匹配"""
     normalized_abbr = _normalize_stock_abbr_value(stock_abbr)
     if not normalized_abbr:
         raise ServiceException(ErrorCode.PARAM_ERROR, "股票简称不能为空")
@@ -376,7 +436,8 @@ def _load_company_by_stock_abbr(
     return companies[0]
 
 
-def _infer_exchange_from_stock_code(stock_code: str) -> str | None:
+def _infer_exchange_from_stock_code(stock_code: str):
+    """根据股票代码前缀推断所属交易所"""
     normalized_code = models_company_basic_info.normalize_company_stock_code(stock_code)
     if normalized_code.startswith(("600", "601", "603", "605", "688", "689", "900")):
         return "SH"
@@ -397,7 +458,8 @@ def _create_pdf_derived_company(
     company_name: str,
     exchange: str,
     source_file_name: str,
-) -> models_company_basic_info.CompanyBasicInfo:
+):
+    """根据PDF解析的身份信息补建公司最小主数据"""
     normalized_code = models_company_basic_info.normalize_company_stock_code(stock_code)
     normalized_abbr = _normalize_stock_abbr_value(stock_abbr)
     normalized_company_name = _normalize_stock_abbr_value(company_name) or normalized_abbr
@@ -420,11 +482,14 @@ def _create_pdf_derived_company(
     return entity
 
 
+# ========== 公共入口函数 ==========
+
 def resolve_financial_report_metadata(
     db: Session,
     source_file_name: str,
     file_path: str,
-) -> ResolvedFinancialReportMetadata:
+):
+    """解析并合并文件名和PDF内容中的财报身份元数据"""
     normalized_file_name = _normalize_file_name(source_file_name)
     preview_text = _extract_pdf_preview_text(file_path)
     title_meta = _parse_report_title_meta(preview_text)
@@ -580,7 +645,8 @@ def resolve_financial_report_metadata(
     )
 
 
-def _get_vector_version() -> str:
+def _get_vector_version():
+    """生成向量模型版本标识字符串"""
     return (
         f"{settings.EMBEDDING_MODEL}:"
         f"{settings.EMBEDDING_DIM}:"
@@ -594,7 +660,8 @@ def upsert_financial_report_from_source(
     source_file_name: str,
     file_path: str,
     structured_json_path: str | None = None,
-) -> models_financial_report.FinancialReport:
+):
+    """根据PDF源文件信息新建或更新财报主表"""
     metadata = resolve_financial_report_metadata(db, source_file_name, file_path)
     entity = db.execute(
         select(models_financial_report.FinancialReport).where(
@@ -630,7 +697,7 @@ def upsert_financial_report_from_source(
             review_status=schemas_financial_report.ReviewStatus.PENDING,
             validate_status=schemas_financial_report.ValidateStatus.PENDING,
             validate_message=None,
-            import_status=schemas_financial_report.ImportStatus.PENDING,
+            import_status=schemas_financial_report.ImportStatus.SUCCESS,
             vector_status=schemas_financial_report.VectorStatus.PENDING,
             vector_model=settings.EMBEDDING_MODEL,
             vector_dim=settings.EMBEDDING_DIM,
@@ -640,7 +707,7 @@ def upsert_financial_report_from_source(
         )
         db.add(entity)
         db.flush()
-        return entity
+        return schemas_financial_report.FinancialReportResponse.model_validate(entity)
 
     entity.stock_abbr = metadata.stock_abbr
     entity.exchange = metadata.exchange
@@ -661,20 +728,21 @@ def upsert_financial_report_from_source(
     entity.review_status = schemas_financial_report.ReviewStatus.PENDING
     entity.validate_status = schemas_financial_report.ValidateStatus.PENDING
     entity.validate_message = None
-    entity.import_status = schemas_financial_report.ImportStatus.PENDING
+    entity.import_status = schemas_financial_report.ImportStatus.SUCCESS
     entity.vector_status = schemas_financial_report.VectorStatus.PENDING
     entity.vector_model = settings.EMBEDDING_MODEL
     entity.vector_dim = settings.EMBEDDING_DIM
     entity.vector_version = _get_vector_version()
     entity.vector_error_message = None
     entity.vectorized_at = None
-    return entity
+    return schemas_financial_report.FinancialReportResponse.model_validate(entity)
 
 
 def validate_structured_report_identity(
     data: dict[str, list],
     financial_report: models_financial_report.FinancialReport,
-) -> None:
+):
+    """校验结构化数据中每条记录的身份字段与财报主表一致"""
     for records in data.values():
         if not records:
             continue
@@ -744,7 +812,8 @@ def validate_structured_report_identity(
 
 def build_report_fact_identity_payload(
     financial_report: models_financial_report.FinancialReport,
-) -> dict[str, object]:
+):
+    """构建财报身份标识字典，用于向下游传递"""
     return {
         "stock_code": financial_report.stock_code,
         "stock_abbr": financial_report.stock_abbr,

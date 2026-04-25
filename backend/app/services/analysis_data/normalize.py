@@ -7,7 +7,7 @@ from sqlalchemy import Numeric
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
-from app.services.analysis_data._constants import (
+from app.constants.analysis_data import (
     FACT_MODEL_MAP,
     FACT_IDENTITY_FIELDS,
     FACT_MODEL_COLUMNS,

@@ -8,11 +8,7 @@ from app.db.database import get_db
 from app.schemas import task3 as schemas_task3
 from app.schemas.common import ErrorCode
 from app.schemas.response import error, success
-from app.services.task3 import exporter as services_task3_export
-from app.services.task3 import importer as services_task3_import
-from app.services.task3 import planner as services_task3_planner
-from app.services.task3 import runner as services_task3_runner
-from app.services.task3.verifier import verify_execution_trace
+from app.services import task3 as services_task3
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
@@ -27,7 +23,7 @@ async def process_question(
 ):
     """处理任务三问题"""
     try:
-        result = services_task3_planner.process_task3_question(
+        result = services_task3.process_task3_question(
             question=request.question,
             db=db,
             context=request.context,
@@ -47,7 +43,7 @@ async def create_plan(
 ):
     """生成执行计划（不执行）"""
     try:
-        plan = services_task3_planner.plan_task3_question(
+        plan = services_task3.plan_task3_question(
             question=request.question,
             context=request.context,
             db=db,
@@ -72,13 +68,13 @@ async def execute_plan(
 ):
     """生成计划并执行"""
     try:
-        plan = services_task3_planner.plan_task3_question(
+        plan = services_task3.plan_task3_question(
             question=request.question,
             context=request.context,
             db=db,
         )
 
-        trace = services_task3_planner.execute_plan(plan, db)
+        trace = services_task3.execute_plan(plan, db)
         return success(
             data=schemas_task3.Task3ExecuteResponse(
                 plan=plan,
@@ -100,7 +96,7 @@ async def export_single(
 ):
     """导出单个问题结果（独立模式，不依赖工作台）"""
     try:
-        result = services_task3_export.export_single_question_result(
+        result = services_task3.export_single_question_result(
             question_id=question_id,
             question=question,
             db=db,
@@ -120,14 +116,14 @@ async def verify_result(
 ):
     """验证问题处理结果"""
     try:
-        plan = services_task3_planner.plan_task3_question(
+        plan = services_task3.plan_task3_question(
             question=request.question,
             context=request.context,
             db=db,
         )
 
-        trace = services_task3_planner.execute_plan(plan, db)
-        verification = verify_execution_trace(db, trace)
+        trace = services_task3.execute_plan(plan, db)
+        verification = services_task3.verify_execution_trace(db, trace)
         return success(
             data=schemas_task3.Task3VerifyResponse(
                 answer=trace.final_answer,
@@ -151,10 +147,10 @@ async def get_workspace(
 ):
     """获取当前工作台概览"""
     try:
-        workspace = services_task3_import.get_workspace_info(db)
+        workspace = services_task3.get_workspace_info(db)
         if workspace is None:
             return success(data=None, message="工作台尚未初始化")
-        return success(data=schemas_task3.Task3WorkspaceResponse.model_validate(workspace))
+        return success(data=workspace)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
     except Exception as e:
@@ -179,7 +175,7 @@ async def import_fujian6(
 
         import os
         try:
-            result = services_task3_import.import_fujian6(
+            result = services_task3.import_fujian6(
                 file_path=tmp_path,
                 original_filename=file.filename,
                 db=db,
@@ -203,19 +199,19 @@ async def get_questions(
 ):
     """获取题目列表"""
     try:
-        workspace = services_task3_import.get_workspace_info(db)
+        workspace = services_task3.get_workspace_info(db)
         if workspace is None:
             return success(data=schemas_task3.Task3QuestionListResponse())
 
-        questions = services_task3_import.get_question_list(
+        questions = services_task3.get_question_list(
             db=db,
             workspace_id=workspace.id,
             status=status,
         )
 
-        stats = services_task3_import.get_question_stats(db, workspace.id)
+        stats = services_task3.get_question_stats(db, workspace.id)
 
-        items = [schemas_task3.Task3QuestionItemResponse.model_validate(q) for q in questions]
+        items = questions
 
         return success(
             data=schemas_task3.Task3QuestionListResponse(
@@ -241,10 +237,10 @@ async def get_question_detail(
 ):
     """获取单题详情"""
     try:
-        question = services_task3_import.get_question_detail(db=db, question_id=question_id)
+        question = services_task3.get_question_detail(db=db, question_id=question_id)
         if question is None:
             return error(code=ErrorCode.DATA_NOT_FOUND, message="题目不存在")
-        return success(data=schemas_task3.Task3QuestionItemResponse.model_validate(question))
+        return success(data=question)
 
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -260,7 +256,7 @@ async def answer_question(
 ):
     """回答本题"""
     try:
-        result = services_task3_runner.answer_single_question(question_id=question_id, db=db)
+        result = services_task3.answer_single_question(question_id=question_id, db=db)
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -276,7 +272,7 @@ async def delete_answer(
 ):
     """删除当前回答"""
     try:
-        result = services_task3_runner.delete_question_answer(question_id=question_id, db=db)
+        result = services_task3.delete_question_answer(question_id=question_id, db=db)
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -292,7 +288,7 @@ async def rerun_question(
 ):
     """重新回答（删除旧结果后重新执行）"""
     try:
-        result = services_task3_runner.rerun_question(question_id=question_id, db=db)
+        result = services_task3.rerun_question(question_id=question_id, db=db)
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -308,11 +304,11 @@ async def batch_answer(
 ):
     """批量回答题目"""
     try:
-        workspace = services_task3_import.get_workspace_info(db)
+        workspace = services_task3.get_workspace_info(db)
         if workspace is None:
             return error(code=ErrorCode.DATA_NOT_FOUND, message="工作台不存在，请先导入附件6")
 
-        result = services_task3_runner.batch_answer_questions(
+        result = services_task3.batch_answer_questions(
             workspace_id=workspace.id,
             scope=scope,
             db=db,
@@ -331,7 +327,7 @@ async def export_result(
 ):
     """导出 result_3.xlsx（工作台模式）"""
     try:
-        result = services_task3_export.export_result_3_from_workspace(db=db)
+        result = services_task3.export_result_3_from_workspace(db=db)
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -346,7 +342,7 @@ async def get_latest_export(
 ):
     """获取最近一次导出结果信息"""
     try:
-        result = services_task3_export.get_latest_export_info(db=db)
+        result = services_task3.get_latest_export_info(db=db)
         if result is None:
             return success(data=None, message="暂无导出记录")
         return success(data=result)

@@ -31,7 +31,7 @@ class _UploadedPdfArtifact(NamedTuple):
 
 async def upload_archive_only(
     db: Session, file: UploadFile
-) -> schemas_analysis_data.FinancialReportArchiveResponse:
+):
     """
     阶段一：上传文件并建档
     - 保存PDF文件到本地
@@ -121,8 +121,6 @@ async def upload_archive_only(
                 structured_json_path=None,
             )
         )
-        financial_report.parse_status = schemas_financial_report.ParseStatus.PENDING
-        financial_report.import_status = schemas_financial_report.ImportStatus.SUCCESS
     except ServiceException as exc:
         db.rollback()
         services_validation_log.mark_validation_stage_failed(
@@ -203,7 +201,7 @@ async def upload_archive_only(
 
 async def upload_archive_batch(
     db: Session, files: list[UploadFile]
-) -> schemas_analysis_data.BatchUploadResponse:
+):
     """
     批量上传文件并建档
     - 遍历文件列表调用 upload_archive_only()
@@ -281,7 +279,7 @@ async def upload_archive_batch(
 """辅助函数"""
 
 
-async def _archive_uploaded_pdf(file: UploadFile) -> _UploadedPdfArtifact:
+async def _archive_uploaded_pdf(file: UploadFile):
     """保存上传文件，建立后续主流程唯一输入。"""
     source_file_name = str(file.filename or "").strip()
     if not source_file_name:
@@ -295,12 +293,12 @@ async def _archive_uploaded_pdf(file: UploadFile) -> _UploadedPdfArtifact:
     )
 
 
-def _normalize_uploaded_source_file_name(file: UploadFile) -> str | None:
+def _normalize_uploaded_source_file_name(file: UploadFile):
     normalized = str(file.filename or "").strip()
     return normalized or None
 
 
-async def _save_pdf_data(file: UploadFile) -> str:
+async def _save_pdf_data(file: UploadFile):
     """将上传的 pdf 保存到本地"""
     unique_id = uuid.uuid4().hex
     original_name_list: tuple[str] = os.path.splitext(file.filename)

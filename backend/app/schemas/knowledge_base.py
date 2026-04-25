@@ -1,3 +1,4 @@
+from datetime import date, datetime
 from enum import IntEnum
 from typing import Optional
 
@@ -45,7 +46,7 @@ class KnowledgeDocumentItem(BaseModel):
     source_path: str
     stock_code: Optional[str] = None
     stock_abbr: Optional[str] = None
-    publish_date: Optional[str] = None
+    publish_date: Optional[date] = None
     org_name: Optional[str] = None
     industry_name: Optional[str] = None
     researcher: Optional[str] = None
@@ -62,8 +63,8 @@ class KnowledgeDocumentItem(BaseModel):
     vector_model: Optional[str] = None
     vector_dim: Optional[int] = None
     vector_version: Optional[str] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -92,8 +93,8 @@ class KnowledgeChunkItem(BaseModel):
     char_count: int = 0
     vector_status: int = 0
     milvus_id: Optional[int] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -154,7 +155,7 @@ class DocumentUploadResponse(BaseModel):
     chunk_status: int = 0
     vector_status: int = 0
     metadata_matched: bool = True
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 class BatchUploadResponse(BaseModel):
@@ -223,7 +224,7 @@ class RecentProcessedItem(BaseModel):
     title: str
     doc_type: str
     status: str = ""
-    updated_at: str = ""
+    updated_at: Optional[datetime] = None
 
 
 class ProgressResponse(BaseModel):

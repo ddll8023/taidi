@@ -3,29 +3,6 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# ========== 常量==========
-
-FORBIDDEN_KEYWORDS = [
-    "DROP",
-    "DELETE",
-    "UPDATE",
-    "INSERT",
-    "ALTER",
-    "CREATE",
-    "TRUNCATE",
-    "GRANT",
-    "REVOKE",
-]
-
-ALLOWED_TABLES = [
-    "income_sheet",
-    "balance_sheet",
-    "cash_flow_sheet",
-    "core_performance_indicators_sheet",
-    "company_basic_info",
-]
-
-
 # ========== 辅助类（Support）==========
 
 

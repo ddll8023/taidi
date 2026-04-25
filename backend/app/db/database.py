@@ -2,6 +2,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from app.core.config import settings
+from app.schemas.common import ErrorCode
+from app.utils.exception import ServiceException
 
 # 创建数据库引擎
 engine = create_engine(
@@ -41,3 +43,12 @@ import logging
 # logging.basicConfig()
 # logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
 # logging.getLogger("sqlalchemy.pool").setLevel(logging.DEBUG)
+
+
+def commit_or_rollback(db: Session):
+    """提交当前事务，失败时回滚并转换为业务异常。"""
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc

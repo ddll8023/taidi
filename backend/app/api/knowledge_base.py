@@ -1,14 +1,11 @@
 from fastapi import APIRouter, Depends, Query, Body, File, UploadFile, BackgroundTasks, Path
 from typing import Annotated, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 import os
 import tempfile
 
 from app.db.database import get_db
 from app.services import knowledge_base as services_knowledge_base
-from app.models.knowledge_document import KnowledgeDocument
-from app.models.knowledge_chunk import KnowledgeChunk
 from app.schemas import knowledge_base as schemas_kb
 from app.schemas.response import success, error
 from app.schemas.common import ErrorCode
@@ -197,58 +194,7 @@ def get_stats(
     db: Annotated[Session, Depends(get_db)],
 ):
     """获取知识库整体统计信息"""
-    total_docs = db.query(func.count(KnowledgeDocument.id)).scalar() or 0
-
-    doc_by_chunk_status = dict(
-        db.query(
-            KnowledgeDocument.chunk_status,
-            func.count(KnowledgeDocument.id),
-        )
-        .group_by(KnowledgeDocument.chunk_status)
-        .all()
-    )
-
-    doc_by_vector_status = dict(
-        db.query(
-            KnowledgeDocument.vector_status,
-            func.count(KnowledgeDocument.id),
-        )
-        .group_by(KnowledgeDocument.vector_status)
-        .all()
-    )
-
-    doc_by_type = dict(
-        db.query(
-            KnowledgeDocument.doc_type,
-            func.count(KnowledgeDocument.id),
-        )
-        .group_by(KnowledgeDocument.doc_type)
-        .all()
-    )
-
-    total_chunks = db.query(func.count(KnowledgeChunk.id)).scalar() or 0
-
-    chunk_by_vector_status = dict(
-        db.query(
-            KnowledgeChunk.vector_status,
-            func.count(KnowledgeChunk.id),
-        )
-        .group_by(KnowledgeChunk.vector_status)
-        .all()
-    )
-
-    return {
-        "documents": {
-            "total": total_docs,
-            "by_chunk_status": doc_by_chunk_status,
-            "by_vector_status": doc_by_vector_status,
-            "by_doc_type": doc_by_type,
-        },
-        "chunks": {
-            "total": total_chunks,
-            "by_vector_status": chunk_by_vector_status,
-        },
-    }
+    return services_knowledge_base.get_knowledge_base_stats(db)
 
 
 @router.get("/documents")
@@ -287,19 +233,7 @@ def get_documents_status_batch(
     request: Annotated[schemas_kb.BatchStatusRequest, Body()],
 ):
     """批量查询文档状态"""
-    results = []
-    for doc_id in request.document_ids:
-        doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == doc_id).first()
-        if doc:
-            chunk_count = db.query(func.count(KnowledgeChunk.id)).filter(
-                KnowledgeChunk.document_id == doc_id
-            ).scalar() or 0
-            results.append({
-                "id": doc.id,
-                "chunk_status": doc.chunk_status,
-                "vector_status": doc.vector_status,
-                "chunk_count": chunk_count,
-            })
+    results = services_knowledge_base.get_documents_status_batch(db, request.document_ids)
     return success(data=results)
 
 

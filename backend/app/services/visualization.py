@@ -70,7 +70,7 @@ def generate_chart(
     question_id: str,
     sequence: int = 1,
     requested_chart_type: str | None = None,
-) -> tuple[str | None, str | None]:
+):
     """根据查询结果和意图生成图表文件，并返回文件路径与图表类型。"""
     chart_type = _select_chart_type(data, intent, requested_chart_type)
     if chart_type is None:
@@ -130,7 +130,7 @@ def generate_chart(
 """辅助函数"""
 
 
-def _detect_requested_chart_type(question: str) -> str | None:
+def _detect_requested_chart_type(question: str):
     """从问题中检测用户请求的图表类型"""
     for chart_type, keywords in CHART_TYPE_KEYWORDS.items():
         for keyword in keywords:
@@ -143,7 +143,7 @@ def _select_chart_type(
     data: list[dict],
     intent: IntentResult,
     requested_chart_type: str | None = None,
-) -> str | None:
+):
     if not data:
         return None
 
@@ -191,7 +191,7 @@ def _select_chart_type(
     return None
 
 
-def _validate_chart_type(chart_type: str, data: list[dict]) -> bool:
+def _validate_chart_type(chart_type: str, data: list[dict]):
     """验证图表类型是否适用于当前数据"""
     if chart_type not in CHART_TYPES:
         return False
@@ -215,7 +215,7 @@ def _validate_chart_type(chart_type: str, data: list[dict]) -> bool:
     return True
 
 
-def _find_numeric_columns(data: list[dict]) -> list[str]:
+def _find_numeric_columns(data: list[dict]):
     if not data:
         return []
 
@@ -237,13 +237,13 @@ def _find_numeric_columns(data: list[dict]) -> list[str]:
     return numeric_cols
 
 
-def _has_time_dimension(data: list[dict]) -> bool:
+def _has_time_dimension(data: list[dict]):
     if not data:
         return False
     return any(_is_time_column(key) for key in _collect_columns(data))
 
 
-def _collect_columns(data: list[dict]) -> list[str]:
+def _collect_columns(data: list[dict]):
     columns: list[str] = []
     seen: set[str] = set()
     for row in data:
@@ -254,21 +254,21 @@ def _collect_columns(data: list[dict]) -> list[str]:
     return columns
 
 
-def _normalize_column_name(column: Any) -> str:
+def _normalize_column_name(column: Any):
     return re.sub(r"[\W_]+", "", str(column)).lower()
 
 
-def _is_time_column(column: str) -> bool:
+def _is_time_column(column: str):
     key_normalized = _normalize_column_name(column)
     return any(token in key_normalized for token in TIME_COLUMN_TOKENS)
 
 
-def _is_dimension_column(column: str) -> bool:
+def _is_dimension_column(column: str):
     key_normalized = _normalize_column_name(column)
     return any(token in key_normalized for token in DIMENSION_COLUMN_TOKENS)
 
 
-def _is_numeric_value(value: Any) -> bool:
+def _is_numeric_value(value: Any):
     if value is None or isinstance(value, bool):
         return False
 
@@ -290,7 +290,7 @@ def _is_numeric_value(value: Any) -> bool:
     return False
 
 
-def _to_float(value: Any) -> float:
+def _to_float(value: Any):
     if value is None:
         return 0.0
     if isinstance(value, bool):
@@ -309,7 +309,7 @@ def _to_float(value: Any) -> float:
     return 0.0
 
 
-def _pick_metric_column(numeric_cols: list[str], intent: IntentResult) -> str:
+def _pick_metric_column(numeric_cols: list[str], intent: IntentResult):
     if not numeric_cols:
         return ""
 
@@ -350,7 +350,7 @@ def _pick_metric_column(numeric_cols: list[str], intent: IntentResult) -> str:
     return best_col
 
 
-def _pick_category_column(data: list[dict], numeric_cols: list[str]) -> str | None:
+def _pick_category_column(data: list[dict], numeric_cols: list[str]):
     candidate_cols = [
         column
         for column in _collect_columns(data)
@@ -374,7 +374,7 @@ def _pick_category_column(data: list[dict], numeric_cols: list[str]) -> str | No
     return best_col
 
 
-def _extract_report_year(row: dict) -> int | None:
+def _extract_report_year(row: dict):
     for column in row.keys():
         normalized_column = _normalize_column_name(column)
         if normalized_column == "reportyear" or normalized_column == "year":
@@ -388,7 +388,7 @@ def _extract_report_year(row: dict) -> int | None:
     return None
 
 
-def _extract_report_period(row: dict) -> str | None:
+def _extract_report_period(row: dict):
     for column in row.keys():
         normalized_column = _normalize_column_name(column)
         if normalized_column == "reportperiod" or normalized_column == "period":
@@ -399,7 +399,7 @@ def _extract_report_period(row: dict) -> str | None:
     return None
 
 
-def _build_time_label(row: dict) -> str | None:
+def _build_time_label(row: dict):
     report_year = _extract_report_year(row)
     report_period = _extract_report_period(row)
 
@@ -418,7 +418,7 @@ def _build_time_label(row: dict) -> str | None:
     return None
 
 
-def _sort_trend_rows(data: list[dict]) -> list[dict]:
+def _sort_trend_rows(data: list[dict]):
     if not data:
         return []
 
@@ -443,7 +443,7 @@ def _build_x_labels(
     data: list[dict],
     intent: IntentResult,
     numeric_cols: list[str],
-) -> list[str]:
+):
     if not data:
         return []
 
@@ -478,7 +478,7 @@ def _build_x_labels(
 
 def _extract_chart_data(
     data: list[dict], intent: IntentResult
-) -> tuple[list[str], list[float], str, str]:
+):
     x_labels = []
     y_values = []
     title = "数据图表"
@@ -528,7 +528,7 @@ def _extract_chart_data(
     return x_labels, y_values, title, y_label
 
 
-def _render_line_chart(data: list[dict], intent: IntentResult, plt) -> None:
+def _render_line_chart(data: list[dict], intent: IntentResult, plt):
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(x_labels, y_values, marker="o", linewidth=2, markersize=6)
@@ -548,7 +548,7 @@ def _render_line_chart(data: list[dict], intent: IntentResult, plt) -> None:
     fig.tight_layout()
 
 
-def _render_bar_chart(data: list[dict], intent: IntentResult, plt) -> None:
+def _render_bar_chart(data: list[dict], intent: IntentResult, plt):
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
     fig, ax = plt.subplots(figsize=(10, 6))
     bars = ax.bar(x_labels, y_values, color="steelblue", alpha=0.8)
@@ -568,7 +568,7 @@ def _render_bar_chart(data: list[dict], intent: IntentResult, plt) -> None:
     fig.tight_layout()
 
 
-def _render_pie_chart(data: list[dict], intent: IntentResult, plt) -> None:
+def _render_pie_chart(data: list[dict], intent: IntentResult, plt):
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.pie(y_values, labels=x_labels, autopct="%1.1f%%", startangle=90)
@@ -576,7 +576,7 @@ def _render_pie_chart(data: list[dict], intent: IntentResult, plt) -> None:
     fig.tight_layout()
 
 
-def _render_horizontal_bar_chart(data: list[dict], intent: IntentResult, plt) -> None:
+def _render_horizontal_bar_chart(data: list[dict], intent: IntentResult, plt):
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
     fig, ax = plt.subplots(figsize=(10, max(6, len(x_labels) * 0.4)))
     y_pos = range(len(x_labels))
@@ -598,7 +598,7 @@ def _render_horizontal_bar_chart(data: list[dict], intent: IntentResult, plt) ->
     fig.tight_layout()
 
 
-def _render_grouped_bar_chart(data: list[dict], intent: IntentResult, plt) -> None:
+def _render_grouped_bar_chart(data: list[dict], intent: IntentResult, plt):
     if not data:
         return
 
@@ -666,7 +666,7 @@ def _render_grouped_bar_chart(data: list[dict], intent: IntentResult, plt) -> No
     fig.tight_layout()
 
 
-def _render_radar_chart(data: list[dict], intent: IntentResult, plt) -> None:
+def _render_radar_chart(data: list[dict], intent: IntentResult, plt):
     if not data or len(data) < 3:
         return
 
@@ -711,7 +711,7 @@ def _render_radar_chart(data: list[dict], intent: IntentResult, plt) -> None:
     fig.tight_layout()
 
 
-def _render_histogram_chart(data: list[dict], intent: IntentResult, plt) -> None:
+def _render_histogram_chart(data: list[dict], intent: IntentResult, plt):
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -741,7 +741,7 @@ def _render_histogram_chart(data: list[dict], intent: IntentResult, plt) -> None
     fig.tight_layout()
 
 
-def _render_scatter_chart(data: list[dict], intent: IntentResult, plt) -> None:
+def _render_scatter_chart(data: list[dict], intent: IntentResult, plt):
     if not data:
         return
 
@@ -784,7 +784,7 @@ def _render_scatter_chart(data: list[dict], intent: IntentResult, plt) -> None:
     fig.tight_layout()
 
 
-def _render_box_chart(data: list[dict], intent: IntentResult, plt) -> None:
+def _render_box_chart(data: list[dict], intent: IntentResult, plt):
     if not data:
         return
 

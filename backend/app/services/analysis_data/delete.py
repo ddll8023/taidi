@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.models import financial_report as models_financial_report
 from app.schemas import analysis_data as schemas_analysis_data
 from app.schemas.common import ErrorCode
-from app.services.analysis_data._constants import FACT_MODEL_MAP
+from app.constants.analysis_data import FACT_MODEL_MAP
 from app.services.analysis_data.parse import (
     _load_financial_report_or_raise,
     _cleanup_report_files,
