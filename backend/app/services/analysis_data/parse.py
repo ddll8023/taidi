@@ -29,6 +29,40 @@ _parse_executor = ThreadPoolExecutor(
 # ========== 公共入口函数 ==========
 
 
+def submit_and_run_single_parse(
+    db: Session, report_id: int, force: bool, background_tasks
+):
+    """提交单个财报解析任务并注册后台执行"""
+    result = submit_single_parse(db, report_id, force)
+    if result.status == "processing":
+        background_tasks.add_task(run_parse_in_background, report_id)
+    return result
+
+
+def submit_and_run_batch_parse(
+    db: Session, report_ids: list[int], background_tasks
+):
+    """提交批量解析任务并注册后台执行"""
+    result = submit_batch_parse(db, report_ids)
+    if result.submitted_report_ids:
+        background_tasks.add_task(
+            run_parse_batch_in_background, result.submitted_report_ids
+        )
+    return result
+
+
+def submit_and_run_all_pending_parse(
+    db: Session, limit: int, background_tasks
+):
+    """提交所有待处理财报解析任务并注册后台执行"""
+    result = submit_all_pending_parse(db, limit)
+    if result.submitted_report_ids:
+        background_tasks.add_task(
+            run_parse_batch_in_background, result.submitted_report_ids
+        )
+    return result
+
+
 def submit_single_parse(
     db: Session, report_id: int, force: bool = False
 ):

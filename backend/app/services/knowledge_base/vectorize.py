@@ -560,6 +560,30 @@ class BatchVectorizeSubmitResult:
         }
 
 
+def submit_and_run_vectorize_task(
+    db: Session, document_id: int, force: bool, batch_size: int, background_tasks
+):
+    """提交单个文档向量化任务并注册后台执行"""
+    result = submit_vectorize_task(db, document_id, force)
+    if result.status == "processing":
+        background_tasks.add_task(
+            run_vectorize_in_background, document_id, batch_size
+        )
+    return result
+
+
+def submit_and_run_batch_vectorize(
+    db: Session, batch_size: int, force: bool, background_tasks
+):
+    """提交批量向量化任务并注册后台执行"""
+    result = submit_batch_vectorize(db, batch_size, force)
+    if result.submitted_count > 0:
+        background_tasks.add_task(
+            run_vectorize_batch_in_background, batch_size, result.chunk_ids
+        )
+    return result
+
+
 def submit_vectorize_task(
     db: Session,
     document_id: int,

@@ -269,6 +269,36 @@ class BatchChunkSubmitResult:
         }
 
 
+def submit_and_run_chunk_task(
+    db: Session, document_id: int, force: bool, background_tasks
+):
+    """提交单个文档切块任务并注册后台执行"""
+    result = submit_chunk_task(db, document_id, force)
+    if result.status == "processing":
+        background_tasks.add_task(run_chunk_in_background, document_id)
+    return result
+
+
+def submit_and_run_batch_chunk(
+    db: Session, document_ids: list[int], background_tasks
+):
+    """提交批量切块任务并注册后台执行"""
+    result = submit_batch_chunk(db, document_ids)
+    if result.submitted_ids:
+        background_tasks.add_task(run_chunk_batch_in_background, result.submitted_ids)
+    return result
+
+
+def submit_and_run_all_pending_chunk(
+    db: Session, limit: int, doc_type: str | None, background_tasks
+):
+    """提交所有待处理文档切块任务并注册后台执行"""
+    result = submit_all_pending_chunk(db, limit, doc_type)
+    if result.submitted_ids:
+        background_tasks.add_task(run_chunk_batch_in_background, result.submitted_ids)
+    return result
+
+
 def submit_chunk_task(
     db: Session,
     document_id: int,

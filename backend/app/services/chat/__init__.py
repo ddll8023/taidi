@@ -8,3 +8,4 @@ from app.services.chat.session import (
     rename_chat_session,
     export_result_2,
 )
+from app.services.visualization import get_chart_image_path

@@ -1,7 +1,17 @@
 """知识库管理 API 路由"""
+
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Query, Body, File, UploadFile, BackgroundTasks, Path
+from fastapi import (
+    APIRouter,
+    Depends,
+    Query,
+    Body,
+    File,
+    UploadFile,
+    BackgroundTasks,
+    Path,
+)
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -14,9 +24,6 @@ from app.utils.exception import ServiceException
 router = APIRouter(prefix="/api/v1/knowledge-base", tags=["知识库管理"])
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 切块处理接口
-# ─────────────────────────────────────────────────────────────────────────────
 @router.post("/chunk/{document_id}", response_model=ApiResponse)
 async def chunk_document(
     background_tasks: BackgroundTasks,
@@ -26,14 +33,9 @@ async def chunk_document(
 ):
     """提交单个文档的切块任务（异步）"""
     try:
-        result = services_knowledge_base.submit_chunk_task(db, document_id, force)
-
-        if result.status == "processing":
-            background_tasks.add_task(
-                services_knowledge_base.run_chunk_in_background,
-                document_id,
-            )
-
+        result = services_knowledge_base.submit_and_run_chunk_task(
+            db, document_id, force, background_tasks
+        )
         return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -47,14 +49,9 @@ async def chunk_documents_batch(
 ):
     """提交批量切块任务（异步）"""
     try:
-        result = services_knowledge_base.submit_batch_chunk(db, request.document_ids)
-
-        if result.submitted_ids:
-            background_tasks.add_task(
-                services_knowledge_base.run_chunk_batch_in_background,
-                result.submitted_ids,
-            )
-
+        result = services_knowledge_base.submit_and_run_batch_chunk(
+            db, request.document_ids, background_tasks
+        )
         return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -68,26 +65,14 @@ async def chunk_all_pending(
 ):
     """提交所有待处理文档的切块任务（异步）"""
     try:
-        result = services_knowledge_base.submit_all_pending_chunk(
-            db,
-            limit=request.limit,
-            doc_type=request.doc_type,
+        result = services_knowledge_base.submit_and_run_all_pending_chunk(
+            db, request.limit, request.doc_type, background_tasks
         )
-
-        if result.submitted_ids:
-            background_tasks.add_task(
-                services_knowledge_base.run_chunk_batch_in_background,
-                result.submitted_ids,
-            )
-
         return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 向量化接口
-# ─────────────────────────────────────────────────────────────────────────────
 @router.post("/vectorize/{document_id}", response_model=ApiResponse)
 async def vectorize_document(
     background_tasks: BackgroundTasks,
@@ -98,15 +83,9 @@ async def vectorize_document(
 ):
     """向量化单个文档的所有切块（异步）"""
     try:
-        result = services_knowledge_base.submit_vectorize_task(db, document_id, force=force)
-
-        if result.status == "processing":
-            background_tasks.add_task(
-                services_knowledge_base.run_vectorize_in_background,
-                document_id,
-                batch_size,
-            )
-
+        result = services_knowledge_base.submit_and_run_vectorize_task(
+            db, document_id, force, batch_size, background_tasks
+        )
         return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -120,19 +99,9 @@ async def vectorize_chunks(
 ):
     """批量向量化待处理的文档切块（异步）"""
     try:
-        result = services_knowledge_base.submit_batch_vectorize(
-            db,
-            batch_size=request.batch_size,
-            force=request.force,
+        result = services_knowledge_base.submit_and_run_batch_vectorize(
+            db, request.batch_size, request.force, background_tasks
         )
-
-        if result.submitted_count > 0:
-            background_tasks.add_task(
-                services_knowledge_base.run_vectorize_batch_in_background,
-                request.batch_size,
-                result.chunk_ids,
-            )
-
         return success(data=result.to_dict())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -156,9 +125,6 @@ def reset_vector_status(
         return error(code=e.code, message=e.message)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 状态查询接口
-# ─────────────────────────────────────────────────────────────────────────────
 @router.get("/stats", response_model=ApiResponse)
 def get_stats(
     db: Annotated[Session, Depends(get_db)],
@@ -176,7 +142,9 @@ def list_documents(
     db: Annotated[Session, Depends(get_db)],
     doc_type: Annotated[Optional[str], Query(description="按文档类型筛选")] = None,
     stock_code: Annotated[Optional[str], Query(description="按股票代码筛选")] = None,
-    metadata_status: Annotated[Optional[int], Query(description="按元数据状态筛选")] = None,
+    metadata_status: Annotated[
+        Optional[int], Query(description="按元数据状态筛选")
+    ] = None,
     chunk_status: Annotated[Optional[int], Query(description="按切块状态筛选")] = None,
     vector_status: Annotated[Optional[int], Query(description="按向量状态筛选")] = None,
     page: Annotated[int, Query(ge=1, description="页码")] = 1,
@@ -206,15 +174,14 @@ def get_documents_status_batch(
 ):
     """批量查询文档状态"""
     try:
-        results = services_knowledge_base.get_documents_status_batch(db, request.document_ids)
+        results = services_knowledge_base.get_documents_status_batch(
+            db, request.document_ids
+        )
         return success(data=results)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 切块列表接口
-# ─────────────────────────────────────────────────────────────────────────────
 @router.get("/chunks", response_model=ApiResponse)
 def list_chunks(
     db: Annotated[Session, Depends(get_db)],
@@ -237,9 +204,6 @@ def list_chunks(
         return error(code=e.code, message=e.message)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 知识检索接口
-# ─────────────────────────────────────────────────────────────────────────────
 @router.post("/search", response_model=ApiResponse)
 def search_knowledge(
     request: schemas_kb.SearchRequest,
@@ -257,9 +221,6 @@ def search_knowledge(
         return error(code=e.code, message=e.message)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 增量处理模式接口
-# ─────────────────────────────────────────────────────────────────────────────
 @router.post("/init", response_model=ApiResponse)
 async def init_system(
     db: Annotated[Session, Depends(get_db)],
@@ -284,7 +245,9 @@ async def init_system(
 async def upload_pdf_incremental(
     db: Annotated[Session, Depends(get_db)],
     pdfs: Annotated[list[UploadFile], File(description="PDF文件列表")],
-    doc_type: Annotated[str, Query(description="文档类型：RESEARCH_REPORT或INDUSTRY_REPORT")] = "RESEARCH_REPORT",
+    doc_type: Annotated[
+        str, Query(description="文档类型：RESEARCH_REPORT或INDUSTRY_REPORT")
+    ] = "RESEARCH_REPORT",
 ):
     """增量上传PDF文件，立即处理（匹配元数据+切块）"""
     try:

@@ -7,11 +7,23 @@ from typing import Any
 import numpy as np
 
 from app.schemas.chat import IntentResult, QueryType
+from app.schemas.common import ErrorCode
+from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
 CHART_DIR = os.path.join(os.getcwd(), "result")
+
+
+def get_chart_image_path(filename: str):
+    """获取图表图片路径，不存在则抛出异常"""
+    file_path = os.path.join(CHART_DIR, filename)
+    if not os.path.exists(file_path):
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "图片不存在")
+    return file_path
+
+
 CHART_TYPES = [
     "line",
     "bar",

@@ -19,8 +19,6 @@ async def get_workspace(
     """获取当前工作台概览"""
     try:
         result = services_task2.get_workspace_info(db)
-        if result is None:
-            return success(data=None, message="工作台尚未初始化")
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)

@@ -1,5 +1,4 @@
 """智能问数 API 路由"""
-import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Path
@@ -8,10 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.schemas import chat as schemas_chat
-from app.schemas.common import ErrorCode, ApiResponse
+from app.schemas.common import ApiResponse
 from app.schemas.response import error, success
 from app.services import chat as services_chat
-from app.services.visualization import CHART_DIR
 from app.utils.exception import ServiceException
 
 router = APIRouter(prefix="/api/v1/chat", tags=["智能问数"])
@@ -121,11 +119,12 @@ async def get_chart_image(
     filename: Annotated[str, Path(description="图片文件名")],
 ):
     """获取图表图片"""
-    file_path = os.path.join(CHART_DIR, filename)
-    if not os.path.exists(file_path):
-        return error(code=ErrorCode.DATA_NOT_FOUND, message="图片不存在")
-    return FileResponse(
-        path=file_path,
-        media_type="image/jpeg",
-        filename=filename,
-    )
+    try:
+        file_path = services_chat.get_chart_image_path(filename)
+        return FileResponse(
+            path=file_path,
+            media_type="image/jpeg",
+            filename=filename,
+        )
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)

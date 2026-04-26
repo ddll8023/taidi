@@ -49,14 +49,9 @@ async def parse_batch_reports(
 ):
     """提交批量解析任务（异步）"""
     try:
-        result = services_analysis_data.submit_batch_parse(db, request.report_ids)
-
-        if result.submitted_report_ids:
-            background_tasks.add_task(
-                services_analysis_data.run_parse_batch_in_background,
-                result.submitted_report_ids,
-            )
-
+        result = services_analysis_data.submit_and_run_batch_parse(
+            db, request.report_ids, background_tasks
+        )
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -71,14 +66,9 @@ async def parse_single_report(
 ):
     """提交单个财报解析任务（异步）"""
     try:
-        result = services_analysis_data.submit_single_parse(db, report_id, force)
-
-        if result.status == "processing":
-            background_tasks.add_task(
-                services_analysis_data.run_parse_in_background,
-                report_id,
-            )
-
+        result = services_analysis_data.submit_and_run_single_parse(
+            db, report_id, force, background_tasks
+        )
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -92,14 +82,9 @@ async def parse_all_pending_reports(
 ):
     """提交所有待处理财报的解析任务（异步）"""
     try:
-        result = services_analysis_data.submit_all_pending_parse(db, limit)
-
-        if result.submitted_report_ids:
-            background_tasks.add_task(
-                services_analysis_data.run_parse_batch_in_background,
-                result.submitted_report_ids,
-            )
-
+        result = services_analysis_data.submit_and_run_all_pending_parse(
+            db, limit, background_tasks
+        )
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
