@@ -187,3 +187,9 @@ class ChatMessageResponse(BaseModel):
     created_at: datetime = Field(..., description="创建时间")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ChatExportResponse(BaseModel):
+    file_path: str = Field(..., description="导出文件路径")
+
+    model_config = ConfigDict(from_attributes=True)

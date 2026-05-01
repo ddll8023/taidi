@@ -22,7 +22,10 @@ async def upload_data(
 ):
     """上传PDF文件，仅执行建档入库（阶段一）"""
     try:
-        result = await services_analysis_data.upload_archive_only(db, file)
+        file_content = await file.read()
+        result = await services_analysis_data.upload_archive_only(
+            db, file.filename, file_content
+        )
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -35,7 +38,8 @@ async def upload_batch_data(
 ):
     """批量上传PDF文件，仅执行建档入库（阶段一）"""
     try:
-        result = await services_analysis_data.upload_archive_batch(db, files)
+        file_items = [(f.filename or "", await f.read()) for f in files]
+        result = await services_analysis_data.upload_archive_batch(db, file_items)
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)

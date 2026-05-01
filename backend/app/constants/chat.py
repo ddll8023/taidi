@@ -298,6 +298,8 @@ PERIOD_ALIAS_MAP = {
     "FY": "FY",
 }
 
+VALID_REPORT_PERIODS = frozenset(PERIOD_ALIAS_MAP.values())
+
 DERIVED_METRIC_KEYWORDS = {
     schemas_chat.DerivedMetricType.YOY_GROWTH: [
         "同比",

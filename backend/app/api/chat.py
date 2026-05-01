@@ -66,7 +66,7 @@ async def export_result(
 ):
     """导出result_2.xlsx"""
     try:
-        result = services_chat.export_result_2(questions=request.questions, db=db)
+        result = services_chat.export_chat_results(questions=request.questions, db=db)
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)

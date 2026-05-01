@@ -1,4 +1,5 @@
 """SQL 执行与结果后处理服务"""
+
 import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -10,23 +11,28 @@ from app.constants import chat as constants_chat
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
-from app.services.chat.sql_builder import (
-    _build_allowed_column_names,
-    _build_ten_thousand_unit_column_names,
-    _extract_column_refs_from_select,
-    _extract_declared_column_aliases,
-    _extract_declared_cte_names,
-    _extract_select_columns,
-    _normalize_result_column_name,
+from app.services.chat.helpers import (
+    build_allowed_column_names,
+    build_ten_thousand_unit_column_names,
+    extract_column_refs_from_select,
+    extract_declared_column_aliases,
+    extract_declared_cte_names,
+    extract_select_columns,
+    normalize_result_column_name,
 )
 
 logger = setup_logger(__name__)
 
 
+# ========== 公共入口函数 ==========
+
+# （无公共入口函数，本文件仅提供 SQL 执行与后处理相关的辅助函数）
+
 """辅助函数"""
 
 
-def _validate_sql(sql: str) -> tuple[bool, str]:
+def validate_sql(sql: str):
+    """校验 SQL 安全性"""
     stripped_sql = sql.strip()
     sql_upper = stripped_sql.upper()
 
@@ -41,21 +47,21 @@ def _validate_sql(sql: str) -> tuple[bool, str]:
     allowed_table_names = {
         table_name.lower() for table_name in constants_chat.ALLOWED_TABLES
     }
-    allowed_table_names.update(_extract_declared_cte_names(stripped_sql))
+    allowed_table_names.update(extract_declared_cte_names(stripped_sql))
 
     found_tables = re.findall(r"(?i)\b(?:FROM|JOIN)\s+(\w+)", stripped_sql)
     for table_name in found_tables:
         if table_name.lower() not in allowed_table_names:
             return False, f"SQL引用了不允许的表: {table_name}"
 
-    raw_columns = _extract_select_columns(stripped_sql)
-    bare_refs = _extract_column_refs_from_select(raw_columns)
+    raw_columns = extract_select_columns(stripped_sql)
+    bare_refs = extract_column_refs_from_select(raw_columns)
     allowed_column_names = (
-        _build_allowed_column_names() | _extract_declared_column_aliases(stripped_sql)
+        build_allowed_column_names() | extract_declared_column_aliases(stripped_sql)
     )
     for ref in bare_refs:
         if ref.lower() not in allowed_column_names:
-            logger.warning("SQL列名可能无效: '%s' (不在schema白名单中)", ref)
+            logger.warning(f"SQL列名可能无效: '{ref}' (不在schema白名单中)")
             return False, f"SQL列名不在schema白名单中: {ref}"
 
     if "LIMIT" not in sql_upper:
@@ -64,8 +70,8 @@ def _validate_sql(sql: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _execute_query(sql: str, db: Session) -> tuple[list[dict], list[dict]]:
-    """执行SQL查询，返回(查询结果, 公司列表)"""
+def execute_query(sql: str, db: Session):
+    """执行SQL查询，返回查询结果与公司列表"""
     try:
         result = db.execute(text(sql))
         columns = list(result.keys())
@@ -87,13 +93,12 @@ def _execute_query(sql: str, db: Session) -> tuple[list[dict], list[dict]]:
 
         return data, companies
     except Exception as exc:
-        logger.error("SQL执行失败: sql=%s error=%s", sql, str(exc))
-        raise ServiceException(
-            ErrorCode.AI_SERVICE_ERROR, f"SQL查询执行失败: {str(exc)}"
-        ) from exc
+        logger.error(f"SQL执行失败: sql={sql} error={exc}", exc_info=True)
+        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "SQL查询执行失败") from exc
 
 
-def _to_decimal_value(value: Any) -> Decimal | None:
+def _to_decimal_value(value: Any):
+    """将任意值转换为 Decimal"""
     if value is None or isinstance(value, bool):
         return None
 
@@ -118,7 +123,8 @@ def _to_decimal_value(value: Any) -> Decimal | None:
     return None
 
 
-def _restore_numeric_type(original_value: Any, normalized_value: Decimal) -> Any:
+def _restore_numeric_type(original_value: Any, normalized_value: Decimal):
+    """将归一化后的 Decimal 还原为原始数值类型"""
     quantized_value = normalized_value.quantize(Decimal("0.01"))
 
     if isinstance(original_value, Decimal):
@@ -138,7 +144,8 @@ def _restore_numeric_type(original_value: Any, normalized_value: Decimal) -> Any
     return quantized_value
 
 
-def _median_decimal(values: list[Decimal]) -> Decimal | None:
+def _median_decimal(values: list[Decimal]):
+    """计算 Decimal 列表的中位数"""
     if not values:
         return None
 
@@ -150,15 +157,16 @@ def _median_decimal(values: list[Decimal]) -> Decimal | None:
     return (sorted_values[mid - 1] + sorted_values[mid]) / Decimal("2")
 
 
-def _is_ten_thousand_unit_result_column(column: str) -> bool:
-    normalized_column = _normalize_result_column_name(column)
+def _is_ten_thousand_unit_result_column(column: str):
+    """判断列是否为万元单位的结果列"""
+    normalized_column = normalize_result_column_name(column)
     return (
-        normalized_column in _build_ten_thousand_unit_column_names()
+        normalized_column in build_ten_thousand_unit_column_names()
         or "万元" in str(column)
     )
 
 
-def _normalize_abnormal_unit_rows(rows: list[dict]) -> list[dict]:
+def _normalize_abnormal_unit_rows(rows: list[dict]):
     """仅对标注为万元的异常大值做元->万元统一。"""
     if not rows:
         return rows
@@ -211,16 +219,14 @@ def _normalize_abnormal_unit_rows(rows: list[dict]) -> list[dict]:
                 normalized_value,
             )
             logger.warning(
-                "检测到疑似元/万元混用，已自动按万元统一: column=%s raw=%s normalized=%s",
-                column,
-                decimal_value,
-                normalized_rows[index][column],
+                f"检测到疑似元/万元混用，已自动按万元统一: column={column} raw={decimal_value} normalized={normalized_rows[index][column]}"
             )
 
     return normalized_rows
 
 
-def _extract_where_clause(sql: str) -> str:
+def _extract_where_clause(sql: str):
+    """从 SQL 中提取 WHERE 子句"""
     match = re.search(
         r"(?is)\bWHERE\b(?P<where>.*?)(?=\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|$)",
         sql,
@@ -228,7 +234,8 @@ def _extract_where_clause(sql: str) -> str:
     return match.group("where") if match else ""
 
 
-def _extract_order_by_clause(sql: str) -> str:
+def _extract_order_by_clause(sql: str):
+    """从 SQL 中提取 ORDER BY 子句"""
     match = re.search(
         r"(?is)\bORDER\s+BY\b(?P<order>.*?)(?=\bLIMIT\b|$)",
         sql,
@@ -236,7 +243,7 @@ def _extract_order_by_clause(sql: str) -> str:
     return match.group("order") if match else ""
 
 
-def _apply_post_normalization_sql_adjustments(rows: list[dict], sql: str) -> list[dict]:
+def _apply_post_normalization_sql_adjustments(rows: list[dict], sql: str):
     """对归一化后的结果，重应用万元字段的简单数值过滤与排序。"""
     if not rows:
         return rows

@@ -3,15 +3,14 @@ import os
 import uuid
 from typing import NamedTuple
 
-from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.database import commit_or_rollback
 from app.models import financial_report as models_financial_report
 from app.models import validation_log as models_validation_log
 from app.schemas import analysis_data as schemas_analysis_data
 from app.schemas.common import ErrorCode
-from app.schemas import financial_report as schemas_financial_report
 from app.services import financial_report as services_financial_report
 from app.services import validation_log as services_validation_log
 from app.utils.exception import ServiceException
@@ -29,30 +28,10 @@ class _UploadedPdfArtifact(NamedTuple):
 # ========== 公共入口函数 ==========
 
 
-async def upload_archive_only(
-    db: Session, file: UploadFile
-):
-    """
-    阶段一：上传文件并建档
-    - 保存PDF文件到本地
-    - 解析身份信息
-    - 创建 financial_report 主表记录
-    - 设置 parse_status=0（待处理）
-    - 设置 import_status=1（主表已入库）
-    - 返回建档响应
-
-    Args:
-        db: 数据库会话
-        file: 上传的PDF文件
-
-    Returns:
-        FinancialReportArchiveResponse: 建档响应
-
-    Raises:
-        ServiceException: 文件保存失败或身份解析失败
-    """
-    raw_source_file_name = _normalize_uploaded_source_file_name(file)
-    logger.info("开始上传财报文件（仅建档）: source_file_name=%s", raw_source_file_name)
+async def upload_archive_only(db: Session, file_name: str, file_content: bytes):
+    """上传单个财报文件并建档"""
+    raw_source_file_name = str(file_name or "").strip() or None
+    logger.info(f"开始上传财报文件（仅建档）: source_file_name={raw_source_file_name}")
 
     file_stage_log_id = services_validation_log.start_validation_stage(
         db=db,
@@ -63,7 +42,7 @@ async def upload_archive_only(
     )
 
     try:
-        archived_pdf = await _archive_uploaded_pdf(file)
+        archived_pdf = _archive_uploaded_pdf(raw_source_file_name, file_content)
     except ServiceException as exc:
         services_validation_log.mark_validation_stage_failed(
             db=db,
@@ -99,9 +78,7 @@ async def upload_archive_only(
         details={"storage_path": archived_pdf.storage_path},
     )
     logger.info(
-        "财报文件建档完成: source_file_name=%s storage_path=%s",
-        archived_pdf.source_file_name,
-        archived_pdf.storage_path,
+        f"财报文件建档完成: source_file_name={archived_pdf.source_file_name} storage_path={archived_pdf.storage_path}"
     )
 
     identity_stage_log_id = services_validation_log.start_validation_stage(
@@ -176,19 +153,10 @@ async def upload_archive_only(
         },
     )
     logger.info(
-        "财报身份主表建档完成（仅建档）: report_id=%s stock_code=%s stock_abbr=%s report_year=%s report_period=%s",
-        report_id,
-        financial_report.stock_code,
-        financial_report.stock_abbr,
-        financial_report.report_year,
-        financial_report.report_period,
+        f"财报身份主表建档完成（仅建档）: report_id={report_id} stock_code={financial_report.stock_code} stock_abbr={financial_report.stock_abbr} report_year={financial_report.report_year} report_period={financial_report.report_period}"
     )
 
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败")
+    commit_or_rollback(db)
 
     return schemas_analysis_data.FinancialReportArchiveResponse(
         report_id=financial_report.id,
@@ -199,30 +167,23 @@ async def upload_archive_only(
     )
 
 
-async def upload_archive_batch(
-    db: Session, files: list[UploadFile]
-):
-    """
-    批量上传文件并建档
-    - 遍历文件列表调用 upload_archive_only()
-    - 统计成功/失败数量
-    - 返回处理结果统计
-    """
-    if not files or len(files) == 0:
+async def upload_archive_batch(db: Session, file_items: list[tuple[str, bytes]]):
+    """批量上传财报文件并建档"""
+    if not file_items:
         raise ServiceException(ErrorCode.PARAM_ERROR, "请选择至少一个文件")
 
-    total = len(files)
+    total = len(file_items)
     success_count = 0
     failed_count = 0
     success_reports: list[dict] = []
     failed_files: list[dict] = []
 
-    logger.info("开始批量上传财报文件: total=%d", total)
+    logger.info(f"开始批量上传财报文件: total={total}")
 
-    for file in files:
-        file_name = _normalize_uploaded_source_file_name(file) or "未知文件名"
+    for file_name, file_content in file_items:
+        display_name = file_name or "未知文件名"
         try:
-            result = await upload_archive_only(db, file)
+            result = await upload_archive_only(db, file_name, file_content)
             success_count += 1
             success_reports.append(
                 {
@@ -230,38 +191,35 @@ async def upload_archive_batch(
                     "stock_code": result.stock_code,
                     "stock_abbr": result.stock_abbr,
                     "report_title": result.report_title,
-                    "file_name": file_name,
+                    "file_name": display_name,
                 }
             )
-            logger.info("批量上传成功: file_name=%s report_id=%s", file_name, result.report_id)
+            logger.info(f"批量上传成功: file_name={display_name} report_id={result.report_id}")
         except ServiceException as exc:
             failed_count += 1
             failed_files.append(
                 {
-                    "file_name": file_name,
+                    "file_name": display_name,
                     "error": exc.message,
                 }
             )
             logger.warning(
-                "批量上传失败: file_name=%s error=%s", file_name, exc.message
+                f"批量上传失败: file_name={display_name} error={exc.message}"
             )
         except Exception as exc:
             failed_count += 1
             failed_files.append(
                 {
-                    "file_name": file_name,
-                    "error": str(exc),
+                    "file_name": display_name,
+                    "error": "系统内部错误",
                 }
             )
             logger.error(
-                "批量上传异常: file_name=%s error=%s", file_name, exc, exc_info=True
+                f"批量上传异常: file_name={display_name} error={exc}", exc_info=True
             )
 
     logger.info(
-        "批量上传完成: total=%d success=%d failed=%d",
-        total,
-        success_count,
-        failed_count,
+        f"批量上传完成: total={total} success={success_count} failed={failed_count}"
     )
     return schemas_analysis_data.BatchUploadResponse(
         total=total,
@@ -275,33 +233,27 @@ async def upload_archive_batch(
 """辅助函数"""
 
 
-async def _archive_uploaded_pdf(file: UploadFile):
-    """保存上传文件，建立后续主流程唯一输入。"""
-    source_file_name = str(file.filename or "").strip()
+def _archive_uploaded_pdf(source_file_name: str, file_content: bytes):
+    """保存上传文件并返回建档信息"""
     if not source_file_name:
         raise ServiceException(ErrorCode.PARAM_ERROR, "上传文件名不能为空")
 
-    storage_path = await _save_pdf_data(file)
-    logger.info("财报文件已建档: source_file_name=%s", source_file_name)
+    storage_path = _save_pdf_data(source_file_name, file_content)
+    logger.info(f"财报文件已建档: source_file_name={source_file_name}")
     return _UploadedPdfArtifact(
         source_file_name=source_file_name,
         storage_path=storage_path,
     )
 
 
-def _normalize_uploaded_source_file_name(file: UploadFile):
-    normalized = str(file.filename or "").strip()
-    return normalized or None
-
-
-async def _save_pdf_data(file: UploadFile):
-    """将上传的 pdf 保存到本地"""
+def _save_pdf_data(file_name: str, file_content: bytes):
+    """将上传的PDF保存到本地"""
     unique_id = uuid.uuid4().hex
-    original_name_list: tuple[str] = os.path.splitext(file.filename)
-    new_file_name = f"{original_name_list[0]} - {unique_id}{original_name_list[1]}"
+    name, ext = os.path.splitext(file_name)
+    new_file_name = f"{name} - {unique_id}{ext}"
     file_path = os.path.join(settings.fujian2_UPLOAD_DIR, new_file_name)
     try:
-        await save_file(file, file_path)
+        save_file(file_content, file_path)
         logger.info(f"文件保存成功: {file_path}")
     except Exception as exc:
         logger.error(f"save_pdf_data错误：{exc}", exc_info=True)

@@ -1,52 +1,46 @@
-"""会话管理：增删改查、关闭、重命名、导出"""
+"""会话管理：查询、关闭、删除、重命名、导出"""
 import json
+import math
 import os
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.constants import chat as constants_chat
 from app.db.database import commit_or_rollback
 from app.models import chat_message as models_chat_message
 from app.models import chat_session as models_chat_session
 from app.schemas import chat as schemas_chat
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
+from app.services.chat.message import process_chat_message
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
-from app.services.chat.context import _convert_path_to_url
-
 logger = setup_logger(__name__)
 
 
-"""辅助函数"""
+# ========== 公共入口函数 ==========
 
 
 def get_chat_sessions(
     db: Session, page: int = 1, page_size: int = 10
 ):
+    """查询会话列表"""
     base_stmt = select(models_chat_session.ChatSession).where(
         models_chat_session.ChatSession.status == 0
     )
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
     offset = (page - 1) * page_size
     records = db.scalars(
-        base_stmt.order_by(models_chat_session.ChatSession.updated_at.desc())
+        base_stmt.order_by(models_chat_session.ChatSession.created_at.desc())
         .offset(offset)
         .limit(page_size)
     ).all()
 
     items = [
-        schemas_chat.ChatSessionResponse(
-            id=r.id,
-            name=r.name,
-            status=r.status,
-            created_at=r.created_at,
-            updated_at=r.updated_at,
-        )
+        schemas_chat.ChatSessionResponse.model_validate(r)
         for r in records
     ]
 
-    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
     pagination = PaginationInfo(
         page=page, page_size=page_size, total=total, total_pages=total_pages
     )
@@ -56,9 +50,10 @@ def get_chat_sessions(
 def get_chat_history(
     session_id: str, db: Session
 ):
+    """查询会话消息历史"""
     chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "会话不存在")
 
     stmt = (
         select(models_chat_message.ChatMessage)
@@ -74,7 +69,7 @@ def get_chat_history(
             content=m.content,
             sql=m.sql_query,
             image=[
-                _convert_path_to_url(p) if p.startswith("/") or ":" in p else p
+                f"/api/v1/chat/images/{os.path.basename(p)}" if p.startswith("/") or ":" in p else p
                 for p in (m.chart_paths or [])
             ],
             created_at=m.created_at,
@@ -87,21 +82,19 @@ def close_chat_session(session_id: str, db: Session):
     """关闭会话"""
     chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "会话不存在")
 
     chat_session.status = 1
     commit_or_rollback(db)
-    logger.info("会话已关闭: session_id=%s", session_id)
-    return {"session_id": session_id, "message": "会话已关闭"}
+    logger.info(f"会话已关闭: session_id={session_id}")
+    return schemas_chat.ChatSessionResponse.model_validate(chat_session)
 
 
 def delete_chat_session(session_id: str, db: Session):
     """删除会话及其消息"""
-    import os
-
     chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "会话不存在")
 
     stmt = select(models_chat_message.ChatMessage).where(
         models_chat_message.ChatMessage.session_id == session_id
@@ -117,34 +110,31 @@ def delete_chat_session(session_id: str, db: Session):
                     file_path = os.path.join(chart_dir, filename)
                     if os.path.exists(file_path):
                         os.remove(file_path)
-                        logger.info("图表已删除: %s", file_path)
+                        logger.info(f"图表已删除: {file_path}")
                 except Exception as e:
-                    logger.warning(
-                        "删除图表失败: chart_url=%s error=%s", chart_url, str(e)
-                    )
+                    logger.warning(f"删除图表失败: chart_url={chart_url} error={e}")
         db.delete(m)
 
     db.delete(chat_session)
     commit_or_rollback(db)
-    logger.info("会话已删除: session_id=%s", session_id)
-    return {"session_id": session_id, "message": "会话已删除"}
+    logger.info(f"会话已删除: session_id={session_id}")
+    return schemas_chat.ChatSessionResponse.model_validate(chat_session)
 
 
 def rename_chat_session(session_id: str, name: str, db: Session):
     """重命名会话"""
     chat_session = db.get(models_chat_session.ChatSession, session_id)
     if chat_session is None:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "会话不存在")
 
     chat_session.name = name
     commit_or_rollback(db)
-    logger.info("会话已重命名: session_id=%s, name=%s", session_id, name)
-    return {"session_id": session_id, "name": name, "message": "会话已重命名"}
+    logger.info(f"会话已重命名: session_id={session_id}, name={name}")
+    return schemas_chat.ChatSessionResponse.model_validate(chat_session)
 
 
-def export_result_2(questions: list[dict], db: Session):
-    import os
-
+def export_chat_results(questions: list[dict], db: Session):
+    """批量执行问答并导出结果"""
     from openpyxl import Workbook
 
     wb = Workbook()
@@ -180,8 +170,6 @@ def export_result_2(questions: list[dict], db: Session):
                 continue
 
             try:
-                from app.services.chat.message import process_chat_message
-
                 response = process_chat_message(
                     session_id=session_id,
                     question=q_text,
@@ -242,24 +230,17 @@ def export_result_2(questions: list[dict], db: Session):
 
             except Exception as exc:
                 logger.error(
-                    "批量问答失败: question_id=%s round=%d error=%s",
-                    question_id,
-                    round_idx,
-                    str(exc),
-                )
-                error_msg = (
-                    f"回答生成失败: {str(exc)}" if exc else "回答生成失败: 未知错误"
+                    f"批量问答失败: question_id={question_id} round={round_idx} error={exc}",
+                    exc_info=True,
                 )
                 qa_pairs.append(
                     {
                         "Q": q_text,
-                        "A": {"content": error_msg},
+                        "A": {"content": "回答生成失败"},
                     }
                 )
 
-        from app.services.chat.message import _ensure_non_empty_qa_pairs as _ensure_qa
-
-        qa_pairs = _ensure_qa(question_json_str, qa_pairs)
+        qa_pairs = _ensure_non_empty_qa_pairs(question_json_str, qa_pairs)
         sql_query = "\n\n".join(all_sqls) if all_sqls else ""
         chart_type = "、".join(all_chart_types) if all_chart_types else "无"
 
@@ -299,11 +280,45 @@ def export_result_2(questions: list[dict], db: Session):
     os.makedirs(result_dir, exist_ok=True)
     result_path = os.path.join(result_dir, "result_2.xlsx")
     wb.save(result_path)
-    logger.info("result_2.xlsx 已生成: %s, 共 %d 个问题", result_path, len(questions))
+    logger.info(f"result_2.xlsx 已生成: {result_path}, 共 {len(questions)} 个问题")
 
     json_path = os.path.join(result_dir, "result_2.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
-    logger.info("result_2.json 已生成: %s", json_path)
+    logger.info(f"result_2.json 已生成: {json_path}")
 
-    return {"file_path": result_path}
+    return schemas_chat.ChatExportResponse(file_path=result_path)
+
+
+"""辅助函数"""
+
+
+def _ensure_non_empty_qa_pairs(
+    question_json_str: str,
+    qa_pairs: list[dict],
+):
+    """确保 QA 对列表不为空，空时生成兜底条目"""
+    if qa_pairs:
+        return qa_pairs
+
+    try:
+        rounds = json.loads(question_json_str)
+    except (json.JSONDecodeError, TypeError):
+        rounds = [{"Q": question_json_str}]
+
+    first_question = ""
+    if isinstance(rounds, list) and rounds:
+        first_round = rounds[0]
+        first_question = (
+            first_round.get("Q", "")
+            if isinstance(first_round, dict)
+            else str(first_round)
+        )
+
+    fallback_question = first_question.strip() or str(question_json_str)
+    return [
+        {
+            "Q": fallback_question,
+            "A": {"content": "回答生成失败：未生成任何有效轮次结果，请重新执行该题。"},
+        }
+    ]

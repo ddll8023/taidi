@@ -114,14 +114,14 @@ class BatchStatusRequest(BaseModel):
 class DataListRequest(BaseModel):
     """数据列表请求"""
 
-    page: int = Field(1, ge=1)
-    page_size: int = Field(10, ge=10)
-    stock_code: Annotated[str, Field(max_length=6)] | None = None
-    stock_abbr: str | None = None
-    report_year: int | None = Field(None, ge=2000, le=2100)
-    report_period: str | None = None
-    report_type: str | None = None
-    import_status: int | None = Field(None)
+    page: int = Field(1, ge=1, description="页码")
+    page_size: int = Field(10, ge=10, description="每页数量")
+    stock_code: Annotated[str, Field(None, max_length=6, description="股票代码")] | None = None
+    stock_abbr: str | None = Field(None, description="股票简称")
+    report_year: int | None = Field(None, ge=2000, le=2100, description="报告年份")
+    report_period: str | None = Field(None, description="报告期间：Q1/HY/Q3/FY")
+    report_type: str | None = Field(None, description="报告类型：REPORT/SUMMARY")
+    import_status: int | None = Field(None, description="入库状态：0待入库 1成功 2失败")
     keyword: str | None = Field(None, description="文件名关键词搜索")
     parse_status: int | None = Field(None, description="解析状态：0待处理 1成功 2失败")
     vector_status: int | None = Field(None, description="向量化状态：0待向量化 1向量化中 2成功 3失败 4跳过")
@@ -132,7 +132,7 @@ class DataListRequest(BaseModel):
 # ========== 响应类（Response）==========  # 返回数据结构
 
 
-class FinancialReportItem(BaseModel):
+class FinancialReportItemResponse(BaseModel):
     """财报记录列表项"""
 
     id: int
@@ -153,7 +153,7 @@ class FinancialReportItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class FinancialReportDetail(BaseModel):
+class FinancialReportDetailResponse(BaseModel):
     """财报详情"""
 
     id: int
@@ -195,7 +195,6 @@ class FinancialReportArchiveResponse(BaseModel):
     stock_abbr: str
     report_title: str
     parse_status: int
-    message: str = "文件上传成功，请稍后执行解析"
 
 
 class BatchUploadResponse(BaseModel):
@@ -211,7 +210,6 @@ class SingleParseSubmitResponse(BaseModel):
     """单个解析提交响应"""
     report_id: int
     status: str
-    message: str
 
 
 class BatchParseSubmitResponse(BaseModel):
@@ -220,19 +218,19 @@ class BatchParseSubmitResponse(BaseModel):
     skipped_count: int
     submitted_report_ids: list[int]
     skipped_report_ids: list[int]
-    message: str
 
 
 class BatchParseStatusItem(BaseModel):
     """单个报告解析状态"""
-    parse_status: int
-    parse_status_text: str
-    validate_message: str | None = None
+    report_id: int = Field(description="报告ID")
+    parse_status: int = Field(description="解析状态")
+    parse_status_text: str = Field(description="解析状态文本")
+    validate_message: str | None = Field(None, description="校验结果说明")
 
 
 class BatchParseStatusResponse(BaseModel):
     """批量解析状态查询响应"""
-    results: dict[int, BatchParseStatusItem]
+    results: list[BatchParseStatusItem] = Field(default_factory=list)
     processing_count: int
     completed_count: int
     total_count: int
@@ -247,4 +245,4 @@ class JsonContentResponse(BaseModel):
     """JSON文件内容响应"""
     file_name: str
     file_size: int
-    content: Any
+    content: Any  # JSON解析结果，结构随源文件变化无法固定类型

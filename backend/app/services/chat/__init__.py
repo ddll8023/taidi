@@ -6,6 +6,5 @@ from app.services.chat.session import (
     close_chat_session,
     delete_chat_session,
     rename_chat_session,
-    export_result_2,
+    export_chat_results,
 )
-from app.services.visualization import get_chart_image_path

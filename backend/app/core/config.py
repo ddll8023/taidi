@@ -44,7 +44,7 @@ class Settings(BaseSettings):
         os.makedirs(path, exist_ok=True)
         return path
 
-    MINIMAX_BASE_URL: str = "https://api.minimaxi.com/anthropic"
+    CHAT_BASE_URL: str = "https://api.minimaxi.com/anthropic"
     CHAT_MODEL: str = "MiniMax-M2.7"
     EMBEDDING_MODEL: str = "text-embedding-v2"
     EMBEDDING_DIM: int = 1024

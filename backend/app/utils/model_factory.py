@@ -3,6 +3,7 @@ import logging
 from functools import lru_cache
 
 from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_community.embeddings import DashScopeEmbeddings
 
 from app.core.config import settings
@@ -27,11 +28,11 @@ class ModelFactory:
         *,
         max_tokens: int | None = None,
         temperature: float | None = None,
-    ) -> ChatAnthropic:
-        return ChatAnthropic(
+    ) -> ChatOpenAI:
+        return ChatOpenAI(
             model=settings.CHAT_MODEL,
-            anthropic_api_key=settings.CHAT_API_KEY,
-            anthropic_api_url=settings.MINIMAX_BASE_URL,
+            api_key=settings.CHAT_API_KEY,
+            base_url=settings.CHAT_BASE_URL,
             max_tokens=max_tokens or self.default_chat_max_tokens,
             temperature=(
                 self.default_chat_temperature if temperature is None else temperature

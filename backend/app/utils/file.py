@@ -1,15 +1,12 @@
 import json
 import os
 
-from fastapi import UploadFile
-
 from app.core.config import settings
 
 
-async def save_file(file: UploadFile, path: str):
+def save_file(content: bytes, path: str):
     """保存文件"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    content = await file.read()
     with open(path, "wb") as f:
         f.write(content)
     return path

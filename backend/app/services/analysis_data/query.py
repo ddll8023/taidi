@@ -14,6 +14,7 @@ from app.models import financial_report as models_financial_report
 from app.models import income_sheet as models_income_sheet
 from app.schemas import analysis_data as schemas_analysis_data
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
+from app.services.analysis_data.helpers import load_financial_report_or_raise
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
@@ -25,17 +26,8 @@ logger = setup_logger(__name__)
 
 def get_financial_report_list(
     db: Session, data_list_request: schemas_analysis_data.DataListRequest
-) -> PaginatedResponse:
-    """
-    获取财报数据列表
-
-    Args:
-        db: 数据库会话
-        data_list_request: 列表查询请求
-
-    Returns:
-        PaginatedResponse: 分页列表响应
-    """
+):
+    """获取财报数据列表"""
     base_stmt = select(models_financial_report.FinancialReport)
 
     if data_list_request.stock_code:
@@ -96,7 +88,7 @@ def get_financial_report_list(
             == data_list_request.vector_status
         )
 
-    sort_by = data_list_request.sort_by or "updated_at"
+    sort_by = data_list_request.sort_by or "created_at"
     sort_order = data_list_request.sort_order or "desc"
 
     sort_column = getattr(models_financial_report.FinancialReport, sort_by, None)
@@ -116,7 +108,7 @@ def get_financial_report_list(
     ).all()
 
     items = [
-        schemas_analysis_data.FinancialReportItem(
+        schemas_analysis_data.FinancialReportItemResponse(
             id=r.id,
             file_name=r.source_file_name,
             report_title=r.report_title,
@@ -146,23 +138,9 @@ def get_financial_report_list(
 
 def get_financial_report_detail(
     db: Session, report_id: int
-) -> schemas_analysis_data.FinancialReportDetail:
-    """
-    获取单个财报详情
-
-    Args:
-        db: 数据库会话
-        report_id: 财报记录 ID
-
-    Returns:
-        FinancialReportDetail: 财报详情
-
-    Raises:
-        ServiceException: 记录不存在
-    """
-    from app.services.analysis_data.parse import _load_financial_report_or_raise
-
-    financial_report = _load_financial_report_or_raise(db, report_id)
+):
+    """获取单个财报详情"""
+    financial_report = load_financial_report_or_raise(db, report_id)
 
     core_performance_indicators = None
     balance_sheet = None
@@ -210,7 +188,7 @@ def get_financial_report_detail(
             income_result
         )
 
-    return schemas_analysis_data.FinancialReportDetail(
+    return schemas_analysis_data.FinancialReportDetailResponse(
         id=financial_report.id,
         file_name=financial_report.source_file_name,
         report_title=financial_report.report_title,
@@ -244,23 +222,9 @@ def get_financial_report_detail(
 
 def get_json_file_content(
     db: Session, report_id: int
-) -> schemas_analysis_data.JsonContentResponse:
-    """
-    获取结构化JSON文件内容
-
-    Args:
-        db: 数据库会话
-        report_id: 财报记录 ID
-
-    Returns:
-        JsonContentResponse: JSON文件内容
-
-    Raises:
-        ServiceException: 记录不存在或文件读取失败
-    """
-    from app.services.analysis_data.parse import _load_financial_report_or_raise
-
-    financial_report = _load_financial_report_or_raise(db, report_id)
+):
+    """获取结构化JSON文件内容"""
+    financial_report = load_financial_report_or_raise(db, report_id)
 
     if not financial_report.structured_json_path:
         raise ServiceException(
@@ -282,9 +246,7 @@ def get_json_file_content(
         file_size = os.path.getsize(json_path)
 
         logger.info(
-            "获取JSON文件内容成功: report_id=%s file_size=%d",
-            report_id,
-            file_size,
+            f"获取JSON文件内容成功: report_id={report_id} file_size={file_size}"
         )
 
         return schemas_analysis_data.JsonContentResponse(
@@ -292,8 +254,6 @@ def get_json_file_content(
             file_size=file_size,
             content=content,
         )
-    except ServiceException:
-        raise
     except json.JSONDecodeError as exc:
         logger.error(f"JSON文件解析失败: {exc}", exc_info=True)
         raise ServiceException(
