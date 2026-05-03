@@ -42,10 +42,8 @@ def verify_execution_trace(
     _verify_attribution_evidence(trace, result)
     _verify_references(trace, result)
     logger.info(
-        "校验完成: passed=%s, errors=%d, warnings=%d",
-        result.passed,
-        len(result.errors),
-        len(result.warnings),
+        f"校验完成: passed={result.passed}, errors={len(result.errors)}, "
+        f"warnings={len(result.warnings)}"
     )
     return result
 
@@ -624,7 +622,7 @@ def _verify_calculation(formula: str, expected_value: float, actual_data: dict):
         sanitized_expr = re.sub(r"[a-zA-Z_][a-zA-Z0-9_]*", "0", expr)
         result = eval(sanitized_expr, {"__builtins__": {}}, {})
     except Exception as exc:
-        logger.warning("计算验证失败: formula=%s, error=%s", formula, str(exc))
+        logger.warning(f"计算验证失败: formula={formula}, error={exc}")
         return False
 
     tolerance = abs(expected_value) * 0.01 + 0.01

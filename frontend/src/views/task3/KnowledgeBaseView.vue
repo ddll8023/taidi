@@ -246,8 +246,8 @@ async function loadDocuments() {
     if (filterMetadataStatus.value !== '') params.metadata_status = filterMetadataStatus.value
 
     const res = await getDocuments(params)
-    documents.value = res.data?.items || res.items || []
-    total.value = res.data?.total || res.total || 0
+    documents.value = res.data?.lists || []
+    total.value = res.data?.pagination?.total || 0
   } catch (error) {
     showToast('加载文档列表失败', 'error')
   } finally {

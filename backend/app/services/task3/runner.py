@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.db.database import commit_or_rollback
 from app.models.task3_question_item import Task3QuestionItem
 from app.models.task3_workspace import Task3Workspace
 from app.schemas.common import ErrorCode
@@ -111,7 +112,7 @@ def answer_single_question(question_id: int, db: Session):
         question.answered_at = datetime.now()
 
         _sync_workspace_stats(db, question.workspace_id)
-        db.commit()
+        commit_or_rollback(db)
         db.refresh(question)
 
         return Task3QuestionActionResponse(
@@ -120,21 +121,16 @@ def answer_single_question(question_id: int, db: Session):
             answered_at=question.answered_at,
         )
 
-    except Exception as e:
-        logger.error("回答题目失败: question_id=%s, error=%s", question_id, str(e), exc_info=True)
+    except ServiceException as exc:
+        logger.error(f"回答题目业务失败: question_id={question_id}, error={exc.message}", exc_info=True)
         db.rollback()
-        failed_question = db.get(Task3QuestionItem, question_id)
-        if failed_question is not None:
-            failed_question.status = 3  # 失败
-            failed_question.last_error = str(e)
-            failed_question.answered_at = datetime.now()
-            try:
-                _sync_workspace_stats(db, failed_question.workspace_id)
-                db.commit()
-            except Exception:
-                logger.error("保存题目失败状态失败: question_id=%s", question_id, exc_info=True)
-                db.rollback()
+        _mark_question_failed(db, question_id, exc.message)
         raise
+    except Exception as exc:
+        logger.error(f"回答题目失败: question_id={question_id}, error={exc}", exc_info=True)
+        db.rollback()
+        _mark_question_failed(db, question_id, "系统内部错误")
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
 
 
 def delete_question_answer(question_id: int, db: Session):
@@ -152,7 +148,7 @@ def delete_question_answer(question_id: int, db: Session):
     question.answered_at = None
     question.status = 0  # 待处理
     _sync_workspace_stats(db, question.workspace_id)
-    db.commit()
+    commit_or_rollback(db)
 
     return Task3QuestionActionResponse(
         id=question_id,
@@ -174,7 +170,7 @@ def rerun_question(question_id: int, db: Session):
     question.retrieval_summary = None
     question.last_error = None
     question.answered_at = None
-    db.commit()
+    commit_or_rollback(db)
 
     return answer_single_question(question_id, db)
 
@@ -204,12 +200,12 @@ def batch_answer_questions(
                 success_count += 1
             else:
                 failed_count += 1
-        except Exception as e:
+        except Exception as exc:
             failed_count += 1
-            logger.warning("批量回答中题目 %s 失败: %s", q.question_code, str(e))
+            logger.warning(f"批量回答中题目 {q.question_code} 失败: {exc}")
 
     _sync_workspace_stats(db, workspace_id)
-    db.commit()
+    commit_or_rollback(db)
 
     return Task3BatchAnswerResponse(success=success_count, failed=failed_count)
 
@@ -222,6 +218,23 @@ def batch_answer_with_workspace_check(scope: str, db: Session):
 
 
 """辅助函数"""
+
+
+def _mark_question_failed(db: Session, question_id: int, error_message: str):
+    """记录题目失败状态。"""
+    failed_question = db.get(Task3QuestionItem, question_id)
+    if failed_question is None:
+        return
+
+    failed_question.status = 3  # 失败
+    failed_question.last_error = error_message
+    failed_question.answered_at = datetime.now()
+    try:
+        _sync_workspace_stats(db, failed_question.workspace_id)
+        commit_or_rollback(db)
+    except Exception as exc:
+        logger.error(f"保存题目失败状态失败: question_id={question_id}, error={exc}", exc_info=True)
+        db.rollback()
 
 
 def _build_failure_message(verification: dict | None, fallback: str = "任务三回答未通过校验"):

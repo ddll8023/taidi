@@ -16,6 +16,12 @@ import {
 export const useTask3Store = defineStore('task3', () => {
   const workspace = ref(null)
   const questions = ref([])
+  const questionsPagination = ref({
+    page: 1,
+    page_size: 1000,
+    total: 0,
+    total_pages: 0
+  })
   const currentQuestion = ref(null)
   const isLoading = ref(false)
   const isUploading = ref(false)
@@ -79,13 +85,25 @@ export const useTask3Store = defineStore('task3', () => {
     }
   }
 
-  async function loadQuestions(status = null) {
+  async function loadQuestions(status = null, page = 1, pageSize = 1000) {
     isLoading.value = true
     error.value = null
     try {
-      const params = status !== null ? { status } : {}
+      const params = {
+        page,
+        page_size: pageSize
+      }
+      if (status !== null) {
+        params.status = status
+      }
       const result = await apiGetQuestions(params)
-      questions.value = result.data?.items || []
+      questions.value = result.data?.lists || []
+      questionsPagination.value = result.data?.pagination || {
+        page,
+        page_size: pageSize,
+        total: 0,
+        total_pages: 0
+      }
       return result
     } catch (err) {
       error.value = err.message || '加载题目列表失败'
@@ -209,6 +227,7 @@ export const useTask3Store = defineStore('task3', () => {
   return {
     workspace,
     questions,
+    questionsPagination,
     currentQuestion,
     isLoading,
     isUploading,

@@ -9,7 +9,6 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.constants import task3 as constants_task3
-from app.core.config import settings
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
@@ -74,11 +73,6 @@ def _extract_json_from_response(response_text: str):
         return None
 
 
-def _get_task3_config():
-    """获取任务三提示词配置。"""
-    return settings.PROMPT_CONFIG.get_task3_config
-
-
 def _invoke_llm(
     system_prompt: str,
     user_prompt: str,
@@ -96,9 +90,11 @@ def _invoke_llm(
             HumanMessage(content=user_prompt),
         ]
         response = model.invoke(messages)
+    except ServiceException:
+        raise
     except Exception as exc:
-        logger.error(f"LLM调用失败: error={str(exc)}")
-        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "LLM调用失败") from exc
+        logger.error(f"LLM调用失败: error={exc}", exc_info=True)
+        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "服务调用失败，请稍后重试") from exc
 
     content = getattr(response, "content", None)
     if isinstance(content, str):

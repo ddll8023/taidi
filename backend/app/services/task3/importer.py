@@ -1,26 +1,24 @@
 """任务三附件导入与工作台查询服务。"""
 
 import json
+import math
 import os
-import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from fastapi import UploadFile
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.database import commit_or_rollback
 from app.models.task3_question_item import Task3QuestionItem
 from app.models.task3_workspace import Task3Workspace
-from app.schemas.common import ErrorCode
+from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.schemas.task3 import (
     Task3ImportResponse,
     Task3ImportStatus,
     Task3QuestionItemResponse,
-    Task3QuestionListResponse,
     Task3QuestionStatsResponse,
     Task3WorkspaceResponse,
 )
@@ -44,53 +42,46 @@ def get_workspace_info(db: Session):
     stmt = select(Task3Workspace).order_by(Task3Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
     if workspace is None:
-        return None
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "工作台不存在，请先导入附件6")
     return Task3WorkspaceResponse.model_validate(workspace)
-
-
-def get_question_list(
-    db: Session,
-    workspace_id: int,
-    status: int | None = None,
-):
-    """获取工作台题目列表。"""
-    stmt = select(Task3QuestionItem).where(
-        Task3QuestionItem.workspace_id == workspace_id
-    )
-    if status is not None:
-        stmt = stmt.where(Task3QuestionItem.status == status)
-    stmt = stmt.order_by(Task3QuestionItem.question_code)
-    questions = list(db.execute(stmt).scalars().all())
-    for question in questions:
-        normalize_question_item(question)
-    return [Task3QuestionItemResponse.model_validate(q) for q in questions]
 
 
 def get_question_detail(db: Session, question_id: int):
     """获取单个题目的详情对象。"""
     question = db.get(Task3QuestionItem, question_id)
     if question is None:
-        return None
-    normalize_question_item(question)
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
+    _normalize_question_item(question)
     return Task3QuestionItemResponse.model_validate(question)
-
-
-def normalize_question_item(question: Task3QuestionItem):
-    """规范化题目对象中的结构化字段。"""
-    if isinstance(question.execution_plan, list):
-        question.execution_plan = {"rounds": question.execution_plan}
-    return question
 
 
 def get_question_stats(
     db: Session, workspace_id: int
 ):
     """统计工作台题目数量与状态分布。"""
-    all_items = get_question_list(db, workspace_id)
-    total = len(all_items)
-    pending = sum(1 for q in all_items if q.status == 0)
-    answered = sum(1 for q in all_items if q.status == 2)
-    failed = sum(1 for q in all_items if q.status == 3)
+    total = db.scalar(
+        select(func.count()).select_from(Task3QuestionItem).where(
+            Task3QuestionItem.workspace_id == workspace_id
+        )
+    ) or 0
+    pending = db.scalar(
+        select(func.count()).select_from(Task3QuestionItem).where(
+            Task3QuestionItem.workspace_id == workspace_id,
+            Task3QuestionItem.status == 0,
+        )
+    ) or 0
+    answered = db.scalar(
+        select(func.count()).select_from(Task3QuestionItem).where(
+            Task3QuestionItem.workspace_id == workspace_id,
+            Task3QuestionItem.status == 2,
+        )
+    ) or 0
+    failed = db.scalar(
+        select(func.count()).select_from(Task3QuestionItem).where(
+            Task3QuestionItem.workspace_id == workspace_id,
+            Task3QuestionItem.status == 3,
+        )
+    ) or 0
     return Task3QuestionStatsResponse(
         total=total,
         pending=pending,
@@ -101,57 +92,49 @@ def get_question_stats(
 
 def get_workspace_or_raise(db: Session):
     """获取工作台，不存在时抛异常。"""
+    return get_workspace_info(db)
+
+
+def get_question_list_response(
+    db: Session,
+    status: int | None = None,
+    page: int = 1,
+    page_size: int = 10,
+):
+    """查询题目分页列表。"""
     workspace = get_workspace_info(db)
-    if workspace is None:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "工作台不存在，请先导入附件6")
-    return workspace
+    base_stmt = select(Task3QuestionItem).where(
+        Task3QuestionItem.workspace_id == workspace.id
+    )
+    if status is not None:
+        base_stmt = base_stmt.where(Task3QuestionItem.status == status)
 
+    total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
+    questions = list(
+        db.execute(
+            base_stmt
+            .order_by(Task3QuestionItem.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).scalars().all()
+    )
+    for question in questions:
+        _normalize_question_item(question)
 
-def get_question_list_response(db: Session, status: int | None = None):
-    """查询题目列表并组装完整响应（含工作台校验和统计）。"""
-    workspace = get_workspace_info(db)
-    if workspace is None:
-        return Task3QuestionListResponse()
-
-    questions = get_question_list(db=db, workspace_id=workspace.id, status=status)
-    stats = get_question_stats(db, workspace.id)
-
-    return Task3QuestionListResponse(
-        items=questions,
-        total=stats.total,
-        pending_count=stats.pending,
-        answered_count=stats.answered,
-        failed_count=stats.failed,
+    return PaginatedResponse(
+        lists=[Task3QuestionItemResponse.model_validate(q) for q in questions],
+        pagination=PaginationInfo(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=math.ceil(total / page_size) if total else 0,
+        ),
     )
 
 
 def get_question_detail_or_raise(db: Session, question_id: int):
     """获取单个题目详情，不存在时抛异常。"""
-    result = get_question_detail(db=db, question_id=question_id)
-    if result is None:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
-    return result
-
-
-async def import_fujian6_from_upload(db: Session, file: UploadFile):
-    """接收上传文件，校验格式后导入附件6。"""
-    if not file.filename or not file.filename.endswith(".xlsx"):
-        raise ServiceException(ErrorCode.PARAM_ERROR, "请上传xlsx格式的附件6文件")
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_file:
-        content = await file.read()
-        tmp_file.write(content)
-        tmp_path = tmp_file.name
-
-    try:
-        return import_fujian6(
-            file_path=tmp_path,
-            original_filename=file.filename,
-            db=db,
-        )
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    return get_question_detail(db=db, question_id=question_id)
 
 
 def get_or_create_workspace(db: Session):
@@ -171,7 +154,7 @@ def import_fujian6(
     )
     existing_questions = db.execute(stmt).scalars().all()
     if existing_questions:
-        logger.info("工作台已有数据，将清空旧数据后重新导入")
+        logger.info(f"工作台已有数据，将清空旧数据后重新导入")
         db.execute(delete(Task3QuestionItem).where(Task3QuestionItem.workspace_id == workspace.id))
 
     workspace.import_status = Task3ImportStatus.IMPORTING
@@ -179,7 +162,7 @@ def import_fujian6(
 
     try:
         questions = _parse_fujian6_file(file_path)
-        logger.info("从附件6解析出 %d 个问题", len(questions))
+        logger.info(f"从附件6解析出 {len(questions)} 个问题")
 
         os.makedirs(UPLOAD_DIR, exist_ok=True)
         saved_path = os.path.join(UPLOAD_DIR, "附件6.xlsx")
@@ -217,7 +200,7 @@ def import_fujian6(
         workspace.import_status = Task3ImportStatus.IMPORTED
         commit_or_rollback(db)
 
-        logger.info("附件6导入完成: workspace_id=%d total=%d", workspace.id, len(questions))
+        logger.info(f"附件6导入完成: workspace_id={workspace.id} total={len(questions)}")
 
         return Task3ImportResponse(
             workspace_id=workspace.id,
@@ -226,14 +209,25 @@ def import_fujian6(
             message=f"成功导入 {len(questions)} 个问题",
         )
 
-    except Exception as e:
+    except ServiceException:
         workspace.import_status = Task3ImportStatus.IMPORT_FAILED
         commit_or_rollback(db)
-        logger.error("导入附件6失败: %s", str(e), exc_info=True)
         raise
+    except Exception as exc:
+        workspace.import_status = Task3ImportStatus.IMPORT_FAILED
+        commit_or_rollback(db)
+        logger.error(f"导入附件6失败: error={exc}", exc_info=True)
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "导入失败") from exc
 
 
 """辅助函数"""
+
+
+def _normalize_question_item(question: Task3QuestionItem):
+    """规范化题目对象中的结构化字段。"""
+    if isinstance(question.execution_plan, list):
+        question.execution_plan = {"rounds": question.execution_plan}
+    return question
 
 
 def _column_ref_to_index(cell_ref: str):
@@ -330,7 +324,7 @@ def _parse_fujian6_file(file_path: str):
     """解析附件6并提取题目数据。"""
     source_path = Path(file_path)
     if not source_path.exists():
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"附件6文件不存在：{file_path}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "附件6文件不存在")
 
     questions = []
     with zipfile.ZipFile(source_path) as archive:
@@ -378,5 +372,5 @@ def _get_or_create_workspace_entity(db: Session):
         )
         db.add(workspace)
         db.flush()
-        logger.info("创建新任务三工作台: id=%d", workspace.id)
+        logger.info(f"创建新任务三工作台: id={workspace.id}")
     return workspace

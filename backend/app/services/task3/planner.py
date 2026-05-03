@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.constants import task3 as constants_task3
+from app.core.config import settings
 from app.schemas.common import ErrorCode
 from app.schemas.task3 import (
     ExecutionPlan,
@@ -20,7 +21,6 @@ from app.schemas.task3 import (
 from app.services.task3.helpers import (
     _extract_company_name_from_question,
     _extract_json_from_response,
-    _get_task3_config,
     _invoke_llm,
     _is_attribution_with_financial_data,
 )
@@ -44,21 +44,21 @@ def plan_task3_question(
 
     if _is_attribution_with_financial_data(question):
         plan = _create_hybrid_plan(question, context, db)
-        logger.info("归因+财务混合型规划: question=%s, steps=%d", question[:50], len(plan.steps))
+        logger.info(f"归因+财务混合型规划: question={question[:50]}, steps={len(plan.steps)}")
         return plan
 
     if _is_hybrid_question(question):
         plan = _create_hybrid_plan(question, context, db)
-        logger.info("混合型规划: question=%s, steps=%d", question[:50], len(plan.steps))
+        logger.info(f"混合型规划: question={question[:50]}, steps={len(plan.steps)}")
         return plan
 
     if _is_knowledge_only_question(question):
         plan = _create_knowledge_plan(question, context, db)
-        logger.info("知识库优先规划: question=%s, steps=%d", question[:50], len(plan.steps))
+        logger.info(f"知识库优先规划: question={question[:50]}, steps={len(plan.steps)}")
         return plan
 
     complexity = estimate_complexity(question)
-    logger.info("问题复杂度评估: question=%s, complexity=%s", question[:50], complexity)
+    logger.info(f"问题复杂度评估: question={question[:50]}, complexity={complexity}")
 
     if complexity == "low":
         plan = _create_simple_plan(question, context)
@@ -72,8 +72,7 @@ def plan_task3_question(
     # 兜底：如果计划步骤数过少（<=2）但问题明显是多步骤/多意图，尝试用混合计划兜底
     if len(plan.steps) <= 2 and _has_multiple_explicit_steps(question):
         logger.warning(
-            "计划步骤过少但问题含多步骤标记，使用混合计划兜底: question=%s",
-            question[:50],
+            f"计划步骤过少但问题含多步骤标记，使用混合计划兜底: question={question[:50]}"
         )
         plan = _create_hybrid_plan(question, context, db)
 
@@ -108,7 +107,7 @@ def execute_plan(
     while len(completed_step_ids) + len(failed_step_ids) < len(plan.steps):
         iteration += 1
         if iteration > max_iterations:
-            logger.warning("执行调度超过最大迭代次数，终止执行")
+            logger.warning(f"执行调度超过最大迭代次数，终止执行")
             break
 
         executable_steps = get_next_executable_steps(
@@ -118,7 +117,7 @@ def execute_plan(
         if not executable_steps:
             remaining = set(s.step_id for s in plan.steps) - completed_step_ids - failed_step_ids
             if remaining:
-                logger.warning("存在无法执行的步骤: %s", remaining)
+                logger.warning(f"存在无法执行的步骤: {remaining}")
                 for step_id in remaining:
                     step = plan.get_step(step_id)
                     if step:
@@ -148,7 +147,7 @@ def execute_plan(
             else:
                 failed_step_ids.add(step.step_id)
                 if stop_on_failure:
-                    logger.warning("步骤执行失败，停止执行: step_id=%s", step.step_id)
+                    logger.warning(f"步骤执行失败，停止执行: step_id={step.step_id}")
                     break
 
         if stop_on_failure and failed_step_ids:
@@ -160,10 +159,8 @@ def execute_plan(
         references=references,
     )
     logger.info(
-        "执行计划完成: steps=%d, completed=%d, failed=%d",
-        len(plan.steps),
-        len(completed_step_ids),
-        len(failed_step_ids),
+        f"执行计划完成: steps={len(plan.steps)}, "
+        f"completed={len(completed_step_ids)}, failed={len(failed_step_ids)}"
     )
 
     return trace
@@ -252,7 +249,7 @@ def plan_execute_and_verify(question: str, context: dict | None, db: Session):
 
 def analyze_question(question: str, context: dict | None = None):
     """分析问题意图并返回结构化结果。"""
-    config = _get_task3_config()
+    config = settings.PROMPT_CONFIG.get_task3_config
     planner_config = config.get("planner", {})
 
     system_prompt = planner_config.get("system_prompt", "")
@@ -271,11 +268,11 @@ def analyze_question(question: str, context: dict | None = None):
     response_text = _invoke_llm(
         system_prompt, user_prompt, max_tokens=4096, temperature=0.0
     )
-    logger.info("规划分析结果: %s", response_text[:500])
+    logger.info(f"规划分析结果: {response_text[:500]}")
 
     parsed = _extract_json_from_response(response_text)
     if parsed is None:
-        logger.warning("规划分析返回非JSON，使用默认计划")
+        logger.warning(f"规划分析返回非JSON，使用默认计划")
         return _create_default_plan(question)
 
     return parsed
@@ -720,9 +717,7 @@ def create_execution_plan(
     )
 
     logger.info(
-        "执行计划创建完成: question=%s, steps=%d",
-        question[:50],
-        len(steps),
+        f"执行计划创建完成: question={question[:50]}, steps={len(steps)}"
     )
     return plan
 

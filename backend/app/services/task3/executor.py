@@ -27,7 +27,6 @@ from app.services import knowledge_base
 from app.services.task3.helpers import (
     _extract_company_name_from_question,
     _extract_json_from_response,
-    _get_task3_config,
     _invoke_llm,
     _to_jsonable,
 )
@@ -234,7 +233,7 @@ def _execute_sql(sql: str, db: Session):
         rows = result.fetchall()
         return [dict(zip(columns, row)) for row in rows]
     except Exception as exc:
-        logger.error("SQL执行失败: sql=%s error=%s", sql, str(exc), exc_info=True)
+        logger.error(f"SQL执行失败: sql={sql} error={exc}", exc_info=True)
         raise ServiceException(
             ErrorCode.AI_SERVICE_ERROR, "服务调用失败，请稍后重试"
         ) from exc
@@ -252,10 +251,7 @@ def execute_step(
     """执行单个任务三步骤并更新执行状态。"""
     start_time = time.time()
     logger.info(
-        "执行步骤: step_id=%s, type=%s, goal=%s",
-        step.step_id,
-        step.step_type,
-        step.goal,
+        f"执行步骤: step_id={step.step_id}, type={step.step_type}, goal={step.goal}"
     )
 
     try:
@@ -287,20 +283,21 @@ def execute_step(
         )
         results[step.step_id] = result
         context[step.step_id] = output
-        logger.info("步骤完成: step_id=%s, time_ms=%d", step.step_id, execution_time_ms)
+        logger.info(f"步骤完成: step_id={step.step_id}, time_ms={execution_time_ms}")
         return result
     except Exception as exc:
         execution_time_ms = int((time.time() - start_time) * 1000)
+        error_message = exc.message if isinstance(exc, ServiceException) else "系统内部错误"
         result = StepResult(
             step_id=step.step_id,
             step_type=step.step_type,
             status=StepStatus.FAILED,
             output={},
-            error_message=str(exc)[:2000],
+            error_message=error_message,
             execution_time_ms=execution_time_ms,
         )
         results[step.step_id] = result
-        logger.error("步骤失败: step_id=%s, error=%s", step.step_id, str(exc))
+        logger.error(f"步骤失败: step_id={step.step_id}, error={exc}", exc_info=True)
         return result
 
 
@@ -333,9 +330,7 @@ def _execute_sql_query(step: TaskStep, db: Session, context: dict[str, Any]):
         is_valid, validate_msg = _validate_sql(sql)
         if not is_valid:
             logger.warning(
-                "计划内SQL校验失败，将重新生成: step_id=%s, reason=%s",
-                step.step_id,
-                validate_msg,
+                f"计划内SQL校验失败，将重新生成: step_id={step.step_id}, reason={validate_msg}"
             )
             sql = None
 
@@ -354,11 +349,8 @@ def _execute_sql_query(step: TaskStep, db: Session, context: dict[str, Any]):
             break
 
         logger.warning(
-            "SQL校验失败(第%d次): step_id=%s, reason=%s, sql=%s",
-            attempt,
-            step.step_id,
-            validate_msg,
-            sql[:200],
+            f"SQL校验失败(第{attempt}次): step_id={step.step_id}, "
+            f"reason={validate_msg}, sql={sql[:200]}"
         )
 
         if attempt < max_retries:
@@ -383,10 +375,10 @@ def _generate_sql_for_step(step: TaskStep, context: dict[str, Any]):
     """为步骤生成 SQL 语句。"""
     deterministic_sql = _build_rule_based_sql(step, context)
     if deterministic_sql:
-        logger.info("命中规则SQL: step_id=%s, sql=%s", step.step_id, deterministic_sql[:200])
+        logger.info(f"命中规则SQL: step_id={step.step_id}, sql={deterministic_sql[:200]}")
         return deterministic_sql
 
-    config = _get_task3_config()
+    config = settings.PROMPT_CONFIG.get_task3_config
     executor_config = config.get("executor", {})
     schema_ddl = _build_schema_ddl()
     system_prompt = executor_config.get("system_prompt", "").format(
@@ -436,7 +428,7 @@ def _generate_sql_for_step(step: TaskStep, context: dict[str, Any]):
     )
     sql = _extract_sql_from_response(response_text)
     if sql:
-        logger.info("生成SQL: step_id=%s, sql=%s", step.step_id, sql[:200])
+        logger.info(f"生成SQL: step_id={step.step_id}, sql={sql[:200]}")
     return sql
 
 
@@ -736,7 +728,7 @@ def _execute_derive_metric(step: TaskStep, context: dict[str, Any]):
         try:
             value = _evaluate_formula(formula, row)
         except Exception as exc:
-            logger.warning("派生指标计算失败: row=%s, error=%s", row, str(exc))
+            logger.warning(f"派生指标计算失败: row={row}, error={exc}")
             continue
         calculated_values.append(
             {
@@ -881,12 +873,8 @@ def _execute_retrieve_evidence(
             stock_code = companies[0].get("stock_code")
 
     logger.info(
-        "知识库证据检索开始: step_id=%s, query=%s, stock_code=%s, doc_type=%s, top_k=%s",
-        step.step_id,
-        str(query)[:120],
-        stock_code,
-        doc_type,
-        top_k,
+        f"知识库证据检索开始: step_id={step.step_id}, query={str(query)[:120]}, "
+        f"stock_code={stock_code}, doc_type={doc_type}, top_k={top_k}"
     )
     evidence_list = knowledge_base.search_and_format_evidence(
         query,
@@ -909,18 +897,14 @@ def _execute_retrieve_evidence(
                 filtered_evidence.append(evidence)
             else:
                 logger.debug(
-                    "证据被过滤（主体不匹配）: company_name_filter=%s, title=%s, stock_abbr=%s",
-                    company_name_filter,
-                    title,
-                    stock_abbr,
+                    f"证据被过滤（主体不匹配）: company_name_filter={company_name_filter}, "
+                    f"title={title}, stock_abbr={stock_abbr}"
                 )
         evidence_list = filtered_evidence
         logger.info(
-            "知识库证据二次过滤完成: step_id=%s, original_count=%d, filtered_count=%d, company_name_filter=%s",
-            step.step_id,
-            original_count,
-            len(evidence_list),
-            company_name_filter,
+            f"知识库证据二次过滤完成: step_id={step.step_id}, "
+            f"original_count={original_count}, filtered_count={len(evidence_list)}, "
+            f"company_name_filter={company_name_filter}"
         )
 
     for evidence in evidence_list:
@@ -933,10 +917,8 @@ def _execute_retrieve_evidence(
         )
 
     logger.info(
-        "知识库证据检索完成: step_id=%s, evidence_count=%d, reference_total=%d",
-        step.step_id,
-        len(evidence_list),
-        len(references),
+        f"知识库证据检索完成: step_id={step.step_id}, "
+        f"evidence_count={len(evidence_list)}, reference_total={len(references)}"
     )
     return {
         "query": query,
@@ -1125,7 +1107,7 @@ def _execute_compose_answer(
     references: list[Reference],
 ):
     """基于执行结果生成最终回答文本。"""
-    config = _get_task3_config()
+    config = settings.PROMPT_CONFIG.get_task3_config
     answer_config = config.get("answer_builder", {})
     execution_summary = _build_execution_summary(results)
     system_prompt = answer_config.get("system_prompt", "")

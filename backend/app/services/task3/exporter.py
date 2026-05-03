@@ -8,6 +8,7 @@ from datetime import datetime
 from openpyxl import Workbook
 from sqlalchemy.orm import Session
 
+from app.db.database import commit_or_rollback
 from app.schemas.common import ErrorCode
 from app.schemas.task3 import (
     Reference,
@@ -48,7 +49,7 @@ def export_result_3(questions: list[dict], db: Session):
         rounds = _parse_question_rounds(question_text)
         merged_question_text = " ".join(item.get("Q", "") for item in rounds)
 
-        logger.info("处理问题 %d/%d: %s", idx + 1, len(questions), question_id)
+        logger.info(f"处理问题 {idx + 1}/{len(questions)}: {question_id}")
 
         try:
             _validate_task3_question_id(question_id)
@@ -106,7 +107,7 @@ def export_result_3(questions: list[dict], db: Session):
             ])
 
         except Exception as exc:
-            logger.error("处理问题失败: question_id=%s, error=%s", question_id, str(exc))
+            logger.error(f"处理问题失败: question_id={question_id}, error={exc}", exc_info=True)
             fail_count += 1
 
             result_item = {
@@ -115,9 +116,9 @@ def export_result_3(questions: list[dict], db: Session):
                 "sql": "",
                 "answer": [{
                     "Q": merged_question_text,
-                    "A": {"content": f"处理失败: {str(exc)}"},
+                    "A": {"content": "处理失败"},
                 }],
-                "error": str(exc),
+                "error": "处理失败",
             }
             all_results.append(result_item)
 
@@ -144,17 +145,12 @@ def export_result_3(questions: list[dict], db: Session):
 
     result_path = os.path.join(result_dir, "result_3.xlsx")
     wb.save(result_path)
-    logger.info(
-        "result_3.xlsx 已生成: %s, 成功=%d, 失败=%d",
-        result_path,
-        success_count,
-        fail_count,
-    )
+    logger.info(f"result_3.xlsx 已生成: {result_path}, 成功={success_count}, 失败={fail_count}")
 
     json_path = os.path.join(result_dir, "result_3.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
-    logger.info("result_3.json 已生成: %s", json_path)
+    logger.info(f"result_3.json 已生成: {json_path}")
 
     summary_path = os.path.join(result_dir, "result_3_summary.json")
     summary = {
@@ -212,19 +208,11 @@ def export_single_question_result(
             error=None,
         )
 
+    except ServiceException:
+        raise
     except Exception as exc:
-        logger.error("单问题导出失败: question_id=%s, error=%s", question_id, str(exc))
-        return Task3SingleExportResponse(
-            id=question_id,
-            question=question,
-            sql=None,
-            answer=Task3ExportContentResponse(
-                content=f"处理失败: {str(exc)}",
-                references=[],
-            ),
-            success=False,
-            error=str(exc),
-        )
+        logger.error(f"单问题导出失败: question_id={question_id}, error={exc}", exc_info=True)
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "导出失败") from exc
 
 
 def format_reference_for_output(ref: Reference):
@@ -290,7 +278,7 @@ def export_result_3_from_workspace(db: Session):
     """从当前工作台记录导出 result_3.xlsx。"""
     from app.models.task3_workspace import Task3Workspace
     from app.models.task3_question_item import Task3QuestionItem
-    from sqlalchemy import select, func
+    from sqlalchemy import select
 
     stmt = select(Task3Workspace).order_by(Task3Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
@@ -341,7 +329,7 @@ def export_result_3_from_workspace(db: Session):
                 fail_count += 1
 
         except Exception as exc:
-            logger.error("导出题目失败: question_id=%s, error=%s", question_id, str(exc))
+            logger.error(f"导出题目失败: question_id={question_id}, error={exc}", exc_info=True)
             fail_count += 1
 
             ws.append([
@@ -351,7 +339,7 @@ def export_result_3_from_workspace(db: Session):
                 json.dumps(
                     [{
                         "Q": rounds[0].get("Q", "") if rounds else question_text,
-                        "A": {"content": f"处理失败: {str(exc)}"},
+                        "A": {"content": "处理失败"},
                     }],
                     ensure_ascii=False,
                 ),
@@ -377,19 +365,9 @@ def export_result_3_from_workspace(db: Session):
     # 更新工作台导出信息
     workspace.last_export_path = result_path
     workspace.last_exported_at = datetime.now()
-    try:
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        logger.error("保存导出结果失败: %s", str(exc), exc_info=True)
-        raise ServiceException(ErrorCode.INTERNAL_ERROR, "导出失败") from exc
+    commit_or_rollback(db)
 
-    logger.info(
-        "result_3.xlsx 导出完成: path=%s, success=%d, failed=%d",
-        result_path,
-        success_count,
-        fail_count,
-    )
+    logger.info(f"result_3.xlsx 导出完成: path={result_path}, success={success_count}, failed={fail_count}")
 
     return Task3WorkspaceExportResponse(
         xlsx_path=result_path,
@@ -408,7 +386,7 @@ def get_latest_export_info(db: Session):
     workspace = db.execute(stmt).scalar_one_or_none()
 
     if workspace is None or not workspace.last_export_path:
-        return {"message": "暂无导出记录"}
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "暂无导出记录")
 
     return Task3LatestExportResponse(
         xlsx_path=workspace.last_export_path,

@@ -283,16 +283,6 @@ class Task3LatestExportResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class Task3QuestionListResponse(BaseModel):
-    items: list[Task3QuestionItemResponse] = Field(default_factory=list, description="题目列表")
-    total: int = Field(0, description="总数")
-    pending_count: int = Field(0, description="待处理数量")
-    answered_count: int = Field(0, description="已回答数量")
-    failed_count: int = Field(0, description="失败数量")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class Task3QuestionStatsResponse(BaseModel):
     total: int = Field(0, description="总数")
     pending: int = Field(0, description="待处理数量")
