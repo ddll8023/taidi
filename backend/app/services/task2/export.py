@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 from app.models.task2_question_item import Task2QuestionItem
 from app.models.task2_workspace import Task2Workspace
 from app.schemas.common import ErrorCode
-from app.schemas.task2 import QuestionStatus
+from app.schemas import task2 as schemas_task2
 from app.utils.exception import ServiceException
+from app.db.database import commit_or_rollback
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -22,51 +23,6 @@ RESULT_DIR = os.path.join(os.getcwd(), "result")
 
 def export_result_2(db: Session):
     """导出任务二结果文件并记录最近导出信息。"""
-    return _export_result_2(db=db)
-
-
-"""辅助函数"""
-
-
-def _commit_or_raise(db: Session):
-    """提交当前事务，失败时回滚并转换为业务异常。"""
-    try:
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
-
-
-def _ensure_non_empty_qa_pairs(question_json_str: str, qa_pairs: list[dict]):
-    if qa_pairs:
-        return qa_pairs
-
-    try:
-        rounds = json.loads(question_json_str)
-    except (json.JSONDecodeError, TypeError):
-        rounds = [{"Q": question_json_str}]
-
-    first_question = ""
-    if isinstance(rounds, list) and rounds:
-        first_round = rounds[0]
-        first_question = (
-            first_round.get("Q", "")
-            if isinstance(first_round, dict)
-            else str(first_round)
-        )
-
-    fallback_question = first_question.strip() or str(question_json_str)
-    return [
-        {
-            "Q": fallback_question,
-            "A": {
-                "content": "回答生成失败：未生成任何有效轮次结果，请重新执行该题。"
-            },
-        }
-    ]
-
-
-def _export_result_2(db: Session):
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 
@@ -124,48 +80,78 @@ def _export_result_2(db: Session):
     for col in ws.columns:
         max_length = 0
         for cell in col:
-            try:
-                if cell.value:
-                    max_length = max(max_length, len(str(cell.value)))
-            except Exception:
-                pass
+            if cell.value:
+                max_length = max(max_length, len(str(cell.value)))
         adjusted_width = min(max_length + 2, 60)
         ws.column_dimensions[col[0].column_letter].width = adjusted_width
 
     os.makedirs(RESULT_DIR, exist_ok=True)
     xlsx_path = os.path.join(RESULT_DIR, "result_2.xlsx")
     wb.save(xlsx_path)
-    logger.info("result_2.xlsx 已生成: %s, 共 %d 个问题", xlsx_path, len(questions))
+    logger.info(f"result_2.xlsx 已生成: {xlsx_path}, 共 {len(questions)} 个问题")
 
     json_path = os.path.join(RESULT_DIR, "result_2.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
-    logger.info("result_2.json 已生成: %s", json_path)
+    logger.info(f"result_2.json 已生成: {json_path}")
 
     workspace.last_export_path = xlsx_path
     workspace.last_exported_at = datetime.now()
     db.flush()
-    _commit_or_raise(db)
+    commit_or_rollback(db)
 
-    return {
-        "xlsx_path": xlsx_path,
-        "json_path": json_path,
-        "total_questions": len(questions),
-        "answered_count": sum(1 for q in questions if q.status == QuestionStatus.ANSWERED),
-        "failed_count": sum(1 for q in questions if q.status == QuestionStatus.FAILED),
-        "exported_at": datetime.now().isoformat(),
-    }
+    return schemas_task2.Task2ExportResultResponse(
+        xlsx_path=xlsx_path,
+        json_path=json_path,
+        total_questions=len(questions),
+        answered_count=sum(1 for q in questions if q.status == schemas_task2.QuestionStatus.ANSWERED),
+        failed_count=sum(1 for q in questions if q.status == schemas_task2.QuestionStatus.FAILED),
+        exported_at=datetime.now().isoformat(),
+    )
 
 
 def get_latest_export_info(db: Session):
-    """查询最近一次任务二导出结果信息，无导出记录时返回带 message 的默认结构。"""
+    """查询最近一次任务二导出结果信息。"""
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 
     if workspace is None or not workspace.last_export_path:
-        return {"message": "暂无导出记录"}
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "暂无导出记录")
 
-    return {
-        "xlsx_path": workspace.last_export_path,
-        "exported_at": workspace.last_exported_at.isoformat() if workspace.last_exported_at else None,
-    }
+    return schemas_task2.Task2LatestExportInfoResponse(
+        xlsx_path=workspace.last_export_path,
+        exported_at=workspace.last_exported_at.isoformat() if workspace.last_exported_at else None,
+    )
+
+
+"""辅助函数"""
+
+
+def _ensure_non_empty_qa_pairs(question_json_str: str, qa_pairs: list[dict]):
+    """确保 QA 对非空，为空时基于问题 JSON 构造兜底回答。"""
+    if qa_pairs:
+        return qa_pairs
+
+    try:
+        rounds = json.loads(question_json_str)
+    except (json.JSONDecodeError, TypeError):
+        rounds = [{"Q": question_json_str}]
+
+    first_question = ""
+    if isinstance(rounds, list) and rounds:
+        first_round = rounds[0]
+        first_question = (
+            first_round.get("Q", "")
+            if isinstance(first_round, dict)
+            else str(first_round)
+        )
+
+    fallback_question = first_question.strip() or str(question_json_str)
+    return [
+        {
+            "Q": fallback_question,
+            "A": {
+                "content": "回答生成失败：未生成任何有效轮次结果，请重新执行该题。"
+            },
+        }
+    ]

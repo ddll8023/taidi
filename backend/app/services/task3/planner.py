@@ -5,10 +5,9 @@ import re
 from datetime import datetime
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.constants import task3 as constants_task3
 from app.schemas.common import ErrorCode
 from app.schemas.task3 import (
     ExecutionPlan,
@@ -18,233 +17,238 @@ from app.schemas.task3 import (
     StepType,
     TaskStep,
 )
+from app.services.task3.helpers import (
+    _extract_company_name_from_question,
+    _extract_json_from_response,
+    _get_task3_config,
+    _invoke_llm,
+    _is_attribution_with_financial_data,
+)
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
-from app.utils.model_factory import get_model
 
 logger = setup_logger(__name__)
 
-COMPANY_ALIAS_MAP = {
-    "华润三九": ["三九", "999"],
-}
-
-KNOWLEDGE_ONLY_KEYWORDS = [
-    "医保",
-    "医保目录",
-    "国家医保",
-    "商保",
-    "集采",
-    "谈判",
-    "政策",
-    "目录",
-    "新增",
-    "产品有哪些",
-    "名单",
-    "北向资金",
-    "外资",
-    "撤退",
-    "市场观点",
-    "行业风向",
-    "行业事件",
-    "原因",
-    "为什么",
-    "为何",
-    "导致",
-    "因素",
-    "影响",
-    "驱动",
-    "分析原因",
-    "涨跌原因",
-    "变化原因",
-    "增长原因",
-    "下降原因",
-    "研报",
-    "研究报告",
-    "券商报告",
-    "结合研报",
-    "分析",
-    "风险",
-    "优势",
-    "质量",
-    "评估",
-    "判断",
-]
-
-INDUSTRY_KNOWLEDGE_KEYWORDS = [
-    "医保",
-    "商保",
-    "集采",
-    "谈判",
-    "政策",
-    "目录",
-    "新增",
-    "北向资金",
-    "外资",
-    "行业",
-]
-
-FINANCIAL_DATA_KEYWORDS = [
-    "货币资金",
-    "总资产",
-    "资产负债表",
-    "现金流量",
-    "现金流",
-    "利润表",
-    "营业收入",
-    "净利润",
-    "负债",
-    "比率",
-    "毛利率",
-    "净利率",
-    "ROE",
-    "EPS",
-    "占比",
-    "比例",
-    "同比增长",
-    "环比",
-    "增速",
-    "金额",
-    "万元",
-    "亿元",
-    "应收账款",
-    "存货",
-    "在建工程",
-    "短期借款",
-    "总负债",
-    "经营性现金流",
-    "投资性现金流",
-    "融资性现金流",
-    "每股收益",
-    "净资产收益率",
-    "销售毛利率",
-    "销售净利率",
-    "扣非净利润",
-    "资产负债率",
-    "总资产同比",
-    "净现金流",
-    "财务",
-    "主营业务收入",
-    "营收",
-    "盈利",
-    "亏损",
-    "利润总额",
-    "经营性现金流量净额",
-    "资产减值",
-    "信用减值",
-    "折旧",
-    "摊销",
-    "营业总收入",
-    "增长率",
-    "费用率",
-]
-
-ATTRIBUTION_KEYWORDS = [
-    "原因",
-    "为什么",
-    "为何",
-    "导致",
-    "解释",
-    "归因",
-    "驱动因素",
-    "影响因素",
-    "背离",
-    "背离现象",
-    "差异原因",
-    "变动原因",
-    "下降原因",
-    "增长原因",
-    "变化原因",
-    "分析原因",
-    "涨跌原因",
-    "分析",
-    "风险",
-    "优势",
-    "质量",
-    "评估",
-    "判断",
-]
-
-MULTI_INTENT_ACTION_KEYWORDS = [
-    "查询",
-    "统计",
-    "计算",
-    "找出",
-    "列出",
-    "筛选",
-    "提取",
-    "对比",
-    "比较",
-    "分析",
-    "验证",
-    "说明",
-    "评价",
-    "评估",
-    "给出",
-]
-
-
-"""辅助函数"""
-
-
-def _is_attribution_with_financial_data(question: str):
-    has_attribution = any(kw in question for kw in ATTRIBUTION_KEYWORDS)
-    has_financial = any(kw in question for kw in FINANCIAL_DATA_KEYWORDS)
-    return has_attribution and has_financial
-
-
-def _get_task3_config():
-    """获取任务三提示词配置。"""
-    return settings.PROMPT_CONFIG.get_task3_config
-
-
-def _invoke_llm(
-    system_prompt: str,
-    user_prompt: str,
-    max_tokens: int = 8192,
-    temperature: float = 0.1,
-):
-    """调用大模型并返回文本响应。"""
-    logger.info("调用LLM: prompt_chars=%d", len(system_prompt) + len(user_prompt))
-    try:
-        model = get_model.build_chat_model(
-            max_tokens=max_tokens, temperature=temperature
-        )
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
-        response = model.invoke(messages)
-    except Exception as exc:
-        logger.error("LLM调用失败: error=%s", str(exc))
-        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "LLM调用失败") from exc
-
-    content = getattr(response, "content", None)
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        text_parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text_parts.append(str(block.get("text", "")))
-        return "".join(text_parts).strip()
-    return ""
-
-
-def _extract_json_from_response(response_text: str):
-    """从模型响应中提取 JSON 结构。"""
-    json_match = re.search(r"\{[\s\S]*\}", response_text)
-    if json_match:
-        try:
-            return json.loads(json_match.group())
-        except json.JSONDecodeError:
-            pass
-    try:
-        return json.loads(response_text)
-    except json.JSONDecodeError:
-        return None
 
 
 # ========== 公共入口函数 ==========
+
+def plan_task3_question(
+    question: str,
+    context: dict | None = None,
+    db: Session | None = None,
+):
+    """规划任务三问题并返回执行计划。"""
+    if db:
+        context = _ensure_context_resolved(question, context, db)
+
+    if _is_attribution_with_financial_data(question):
+        plan = _create_hybrid_plan(question, context, db)
+        logger.info("归因+财务混合型规划: question=%s, steps=%d", question[:50], len(plan.steps))
+        return plan
+
+    if _is_hybrid_question(question):
+        plan = _create_hybrid_plan(question, context, db)
+        logger.info("混合型规划: question=%s, steps=%d", question[:50], len(plan.steps))
+        return plan
+
+    if _is_knowledge_only_question(question):
+        plan = _create_knowledge_plan(question, context, db)
+        logger.info("知识库优先规划: question=%s, steps=%d", question[:50], len(plan.steps))
+        return plan
+
+    complexity = estimate_complexity(question)
+    logger.info("问题复杂度评估: question=%s, complexity=%s", question[:50], complexity)
+
+    if complexity == "low":
+        plan = _create_simple_plan(question, context)
+    else:
+        plan = create_execution_plan(question, context)
+
+    if db and complexity in ["medium", "high"]:
+        enriched_context = _enrich_context_from_db(plan.context, db)
+        plan.context = enriched_context
+
+    # 兜底：如果计划步骤数过少（<=2）但问题明显是多步骤/多意图，尝试用混合计划兜底
+    if len(plan.steps) <= 2 and _has_multiple_explicit_steps(question):
+        logger.warning(
+            "计划步骤过少但问题含多步骤标记，使用混合计划兜底: question=%s",
+            question[:50],
+        )
+        plan = _create_hybrid_plan(question, context, db)
+
+    return plan
+
+
+def execute_plan(
+    plan: ExecutionPlan,
+    db: Session,
+    stop_on_failure: bool = False,
+):
+    """执行任务三计划并返回执行轨迹。"""
+    from app.services.task3 import executor as services_task3_executor
+
+    is_valid, errors = validate_plan(plan)
+    if not is_valid:
+        raise ServiceException(
+            ErrorCode.AI_SERVICE_ERROR,
+            f"执行计划无效: {'; '.join(errors)}",
+        )
+
+    context: dict[str, Any] = dict(plan.context)
+    results: dict[str, StepResult] = {}
+    references: list[Reference] = []
+
+    completed_step_ids: set[str] = set()
+    failed_step_ids: set[str] = set()
+
+    max_iterations = len(plan.steps) * 2
+    iteration = 0
+
+    while len(completed_step_ids) + len(failed_step_ids) < len(plan.steps):
+        iteration += 1
+        if iteration > max_iterations:
+            logger.warning("执行调度超过最大迭代次数，终止执行")
+            break
+
+        executable_steps = get_next_executable_steps(
+            plan, completed_step_ids, failed_step_ids
+        )
+
+        if not executable_steps:
+            remaining = set(s.step_id for s in plan.steps) - completed_step_ids - failed_step_ids
+            if remaining:
+                logger.warning("存在无法执行的步骤: %s", remaining)
+                for step_id in remaining:
+                    step = plan.get_step(step_id)
+                    if step:
+                        result = StepResult(
+                            step_id=step_id,
+                            step_type=step.step_type,
+                            status=StepStatus.SKIPPED,
+                            output={},
+                            error_message="依赖步骤失败，跳过执行",
+                        )
+                        results[step_id] = result
+                        failed_step_ids.add(step_id)
+            break
+
+        for step in executable_steps:
+            result = services_task3_executor.execute_step(
+                step=step,
+                db=db,
+                plan=plan,
+                context=context,
+                results=results,
+                references=references,
+            )
+
+            if result.status == StepStatus.COMPLETED:
+                completed_step_ids.add(step.step_id)
+            else:
+                failed_step_ids.add(step.step_id)
+                if stop_on_failure:
+                    logger.warning("步骤执行失败，停止执行: step_id=%s", step.step_id)
+                    break
+
+        if stop_on_failure and failed_step_ids:
+            break
+
+    trace = services_task3_executor.build_execution_trace(
+        plan=plan,
+        results=results,
+        references=references,
+    )
+    logger.info(
+        "执行计划完成: steps=%d, completed=%d, failed=%d",
+        len(plan.steps),
+        len(completed_step_ids),
+        len(failed_step_ids),
+    )
+
+    return trace
+
+
+def process_task3_question(
+    question: str,
+    db: Session,
+    context: dict | None = None,
+):
+    """处理任务三问题并组装最终回答。"""
+    plan = plan_task3_question(question, context, db)
+
+    trace = execute_plan(plan, db)
+
+    answer = trace.plan.question
+    for result in trace.results:
+        if result.step_type == StepType.COMPOSE_ANSWER and result.status == StepStatus.COMPLETED:
+            if result.output.get("answer"):
+                answer = result.output["answer"]
+            break
+
+    from app.schemas.task3 import Task3AnswerContent
+
+    answer_content = Task3AnswerContent(
+        content=answer,
+        references=[],
+    )
+
+    if trace.references:
+        answer_content.references = [Reference(**r) for r in trace.references]
+
+    from app.schemas.task3 import Task3Response
+
+    sql = None
+    for result in trace.results:
+        if result.step_type == StepType.SQL_QUERY and result.status == StepStatus.COMPLETED:
+            sql = result.output.get("sql")
+            break
+
+    return Task3Response(
+        answer=answer_content,
+        sql=sql,
+        execution_trace=trace,
+    )
+
+
+def create_plan_response(question: str, context: dict | None, db: Session):
+    """生成执行计划并返回 Task3PlanResponse。"""
+    from app.schemas.task3 import Task3PlanResponse
+
+    plan = plan_task3_question(question, context, db)
+    return Task3PlanResponse(
+        plan=plan,
+        reasoning=f"已生成包含 {len(plan.steps)} 个步骤的执行计划",
+    )
+
+
+def plan_and_execute(question: str, context: dict | None, db: Session):
+    """生成计划并执行，返回 Task3ExecuteResponse。"""
+    from app.schemas.task3 import Task3ExecuteResponse
+
+    plan = plan_task3_question(question, context, db)
+    trace = execute_plan(plan, db)
+    return Task3ExecuteResponse(
+        plan=plan,
+        trace=trace,
+    )
+
+
+def plan_execute_and_verify(question: str, context: dict | None, db: Session):
+    """生成计划、执行并验证，返回 Task3VerifyResponse。"""
+    from app.schemas.task3 import Task3VerifyResponse
+    from app.services.task3.verifier import verify_execution_trace
+
+    plan = plan_task3_question(question, context, db)
+    trace = execute_plan(plan, db)
+    verification = verify_execution_trace(db, trace)
+    return Task3VerifyResponse(
+        answer=trace.final_answer,
+        verification=verification,
+        references=trace.references,
+    )
+
+"""辅助函数"""
 
 def analyze_question(question: str, context: dict | None = None):
     """分析问题意图并返回结构化结果。"""
@@ -392,13 +396,13 @@ def _create_default_plan(question: str):
 
 def _is_knowledge_only_question(question: str):
     """判断问题是否属于知识库检索优先场景。"""
-    return any(keyword.lower() in question.lower() for keyword in KNOWLEDGE_ONLY_KEYWORDS)
+    return any(keyword.lower() in question.lower() for keyword in constants_task3.KNOWLEDGE_ONLY_KEYWORDS)
 
 
 def _is_hybrid_question(question: str):
     """判断问题是否属于混合型（需要SQL查询+知识库检索）。"""
-    has_financial = any(kw in question for kw in FINANCIAL_DATA_KEYWORDS)
-    has_knowledge = any(kw in question for kw in KNOWLEDGE_ONLY_KEYWORDS)
+    has_financial = any(kw in question for kw in constants_task3.FINANCIAL_DATA_KEYWORDS)
+    has_knowledge = any(kw in question for kw in constants_task3.KNOWLEDGE_ONLY_KEYWORDS)
 
     # 明确包含"研报"、"研究报告"、"结合研报"等字样，直接判定为混合
     has_explicit_research = any(
@@ -410,7 +414,7 @@ def _is_hybrid_question(question: str):
 
 def _infer_doc_types_for_question(question: str):
     """根据问题内容推断文档类型过滤条件。"""
-    if any(keyword.lower() in question.lower() for keyword in INDUSTRY_KNOWLEDGE_KEYWORDS):
+    if any(keyword.lower() in question.lower() for keyword in constants_task3.INDUSTRY_KNOWLEDGE_KEYWORDS):
         return ["INDUSTRY_REPORT"]
     return ["RESEARCH_REPORT", "INDUSTRY_REPORT"]
 
@@ -456,86 +460,6 @@ def _resolve_stock_code_from_question(question: str, db: Session | None = None):
     return None
 
 
-def _extract_company_name_from_question(question: str):
-    """从问题文本中直接提取公司名称（不依赖数据库）。
-
-    当公司不在 company_basic_info 表中时，作为检索过滤的兜底手段。
-    """
-    import re
-
-    generic_company_keywords = [
-        "所有公司",
-        "全部公司",
-        "哪些公司",
-        "公司中",
-        "各公司",
-        "多家公司",
-        "行业内公司",
-        "中药公司",
-        "上市公司",
-    ]
-    if any(keyword in question for keyword in generic_company_keywords):
-        return None
-
-    # 只匹配常见的公司名称后缀（2字及以上），避免单字后缀误匹配
-    company_suffixes = (
-        "药业|集团|科技|股份|生物|医疗|医药|健康|制药|银行|保险|证券|基金"
-        "|地产|航空|电力|能源|化工|机械|电子|通信|传媒|食品|饮料|零售|物流"
-        "|汽车|钢铁|煤炭|石油|纺织|建筑|建材|家居|家电|计算机|软件|互联网"
-        "|新能源|新材料|环保|教育|旅游|酒店|农业|畜牧|渔业|矿业|冶金|水泥"
-        "|玻璃|造纸|印刷|包装|家具|服装|化妆品|珠宝|钟表|眼镜|乐器|体育"
-        "|文化|艺术|出版|广播|电视|电影|演艺|会展|咨询|法律|会计|审计|税务"
-        "|评估|检测|认证|担保|典当|拍卖|租赁|物业|园林|园艺|花卉|苗木|养殖"
-        "|种植|加工|制造|生产|贸易|商业|服务|餐饮|娱乐|休闲|保健|养老|护理"
-        "|康复|医美|口腔|眼科|骨科|肿瘤|心血管|内分泌|呼吸|消化|神经|精神"
-        "|皮肤|妇科|儿科|产科|体检|疫苗|血液|影像|检验|病理|药剂|中医|中药"
-        "|西药|原料药|制剂|器械|耗材|诊断|基因|细胞|组织|器官|移植|免疫"
-        "|血清|血浆|蛋白|抗体|激素|维生素|氨基酸|抗生素|化学药|生物药"
-        "|现代中药|经典名方|配方颗粒|饮片|中成药|保健品|保健食品|功能性食品"
-        "|特医食品|婴幼儿配方|乳制品|调味品|添加剂|饲料|肥料|农药|种子|种苗"
-        "|水产|海洋|林业|草原|湿地|土壤|水利|气象|地震|环境|生态|资源|矿产"
-        "|土地|岛屿|海岸|港口|航道|机场|铁路|公路|桥梁|隧道|地铁|轻轨|公交"
-        "|出租|客运|货运|仓储|配送|快递|邮政|电信|移动|联通|广电|网络|数据"
-        "|人工智能|区块链|物联网|大数据|云计算|边缘计算|量子|芯片|半导体"
-        "|集成电路|显示|面板|光伏|风电|核电|水电|火电|气电|热电|余热|储能"
-        "|氢能|生物质|污泥|污水|废气|固废|危废|医废|噪声|振动|辐射|放射性"
-        "|电磁|重金属|有机物|无机物|酸碱|盐类|油脂|涂料|染料|颜料|油墨"
-        "|胶粘剂|密封材料|绝缘材料|磁性材料|光学材料|纳米材料|超导材料"
-        "|复合材料|功能材料|智能材料|绿色材料|生物材料|医用材料|诊断试剂"
-        "|基因检测|测序|合成|编辑|克隆|干细胞|免疫细胞|细胞治疗|基因治疗"
-        "|抗体药物|重组蛋白|血液制品|诊断|器械|设备|仪器|仪表|工具|模具"
-        "|夹具|量具|刀具|磨具|砂轮|轴承|齿轮|链条|皮带|弹簧|紧固件|密封件"
-        "|液压件|气动件|电器|电机|变压器|开关|电缆|电线|光纤|光缆|天线|雷达"
-        "|导航|制导|遥控|遥测|遥感|传感|监测|监控|报警|消防|安防|安检|防伪"
-        "|溯源|追溯|追踪|定位|地图|地理|测绘|勘察|设计|施工|监理|运维|运营"
-        "|管理|平台|系统|软件|硬件|固件|中间件|数据库|操作系统|办公软件"
-        "|工业软件|嵌入式"
-    )
-
-    patterns = [
-        rf'([\u4e00-\u9fa5]{{2,6}}(?:{company_suffixes}))',
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, question)
-        if match:
-            candidate = match.group(1)
-            # 过滤明显不是公司名的误匹配（如包含"年"、"季度"、"所有"等）
-            noise_words = ["年", "季度", "所有", "第", "同比", "环比", "增长", "下降", "变化"]
-            if any(noise in candidate for noise in noise_words):
-                continue
-            return candidate
-
-    # 兜底：提取问题开头连续的中文词汇（通常是主语/公司名称）
-    match = re.match(r'([\u4e00-\u9fa5]{2,8})', question)
-    if match:
-        candidate = match.group(1)
-        noise_words = ["年", "季度", "所有", "第", "同比", "环比", "增长", "下降", "变化"]
-        if not any(noise in candidate for noise in noise_words):
-            return candidate
-
-    return None
-
 
 def _resolve_companies_from_question(question: str, db: Session | None = None):
     """从问题文本中解析所有提及的公司信息。"""
@@ -573,8 +497,8 @@ def _question_mentions_company(
 ):
     """判断问题是否命中公司标准名或别名。"""
     candidates = {stock_abbr, company_name}
-    if stock_abbr in COMPANY_ALIAS_MAP:
-        candidates.update(COMPANY_ALIAS_MAP[stock_abbr])
+    if stock_abbr in constants_task3.COMPANY_ALIAS_MAP:
+        candidates.update(constants_task3.COMPANY_ALIAS_MAP[stock_abbr])
 
     normalized_question = question.strip()
     for candidate in candidates:
@@ -874,53 +798,6 @@ def estimate_complexity(question: str):
         return "low"
 
 
-def plan_task3_question(
-    question: str,
-    context: dict | None = None,
-    db: Session | None = None,
-):
-    """规划任务三问题并返回执行计划。"""
-    if db:
-        context = _ensure_context_resolved(question, context, db)
-
-    if _is_attribution_with_financial_data(question):
-        plan = _create_hybrid_plan(question, context, db)
-        logger.info("归因+财务混合型规划: question=%s, steps=%d", question[:50], len(plan.steps))
-        return plan
-
-    if _is_hybrid_question(question):
-        plan = _create_hybrid_plan(question, context, db)
-        logger.info("混合型规划: question=%s, steps=%d", question[:50], len(plan.steps))
-        return plan
-
-    if _is_knowledge_only_question(question):
-        plan = _create_knowledge_plan(question, context, db)
-        logger.info("知识库优先规划: question=%s, steps=%d", question[:50], len(plan.steps))
-        return plan
-
-    complexity = estimate_complexity(question)
-    logger.info("问题复杂度评估: question=%s, complexity=%s", question[:50], complexity)
-
-    if complexity == "low":
-        plan = _create_simple_plan(question, context)
-    else:
-        plan = create_execution_plan(question, context)
-
-    if db and complexity in ["medium", "high"]:
-        enriched_context = _enrich_context_from_db(plan.context, db)
-        plan.context = enriched_context
-
-    # 兜底：如果计划步骤数过少（<=2）但问题明显是多步骤/多意图，尝试用混合计划兜底
-    if len(plan.steps) <= 2 and _has_multiple_explicit_steps(question):
-        logger.warning(
-            "计划步骤过少但问题含多步骤标记，使用混合计划兜底: question=%s",
-            question[:50],
-        )
-        plan = _create_hybrid_plan(question, context, db)
-
-    return plan
-
-
 def _has_multiple_explicit_steps(question: str):
     """检测问题是否包含显式的多步骤标记（如 ①②③④ 或 1. 2. 3. 4.）。"""
     step_markers = re.findall(r"[①②③④⑤⑥⑦⑧⑨⑩]|\d+\.", question)
@@ -993,7 +870,7 @@ def _count_question_clauses(question: str):
 
 def _count_multi_intent_actions(question: str):
     """统计题目中出现的核心动作词数量。"""
-    return sum(1 for keyword in MULTI_INTENT_ACTION_KEYWORDS if keyword in question)
+    return sum(1 for keyword in constants_task3.MULTI_INTENT_ACTION_KEYWORDS if keyword in question)
 
 
 def _enrich_context_from_db(context: dict, db: Session):
@@ -1089,170 +966,3 @@ def get_next_executable_steps(
     return executable
 
 
-def execute_plan(
-    plan: ExecutionPlan,
-    db: Session,
-    stop_on_failure: bool = False,
-):
-    """执行任务三计划并返回执行轨迹。"""
-    from app.services.task3 import executor as services_task3_executor
-
-    is_valid, errors = validate_plan(plan)
-    if not is_valid:
-        raise ServiceException(
-            ErrorCode.AI_SERVICE_ERROR,
-            f"执行计划无效: {'; '.join(errors)}",
-        )
-
-    context: dict[str, Any] = dict(plan.context)
-    results: dict[str, StepResult] = {}
-    references: list[Reference] = []
-
-    completed_step_ids: set[str] = set()
-    failed_step_ids: set[str] = set()
-
-    max_iterations = len(plan.steps) * 2
-    iteration = 0
-
-    while len(completed_step_ids) + len(failed_step_ids) < len(plan.steps):
-        iteration += 1
-        if iteration > max_iterations:
-            logger.warning("执行调度超过最大迭代次数，终止执行")
-            break
-
-        executable_steps = get_next_executable_steps(
-            plan, completed_step_ids, failed_step_ids
-        )
-
-        if not executable_steps:
-            remaining = set(s.step_id for s in plan.steps) - completed_step_ids - failed_step_ids
-            if remaining:
-                logger.warning("存在无法执行的步骤: %s", remaining)
-                for step_id in remaining:
-                    step = plan.get_step(step_id)
-                    if step:
-                        result = StepResult(
-                            step_id=step_id,
-                            step_type=step.step_type,
-                            status=StepStatus.SKIPPED,
-                            output={},
-                            error_message="依赖步骤失败，跳过执行",
-                        )
-                        results[step_id] = result
-                        failed_step_ids.add(step_id)
-            break
-
-        for step in executable_steps:
-            result = services_task3_executor.execute_step(
-                step=step,
-                db=db,
-                plan=plan,
-                context=context,
-                results=results,
-                references=references,
-            )
-
-            if result.status == StepStatus.COMPLETED:
-                completed_step_ids.add(step.step_id)
-            else:
-                failed_step_ids.add(step.step_id)
-                if stop_on_failure:
-                    logger.warning("步骤执行失败，停止执行: step_id=%s", step.step_id)
-                    break
-
-        if stop_on_failure and failed_step_ids:
-            break
-
-    trace = services_task3_executor.build_execution_trace(
-        plan=plan,
-        results=results,
-        references=references,
-    )
-    logger.info(
-        "执行计划完成: steps=%d, completed=%d, failed=%d",
-        len(plan.steps),
-        len(completed_step_ids),
-        len(failed_step_ids),
-    )
-
-    return trace
-
-
-def process_task3_question(
-    question: str,
-    db: Session,
-    context: dict | None = None,
-):
-    """处理任务三问题并组装最终回答。"""
-    plan = plan_task3_question(question, context, db)
-
-    trace = execute_plan(plan, db)
-
-    answer = trace.plan.question
-    for result in trace.results:
-        if result.step_type == StepType.COMPOSE_ANSWER and result.status == StepStatus.COMPLETED:
-            if result.output.get("answer"):
-                answer = result.output["answer"]
-            break
-
-    from app.schemas.task3 import Task3AnswerContent
-
-    answer_content = Task3AnswerContent(
-        content=answer,
-        references=[],
-    )
-
-    if trace.references:
-        answer_content.references = [Reference(**r) for r in trace.references]
-
-    from app.schemas.task3 import Task3Response
-
-    sql = None
-    for result in trace.results:
-        if result.step_type == StepType.SQL_QUERY and result.status == StepStatus.COMPLETED:
-            sql = result.output.get("sql")
-            break
-
-    return Task3Response(
-        answer=answer_content,
-        sql=sql,
-        execution_trace=trace,
-    )
-
-
-def create_plan_response(question: str, context: dict | None, db: Session):
-    """生成执行计划并返回 Task3PlanResponse。"""
-    from app.schemas.task3 import Task3PlanResponse
-
-    plan = plan_task3_question(question, context, db)
-    return Task3PlanResponse(
-        plan=plan,
-        reasoning=f"已生成包含 {len(plan.steps)} 个步骤的执行计划",
-    )
-
-
-def plan_and_execute(question: str, context: dict | None, db: Session):
-    """生成计划并执行，返回 Task3ExecuteResponse。"""
-    from app.schemas.task3 import Task3ExecuteResponse
-
-    plan = plan_task3_question(question, context, db)
-    trace = execute_plan(plan, db)
-    return Task3ExecuteResponse(
-        plan=plan,
-        trace=trace,
-    )
-
-
-def plan_execute_and_verify(question: str, context: dict | None, db: Session):
-    """生成计划、执行并验证，返回 Task3VerifyResponse。"""
-    from app.schemas.task3 import Task3VerifyResponse
-    from app.services.task3.verifier import verify_execution_trace
-
-    plan = plan_task3_question(question, context, db)
-    trace = execute_plan(plan, db)
-    verification = verify_execution_trace(db, trace)
-    return Task3VerifyResponse(
-        answer=trace.final_answer,
-        verification=verification,
-        references=trace.references,
-    )

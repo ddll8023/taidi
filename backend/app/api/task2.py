@@ -5,14 +5,16 @@ from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
+from app.schemas.common import ApiResponse
 from app.schemas.response import error, success
+from app.schemas import task2 as schemas_task2
 from app.services import task2 as services_task2
 from app.utils.exception import ServiceException
 
 router = APIRouter(prefix="/api/v1/task2", tags=["任务二工作台"])
 
 
-@router.get("/workspace", response_model=dict)
+@router.get("/workspace", response_model=ApiResponse[schemas_task2.Task2WorkspaceResponse])
 async def get_workspace(
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -24,7 +26,7 @@ async def get_workspace(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/workspace/import", response_model=dict)
+@router.post("/workspace/import", response_model=ApiResponse[schemas_task2.Task2ImportResponse])
 async def import_fujian4(
     file: Annotated[UploadFile, File(description="附件4文件")],
     db: Annotated[Session, Depends(get_db)],
@@ -37,7 +39,7 @@ async def import_fujian4(
         return error(code=e.code, message=e.message)
 
 
-@router.get("/questions", response_model=dict)
+@router.get("/questions", response_model=ApiResponse[schemas_task2.Task2QuestionListResponse])
 async def get_questions(
     db: Annotated[Session, Depends(get_db)],
     status: Annotated[int | None, Query(description="状态筛选：0待处理 1回答中 2已完成 3失败")] = None,
@@ -50,7 +52,7 @@ async def get_questions(
         return error(code=e.code, message=e.message)
 
 
-@router.get("/questions/{question_id}", response_model=dict)
+@router.get("/questions/{question_id}", response_model=ApiResponse[schemas_task2.Task2QuestionItemResponse])
 async def get_question_detail(
     question_id: Annotated[int, Path(description="题目ID")],
     db: Annotated[Session, Depends(get_db)],
@@ -63,7 +65,7 @@ async def get_question_detail(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/questions/{question_id}/answer", response_model=dict)
+@router.post("/questions/{question_id}/answer", response_model=ApiResponse[schemas_task2.AnswerResultResponse])
 async def answer_question(
     question_id: Annotated[int, Path(description="题目ID")],
     db: Annotated[Session, Depends(get_db)],
@@ -76,7 +78,7 @@ async def answer_question(
         return error(code=e.code, message=e.message)
 
 
-@router.delete("/questions/{question_id}/answer", response_model=dict)
+@router.delete("/questions/{question_id}/answer", response_model=ApiResponse[schemas_task2.DeleteAnswerResponse])
 async def delete_answer(
     question_id: Annotated[int, Path(description="题目ID")],
     db: Annotated[Session, Depends(get_db)],
@@ -89,7 +91,7 @@ async def delete_answer(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/questions/{question_id}/rerun", response_model=dict)
+@router.post("/questions/{question_id}/rerun", response_model=ApiResponse[schemas_task2.AnswerResultResponse])
 async def rerun_question(
     question_id: Annotated[int, Path(description="题目ID")],
     db: Annotated[Session, Depends(get_db)],
@@ -102,7 +104,7 @@ async def rerun_question(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/questions/batch-answer", response_model=dict)
+@router.post("/questions/batch-answer", response_model=ApiResponse[schemas_task2.BatchAnswerResponse])
 async def batch_answer(
     db: Annotated[Session, Depends(get_db)],
     scope: Annotated[str, Query(description="处理范围：all全部/unfinished未完成/failed失败")] = "unfinished",
@@ -115,7 +117,7 @@ async def batch_answer(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/export", response_model=dict)
+@router.post("/export", response_model=ApiResponse[schemas_task2.Task2ExportResultResponse])
 async def export_result(
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -127,7 +129,7 @@ async def export_result(
         return error(code=e.code, message=e.message)
 
 
-@router.get("/export/latest", response_model=dict)
+@router.get("/export/latest", response_model=ApiResponse[schemas_task2.Task2LatestExportInfoResponse])
 async def get_latest_export(
     db: Annotated[Session, Depends(get_db)],
 ):

@@ -26,8 +26,6 @@ from app.services.knowledge_base.chunk import (
     submit_and_run_all_pending_chunk,
     run_chunk_in_background,
     run_chunk_batch_in_background,
-    ChunkSubmitResult,
-    BatchChunkSubmitResult,
 )
 from app.services.knowledge_base.vectorize import (
     vectorize_chunks,
@@ -40,8 +38,6 @@ from app.services.knowledge_base.vectorize import (
     run_vectorize_in_background,
     run_vectorize_batch_in_background,
     get_processing_progress,
-    VectorizeSubmitResult,
-    BatchVectorizeSubmitResult,
 )
 from app.services.knowledge_base.search import (
     search_knowledge,
@@ -51,6 +47,10 @@ from app.services.knowledge_base.metadata import (
     get_init_status,
     get_knowledge_base_stats,
     get_documents_status_batch,
-    reload_metadata_cache,
     reset_vector_status,
+)
+from app.services.knowledge_base.helpers import (
+    clean_pdf_text,
+    get_metadata_map,
+    reload_metadata_cache,
 )

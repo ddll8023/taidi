@@ -4,6 +4,8 @@ from enum import IntEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# ========== 辅助类（Support）==========
+
 class ImportStatus(IntEnum):
     NOT_IMPORTED = 0
     IMPORTING = 1
@@ -17,6 +19,8 @@ class QuestionStatus(IntEnum):
     ANSWERED = 2
     FAILED = 3
 
+
+# ========== 响应类（Response）==========
 
 class Task2WorkspaceResponse(BaseModel):
     id: int = Field(..., description="工作台ID")
@@ -71,5 +75,80 @@ class Task2QuestionListResponse(BaseModel):
     pending_count: int = Field(0, description="待处理数量")
     answered_count: int = Field(0, description="已回答数量")
     failed_count: int = Field(0, description="失败数量")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task2QuestionStatsResponse(BaseModel):
+    """任务二题目状态统计"""
+    total: int = 0
+    pending: int = 0
+    answered: int = 0
+    failed: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task2ExportResultResponse(BaseModel):
+    """任务二导出结果响应"""
+    xlsx_path: str = Field(..., description="导出 Excel 文件路径")
+    json_path: str = Field(..., description="导出 JSON 文件路径")
+    total_questions: int = Field(..., description="题目总数")
+    answered_count: int = Field(0, description="已回答数量")
+    failed_count: int = Field(0, description="失败数量")
+    exported_at: str = Field(..., description="导出时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Task2LatestExportInfoResponse(BaseModel):
+    """任务二最近导出信息响应"""
+    xlsx_path: str = Field(..., description="最近导出文件路径")
+    exported_at: str | None = Field(None, description="最近导出时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AnswerResultResponse(BaseModel):
+    """单题回答结果"""
+    question_id: int
+    question_code: str
+    status: int
+    answer_json: list | None = None
+    sql_text: str | None = None
+    chart_type: str | None = None
+    image_paths: list | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeleteAnswerResponse(BaseModel):
+    """删除回答结果"""
+    question_id: int
+    question_code: str
+    status: int
+    message: str = "回答已删除"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BatchAnswerResultItem(BaseModel):
+    """批量回答单项结果"""
+    question_code: str
+    status: str
+    result: AnswerResultResponse | None = None
+    error: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BatchAnswerResponse(BaseModel):
+    """批量回答结果"""
+    total: int
+    processed: int
+    success: int
+    failed: int
+    message: str | None = None
+    results: list[BatchAnswerResultItem] | None = None
 
     model_config = ConfigDict(from_attributes=True)

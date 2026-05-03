@@ -1,66 +1,30 @@
 """知识库向量化处理、向量化任务提交与进度查询服务"""
 from datetime import datetime
 
+from sqlalchemy import func, select, update
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.database import get_background_db_session
+from app.db.database import commit_or_rollback, get_background_db_session
 from app.db.milvus import get_kb_collection
-from app.models.knowledge_chunk import (
-    CHUNK_VECTOR_STATUS_COMPLETED,
-    CHUNK_VECTOR_STATUS_FAILED,
-    CHUNK_VECTOR_STATUS_PENDING,
-    CHUNK_VECTOR_STATUS_PROCESSING,
-    KnowledgeChunk,
-)
-from app.models.knowledge_document import (
-    CHUNK_STATUS_COMPLETED,
-    CHUNK_STATUS_FAILED,
-    METADATA_STATUS_LOADED,
-    METADATA_STATUS_PDF_UPLOADED,
-    VECTOR_STATUS_FAILED,
-    VECTOR_STATUS_PENDING,
-    VECTOR_STATUS_PROCESSING,
-    VECTOR_STATUS_SUCCESS,
-    KnowledgeDocument,
-)
+from app.models import knowledge_chunk as models_knowledge_chunk
+from app.models import knowledge_document as models_knowledge_document
+from app.schemas import knowledge_base as schemas_knowledge_base
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 from app.utils.model_factory import get_model
+from app.constants import knowledge_base as constants_kb
 
 logger = setup_logger(__name__)
-
-EMBEDDING_BATCH_SIZE = 25  # DashScope 单次批量 Embedding 最大条数
-
-
-# 定义可重试的异常类型（网络错误、SSL错误）
-RETRYABLE_EXCEPTIONS = (
-    ConnectionError,
-    OSError,
-    Exception,  # 包含SSLError等网络异常
-)
-
-
-"""辅助函数"""
-
-
-@retry(
-    stop=stop_after_attempt(3),  # 最多重试3次
-    wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2s, 4s, 8s
-    retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
-    reraise=True,
-)
-def _embed_with_retry(embedding_model, text: str):
-    """带重试机制的embedding调用"""
-    return embedding_model.embed_query(text)
 
 
 # ========== 公共入口函数 ==========
 
 
 def get_vector_version():
+    """获取当前向量化版本标识"""
     return (
         f"{settings.EMBEDDING_MODEL}:"
         f"{settings.EMBEDDING_DIM}:"
@@ -76,29 +40,26 @@ def vectorize_chunks(
 ):
     """批量向量化切块：分批 Embedding + 批量 Milvus 写入"""
     logger.info(
-        "[vectorize_chunks] 开始向量化: chunk_ids=%s, batch_size=%d",
-        chunk_ids,
-        batch_size,
+        f"[vectorize_chunks] 开始向量化: chunk_ids={chunk_ids}, batch_size={batch_size}"
     )
 
-    # 查询待处理或正在处理的切块（支持PROCESSING状态，因为submit_batch_vectorize会先标记为PROCESSING）
-    query = db.query(KnowledgeChunk).filter(
-        KnowledgeChunk.vector_status.in_([
-            CHUNK_VECTOR_STATUS_PENDING,
-            CHUNK_VECTOR_STATUS_PROCESSING,
+    stmt = select(models_knowledge_chunk.KnowledgeChunk).where(
+        models_knowledge_chunk.KnowledgeChunk.vector_status.in_([
+            models_knowledge_chunk.CHUNK_VECTOR_STATUS_PENDING,
+            models_knowledge_chunk.CHUNK_VECTOR_STATUS_PROCESSING,
         ])
     )
     if chunk_ids:
-        query = query.filter(KnowledgeChunk.id.in_(chunk_ids))
+        stmt = stmt.where(models_knowledge_chunk.KnowledgeChunk.id.in_(chunk_ids))
     else:
-        query = query.limit(batch_size)
+        stmt = stmt.limit(batch_size)
 
-    chunks = query.all()
+    chunks = db.execute(stmt).scalars().all()
     if not chunks:
         logger.warning("[vectorize_chunks] 没有待向量化的切块")
-        return {"total": 0, "success": 0, "failed": 0, "errors": []}
+        return schemas_knowledge_base.VectorizeResultResponse(total=0, success=0, failed=0, errors=[])
 
-    logger.info("[vectorize_chunks] 找到 %d 个待处理切块", len(chunks))
+    logger.info(f"[vectorize_chunks] 找到 {len(chunks)} 个待处理切块")
 
     results = {"total": len(chunks), "success": 0, "failed": 0, "errors": []}
 
@@ -106,50 +67,46 @@ def vectorize_chunks(
     collection = get_kb_collection()
     vector_version = get_vector_version()
     logger.info(
-        "[vectorize_chunks] Milvus Collection 获取成功: name=%s, vector_version=%s",
-        collection.name,
-        vector_version,
+        f"[vectorize_chunks] Milvus Collection 获取成功: name={collection.name}, vector_version={vector_version}"
     )
 
     logger.info("[vectorize_chunks] 正在获取 Embedding 模型...")
     embedding_model = get_model.embedding_model
     logger.info("[vectorize_chunks] Embedding 模型获取成功")
 
-    # 标记所有切块为 PROCESSING
     for chunk in chunks:
-        chunk.vector_status = CHUNK_VECTOR_STATUS_PROCESSING
-    db.commit()
+        chunk.vector_status = models_knowledge_chunk.CHUNK_VECTOR_STATUS_PROCESSING
+    commit_or_rollback(db)
 
-    # 预加载文档信息（减少逐条查询）
     doc_ids = list(set(c.document_id for c in chunks))
     doc_map = {}
-    for doc in db.query(KnowledgeDocument).filter(KnowledgeDocument.id.in_(doc_ids)).all():
+    docs = db.execute(
+        select(models_knowledge_document.KnowledgeDocument).where(
+            models_knowledge_document.KnowledgeDocument.id.in_(doc_ids)
+        )
+    ).scalars().all()
+    for doc in docs:
         doc_map[doc.id] = doc
 
-    # 删除 Milvus 中旧向量
     chunk_id_list = [c.id for c in chunks]
     try:
         delete_expr = f'chunk_id in {chunk_id_list}'
         collection.delete(expr=delete_expr)
-        logger.info("[vectorize_chunks] 批量删除旧向量: count=%d", len(chunk_id_list))
+        logger.info(f"[vectorize_chunks] 批量删除旧向量: count={len(chunk_id_list)}")
     except Exception as del_err:
-        logger.warning("[vectorize_chunks] 批量删除旧向量失败（非阻塞）: %s", str(del_err))
+        logger.warning(f"[vectorize_chunks] 批量删除旧向量失败（非阻塞）: {str(del_err)}")
 
-    # 分批调用 Embedding API
-    succeeded: list[tuple[KnowledgeChunk, list[float]]] = []
-    for batch_start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
-        batch = chunks[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
+    succeeded: list[tuple[models_knowledge_chunk.KnowledgeChunk, list[float]]] = []
+    for batch_start in range(0, len(chunks), constants_kb.EMBEDDING_BATCH_SIZE):
+        batch = chunks[batch_start:batch_start + constants_kb.EMBEDDING_BATCH_SIZE]
         texts = [c.chunk_text for c in batch]
         logger.info(
-            "[vectorize_chunks] Embedding 批次 [%d-%d/%d]",
-            batch_start + 1,
-            min(batch_start + EMBEDDING_BATCH_SIZE, len(chunks)),
-            len(chunks),
+            f"[vectorize_chunks] Embedding 批次 [{batch_start + 1}-{min(batch_start + constants_kb.EMBEDDING_BATCH_SIZE, len(chunks))}/{len(chunks)}]"
         )
 
         try:
             embeddings = embedding_model.embed_documents(texts)
-            logger.info("[vectorize_chunks] Embedding 批次完成: 生成 %d 个向量", len(embeddings))
+            logger.info(f"[vectorize_chunks] Embedding 批次完成: 生成 {len(embeddings)} 个向量")
 
             for chunk, embedding in zip(batch, embeddings):
                 if not embedding or len(embedding) != settings.EMBEDDING_DIM:
@@ -160,9 +117,8 @@ def vectorize_chunks(
                 succeeded.append((chunk, embedding))
 
         except Exception as e:
-            # 整批失败时逐条重试，区分成功和失败
             logger.warning(
-                "[vectorize_chunks] 批量 Embedding 失败，逐条重试: %s", str(e)
+                f"[vectorize_chunks] 批量 Embedding 失败，逐条重试: {str(e)}"
             )
             for chunk in batch:
                 try:
@@ -174,21 +130,18 @@ def vectorize_chunks(
                         )
                     succeeded.append((chunk, embedding))
                 except Exception as single_err:
-                    chunk.vector_status = CHUNK_VECTOR_STATUS_FAILED
+                    chunk.vector_status = models_knowledge_chunk.CHUNK_VECTOR_STATUS_FAILED
                     chunk.vector_error_message = str(single_err)[:2000]
-                    db.commit()
+                    commit_or_rollback(db)
                     results["failed"] += 1
                     results["errors"].append(
                         {"chunk_id": chunk.id, "error": str(single_err)[:500]}
                     )
                     logger.error(
-                        "切块向量化失败: chunk_id=%d, error=%s",
-                        chunk.id,
-                        str(single_err),
+                        f"切块向量化失败: chunk_id={chunk.id}, error={str(single_err)}",
                         exc_info=True,
                     )
 
-    # 批量写入 Milvus
     if succeeded:
         all_insert_data = []
         for chunk, embedding in succeeded:
@@ -208,25 +161,21 @@ def vectorize_chunks(
             collection.insert(all_insert_data)
             collection.flush()
             logger.info(
-                "[vectorize_chunks] 批量写入 Milvus: collection=%s, count=%d",
-                collection.name,
-                len(all_insert_data),
+                f"[vectorize_chunks] 批量写入 Milvus: collection={collection.name}, count={len(all_insert_data)}"
             )
         except Exception as milvus_err:
-            logger.error("[vectorize_chunks] Milvus 批量写入失败: %s", str(milvus_err), exc_info=True)
-            # Milvus 写入失败，全部标记 FAILED
+            logger.error(f"[vectorize_chunks] Milvus 批量写入失败: {str(milvus_err)}", exc_info=True)
             for chunk, _ in succeeded:
-                chunk.vector_status = CHUNK_VECTOR_STATUS_FAILED
+                chunk.vector_status = models_knowledge_chunk.CHUNK_VECTOR_STATUS_FAILED
                 chunk.vector_error_message = f"Milvus写入失败: {str(milvus_err)[:1500]}"
                 results["failed"] += 1
                 results["errors"].append(
                     {"chunk_id": chunk.id, "error": f"Milvus写入失败: {str(milvus_err)[:500]}"}
                 )
-            db.commit()
+            commit_or_rollback(db)
             _update_document_vector_status(db, [c.document_id for c in chunks])
-            return results
+            return schemas_knowledge_base.VectorizeResultResponse(**results)
 
-        # 通过 chunk_id 查询 Milvus 获取真正的 auto_id（避免依赖 insert 返回的 primary_keys）
         inserted_chunk_ids = [c.id for c, _ in succeeded]
         try:
             id_lookup = collection.query(
@@ -234,278 +183,119 @@ def vectorize_chunks(
                 output_fields=["id", "chunk_id"],
                 limit=len(inserted_chunk_ids),
             )
-            # chunk_id → auto_id
             chunk_id_to_milvus_id = {r["chunk_id"]: r["id"] for r in id_lookup}
         except Exception as query_err:
-            logger.error("[vectorize_chunks] 查询 Milvus auto_id 失败: %s", str(query_err), exc_info=True)
-            # 查询失败，全部标记 FAILED
+            logger.error(f"[vectorize_chunks] 查询 Milvus auto_id 失败: {str(query_err)}", exc_info=True)
             for chunk, _ in succeeded:
-                chunk.vector_status = CHUNK_VECTOR_STATUS_FAILED
+                chunk.vector_status = models_knowledge_chunk.CHUNK_VECTOR_STATUS_FAILED
                 chunk.vector_error_message = f"查询Milvus auto_id失败: {str(query_err)[:1500]}"
                 results["failed"] += 1
                 results["errors"].append(
                     {"chunk_id": chunk.id, "error": f"查询Milvus auto_id失败: {str(query_err)[:500]}"}
                 )
-            db.commit()
+            commit_or_rollback(db)
             _update_document_vector_status(db, [c.document_id for c in chunks])
-            return results
+            return schemas_knowledge_base.VectorizeResultResponse(**results)
 
         if len(chunk_id_to_milvus_id) != len(succeeded):
             logger.warning(
-                "[vectorize_chunks] Milvus 返回 ID 数量异常: expected=%d, actual=%d",
-                len(succeeded),
-                len(chunk_id_to_milvus_id),
+                f"[vectorize_chunks] Milvus 返回 ID 数量异常: expected={len(succeeded)}, actual={len(chunk_id_to_milvus_id)}"
             )
 
-        # 更新成功的切块状态
         for chunk, _ in succeeded:
             milvus_id = chunk_id_to_milvus_id.get(chunk.id)
             if milvus_id is None:
-                # ID 缺失 → 标记为 FAILED（不能设为 COMPLETED + None，会导致假完成）
-                chunk.vector_status = CHUNK_VECTOR_STATUS_FAILED
+                chunk.vector_status = models_knowledge_chunk.CHUNK_VECTOR_STATUS_FAILED
                 chunk.vector_error_message = "Milvus写入成功但无法获取auto_id"
                 results["failed"] += 1
                 results["errors"].append(
                     {"chunk_id": chunk.id, "error": "无法获取Milvus auto_id"}
                 )
                 logger.error(
-                    "[vectorize_chunks] 无法获取 Milvus auto_id: chunk_id=%d", chunk.id
+                    f"[vectorize_chunks] 无法获取 Milvus auto_id: chunk_id={chunk.id}"
                 )
             else:
-                chunk.vector_status = CHUNK_VECTOR_STATUS_COMPLETED
+                chunk.vector_status = models_knowledge_chunk.CHUNK_VECTOR_STATUS_COMPLETED
                 chunk.milvus_id = milvus_id
                 results["success"] += 1
-        db.commit()
+        commit_or_rollback(db)
 
     _update_document_vector_status(db, [c.document_id for c in chunks])
 
     logger.info(
-        "批量向量化完成: total=%d, success=%d, failed=%d",
-        results["total"],
-        results["success"],
-        results["failed"],
+        f"批量向量化完成: total={results['total']}, success={results['success']}, failed={results['failed']}"
     )
-    return results
+    return schemas_knowledge_base.VectorizeResultResponse(**results)
 
 
 def vectorize_document(db: Session, document_id: int):
-    logger.info("[vectorize_document] 开始向量化文档: document_id=%d", document_id)
-    chunks = (
-        db.query(KnowledgeChunk)
-        .filter(
-            KnowledgeChunk.document_id == document_id,
-            KnowledgeChunk.vector_status.in_([
-                CHUNK_VECTOR_STATUS_PENDING,
-                CHUNK_VECTOR_STATUS_PROCESSING,
+    """向量化单个文档的所有待处理切块"""
+    logger.info(f"[vectorize_document] 开始向量化文档: document_id={document_id}")
+    chunks = db.execute(
+        select(models_knowledge_chunk.KnowledgeChunk).where(
+            models_knowledge_chunk.KnowledgeChunk.document_id == document_id,
+            models_knowledge_chunk.KnowledgeChunk.vector_status.in_([
+                models_knowledge_chunk.CHUNK_VECTOR_STATUS_PENDING,
+                models_knowledge_chunk.CHUNK_VECTOR_STATUS_PROCESSING,
             ]),
         )
-        .all()
-    )
+    ).scalars().all()
     if not chunks:
-        logger.warning("[vectorize_document] 文档没有待向量化的切块: document_id=%d", document_id)
-        return {"total": 0, "success": 0, "failed": 0, "errors": []}
+        logger.warning(f"[vectorize_document] 文档没有待向量化的切块: document_id={document_id}")
+        return schemas_knowledge_base.VectorizeResultResponse(total=0, success=0, failed=0, errors=[])
 
-    logger.info("[vectorize_document] 文档待处理切块数: %d", len(chunks))
+    logger.info(f"[vectorize_document] 文档待处理切块数: {len(chunks)}")
 
     return vectorize_chunks(db, chunk_ids=[c.id for c in chunks])
 
 
-"""辅助函数"""
-
-
-def _reset_processing_chunks_to_pending(
-    db: Session,
-    *,
-    chunk_ids: list[int] | None = None,
-    document_id: int | None = None,
-):
-    """将遗留的 PROCESSING 切块重置为 PENDING，并同步刷新文档状态。"""
-    query = db.query(KnowledgeChunk).filter(
-        KnowledgeChunk.vector_status == CHUNK_VECTOR_STATUS_PROCESSING
-    )
-
-    if chunk_ids is not None:
-        if not chunk_ids:
-            return {"reset_count": 0, "document_ids": []}
-        query = query.filter(KnowledgeChunk.id.in_(chunk_ids))
-
-    if document_id is not None:
-        query = query.filter(KnowledgeChunk.document_id == document_id)
-
-    chunks = query.all()
-    if not chunks:
-        return {"reset_count": 0, "document_ids": []}
-
-    target_doc_ids = sorted(set(chunk.document_id for chunk in chunks))
-    target_chunk_ids = [chunk.id for chunk in chunks]
-
-    (
-        db.query(KnowledgeChunk)
-        .filter(KnowledgeChunk.id.in_(target_chunk_ids))
-        .update(
-            {
-                "vector_status": CHUNK_VECTOR_STATUS_PENDING,
-                "updated_at": datetime.now(),
-            },
-            synchronize_session=False,
-        )
-    )
-    db.commit()
-
-    _update_document_vector_status(db, target_doc_ids)
-
-    logger.info(
-        "[_reset_processing_chunks_to_pending] 已重置遗留状态: chunk_count=%d, document_count=%d",
-        len(target_chunk_ids),
-        len(target_doc_ids),
-    )
-    return {
-        "reset_count": len(target_chunk_ids),
-        "document_ids": target_doc_ids,
-    }
-
-
-def _update_document_vector_status(db: Session, document_ids: list[int]):
-    """更新文档的向量状态"""
-    for doc_id in set(document_ids):
-        doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == doc_id).first()
-        if not doc:
-            continue
-
-        total_chunks = (
-            db.query(KnowledgeChunk)
-            .filter(KnowledgeChunk.document_id == doc_id)
-            .count()
-        )
-        if total_chunks == 0:
-            continue
-
-        # 统计各状态切块数量
-        completed_chunks = (
-            db.query(KnowledgeChunk)
-            .filter(
-                KnowledgeChunk.document_id == doc_id,
-                KnowledgeChunk.vector_status == CHUNK_VECTOR_STATUS_COMPLETED,
-            )
-            .count()
-        )
-        failed_chunks = (
-            db.query(KnowledgeChunk)
-            .filter(
-                KnowledgeChunk.document_id == doc_id,
-                KnowledgeChunk.vector_status == CHUNK_VECTOR_STATUS_FAILED,
-            )
-            .count()
-        )
-        processing_chunks = (
-            db.query(KnowledgeChunk)
-            .filter(
-                KnowledgeChunk.document_id == doc_id,
-                KnowledgeChunk.vector_status == CHUNK_VECTOR_STATUS_PROCESSING,
-            )
-            .count()
-        )
-        pending_chunks = (
-            db.query(KnowledgeChunk)
-            .filter(
-                KnowledgeChunk.document_id == doc_id,
-                KnowledgeChunk.vector_status == CHUNK_VECTOR_STATUS_PENDING,
-            )
-            .count()
-        )
-
-        if processing_chunks > 0:
-            doc.vector_status = VECTOR_STATUS_PROCESSING
-            doc.vectorized_at = None
-            logger.debug(
-                "[_update_document_vector_status] 文档状态更新: doc_id=%d, status=PROCESSING (processing=%d)",
-                doc_id,
-                processing_chunks,
-            )
-        elif failed_chunks > 0:
-            doc.vector_status = VECTOR_STATUS_FAILED
-            doc.vectorized_at = None
-            logger.info(
-                "[_update_document_vector_status] 文档状态更新: doc_id=%d, status=FAILED (failed=%d, completed=%d)",
-                doc_id,
-                failed_chunks,
-                completed_chunks,
-            )
-        elif completed_chunks == total_chunks:
-            doc.vector_status = VECTOR_STATUS_SUCCESS
-            doc.vectorized_at = datetime.now()
-            logger.info(
-                "[_update_document_vector_status] 文档状态更新: doc_id=%d, status=SUCCESS (completed=%d)",
-                doc_id,
-                completed_chunks,
-            )
-        elif pending_chunks > 0:
-            doc.vector_status = VECTOR_STATUS_PENDING
-            doc.vectorized_at = None
-            logger.debug(
-                "[_update_document_vector_status] 文档状态更新: doc_id=%d, status=PENDING (pending=%d, completed=%d)",
-                doc_id,
-                pending_chunks,
-                completed_chunks,
-            )
-        else:
-            logger.warning(
-                "[_update_document_vector_status] 文档状态未更新: doc_id=%d, total=%d, completed=%d, failed=%d, processing=%d, pending=%d",
-                doc_id,
-                total_chunks,
-                completed_chunks,
-                failed_chunks,
-                processing_chunks,
-                pending_chunks,
-            )
-
-        doc.vector_model = settings.EMBEDDING_MODEL
-        doc.vector_dim = settings.EMBEDDING_DIM
-        doc.vector_version = get_vector_version()
-        db.commit()
-
-
 def get_processing_progress(db: Session):
-    total_documents = db.query(KnowledgeDocument).count()
+    """获取向量化处理进度统计"""
+    DocModel = models_knowledge_document.KnowledgeDocument
 
-    metadata_loaded = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.metadata_status >= METADATA_STATUS_LOADED
-    ).count()
+    total_documents = db.scalar(select(func.count(DocModel.id)))
 
-    pdf_uploaded = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.metadata_status == METADATA_STATUS_PDF_UPLOADED
-    ).count()
+    metadata_loaded = db.scalar(
+        select(func.count(DocModel.id)).where(DocModel.metadata_status >= models_knowledge_document.METADATA_STATUS_LOADED)
+    )
 
-    chunked = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.chunk_status == CHUNK_STATUS_COMPLETED
-    ).count()
+    pdf_uploaded = db.scalar(
+        select(func.count(DocModel.id)).where(DocModel.metadata_status == models_knowledge_document.METADATA_STATUS_PDF_UPLOADED)
+    )
 
-    vectorized = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.vector_status == VECTOR_STATUS_SUCCESS
-    ).count()
+    chunked = db.scalar(
+        select(func.count(DocModel.id)).where(DocModel.chunk_status == models_knowledge_document.CHUNK_STATUS_COMPLETED)
+    )
 
-    pending_pdf_upload = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.metadata_status == METADATA_STATUS_LOADED
-    ).count()
+    vectorized = db.scalar(
+        select(func.count(DocModel.id)).where(DocModel.vector_status == models_knowledge_document.VECTOR_STATUS_SUCCESS)
+    )
 
-    pending_vectorize = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.chunk_status == CHUNK_STATUS_COMPLETED,
-        KnowledgeDocument.vector_status == VECTOR_STATUS_PENDING,
-    ).count()
+    pending_pdf_upload = db.scalar(
+        select(func.count(DocModel.id)).where(DocModel.metadata_status == models_knowledge_document.METADATA_STATUS_LOADED)
+    )
 
-    failed_chunk = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.chunk_status == CHUNK_STATUS_FAILED
-    ).count()
+    pending_vectorize = db.scalar(
+        select(func.count(DocModel.id)).where(
+            DocModel.chunk_status == models_knowledge_document.CHUNK_STATUS_COMPLETED,
+            DocModel.vector_status == models_knowledge_document.VECTOR_STATUS_PENDING,
+        )
+    )
 
-    failed_vectorize = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.vector_status == VECTOR_STATUS_FAILED
-    ).count()
+    failed_chunk = db.scalar(
+        select(func.count(DocModel.id)).where(DocModel.chunk_status == models_knowledge_document.CHUNK_STATUS_FAILED)
+    )
+
+    failed_vectorize = db.scalar(
+        select(func.count(DocModel.id)).where(DocModel.vector_status == models_knowledge_document.VECTOR_STATUS_FAILED)
+    )
 
     progress_percentage = round(pdf_uploaded / total_documents * 100, 2) if total_documents > 0 else 0.0
 
-    recent_processed = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.metadata_status == METADATA_STATUS_PDF_UPLOADED
-    ).order_by(KnowledgeDocument.updated_at.desc()).limit(10).all()
+    recent_processed = db.execute(
+        select(DocModel).where(DocModel.metadata_status == models_knowledge_document.METADATA_STATUS_PDF_UPLOADED)
+        .order_by(DocModel.updated_at.desc()).limit(10)
+    ).scalars().all()
 
     return {
         "total_documents": total_documents,
@@ -524,40 +314,12 @@ def get_processing_progress(db: Session):
                 "id": doc.id,
                 "title": doc.title,
                 "doc_type": doc.doc_type,
-                "status": "chunked" if doc.chunk_status == CHUNK_STATUS_COMPLETED else "failed",
+                "status": "chunked" if doc.chunk_status == models_knowledge_document.CHUNK_STATUS_COMPLETED else "failed",
                 "updated_at": doc.updated_at.strftime("%Y-%m-%d %H:%M:%S") if doc.updated_at else "",
             }
             for doc in recent_processed
         ],
     }
-
-
-class VectorizeSubmitResult:
-    def __init__(self, document_id: int, status: str, message: str, total_chunks: int = 0):
-        self.document_id = document_id
-        self.status = status
-        self.message = message
-        self.total_chunks = total_chunks
-
-    def to_dict(self):
-        return {
-            "document_id": self.document_id,
-            "status": self.status,
-            "message": self.message,
-            "total_chunks": self.total_chunks,
-        }
-
-
-class BatchVectorizeSubmitResult:
-    def __init__(self):
-        self.submitted_count: int = 0
-        self.chunk_ids: list[int] = []
-
-    def to_dict(self):
-        return {
-            "submitted": self.submitted_count,
-            "message": f"已提交{self.submitted_count}个切块的向量化任务",
-        }
 
 
 def submit_and_run_vectorize_task(
@@ -576,10 +338,10 @@ def submit_and_run_batch_vectorize(
     db: Session, batch_size: int, force: bool, background_tasks
 ):
     """提交批量向量化任务并注册后台执行"""
-    result = submit_batch_vectorize(db, batch_size, force)
-    if result.submitted_count > 0:
+    result, chunk_ids = submit_batch_vectorize(db, batch_size, force)
+    if result.submitted > 0:
         background_tasks.add_task(
-            run_vectorize_batch_in_background, batch_size, result.chunk_ids
+            run_vectorize_batch_in_background, batch_size, chunk_ids
         )
     return result
 
@@ -588,52 +350,54 @@ def submit_vectorize_task(
     db: Session,
     document_id: int,
     force: bool = False,
-) -> VectorizeSubmitResult:
+):
     """提交单个文档的向量化任务"""
-    doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+    doc = db.scalar(select(models_knowledge_document.KnowledgeDocument).where(models_knowledge_document.KnowledgeDocument.id == document_id))
     if doc is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"文档不存在: id={document_id}")
 
-    if doc.chunk_status != CHUNK_STATUS_COMPLETED:
+    if doc.chunk_status != models_knowledge_document.CHUNK_STATUS_COMPLETED:
         raise ServiceException(ErrorCode.PARAM_ERROR, "文档尚未完成切块，无法向量化")
 
     if force:
         reset_count = (
-            db.query(KnowledgeChunk)
-            .filter(
-                KnowledgeChunk.document_id == document_id,
-                KnowledgeChunk.vector_status.in_([
-                    CHUNK_VECTOR_STATUS_FAILED,
-                    CHUNK_VECTOR_STATUS_COMPLETED,
-                ]),
-            )
-            .update({"vector_status": CHUNK_VECTOR_STATUS_PENDING}, synchronize_session=False)
+            db.execute(
+                update(models_knowledge_chunk.KnowledgeChunk)
+                .where(
+                    models_knowledge_chunk.KnowledgeChunk.document_id == document_id,
+                    models_knowledge_chunk.KnowledgeChunk.vector_status.in_([
+                        models_knowledge_chunk.CHUNK_VECTOR_STATUS_FAILED,
+                        models_knowledge_chunk.CHUNK_VECTOR_STATUS_COMPLETED,
+                    ]),
+                )
+                .values(vector_status=models_knowledge_chunk.CHUNK_VECTOR_STATUS_PENDING)
+            ).rowcount
         )
-        doc.vector_status = VECTOR_STATUS_PENDING
-        db.commit()
+        doc.vector_status = models_knowledge_document.VECTOR_STATUS_PENDING
+        commit_or_rollback(db)
         logger.info(
-            "[submit_vectorize_task] 强制重置切块状态: document_id=%d, reset_count=%d",
-            document_id,
-            reset_count,
+            f"[submit_vectorize_task] 强制重置切块状态: document_id={document_id}, reset_count={reset_count}"
         )
 
-    chunk_count = db.query(KnowledgeChunk).filter(
-        KnowledgeChunk.document_id == document_id,
-        KnowledgeChunk.vector_status == CHUNK_VECTOR_STATUS_PENDING,
-    ).count()
+    chunk_count = db.scalar(
+        select(func.count()).select_from(models_knowledge_chunk.KnowledgeChunk).where(
+            models_knowledge_chunk.KnowledgeChunk.document_id == document_id,
+            models_knowledge_chunk.KnowledgeChunk.vector_status == models_knowledge_chunk.CHUNK_VECTOR_STATUS_PENDING,
+        )
+    )
 
     if chunk_count == 0:
-        return VectorizeSubmitResult(
+        return schemas_knowledge_base.VectorizeSubmitResponse(
             document_id=document_id,
             status="skipped",
             message="没有待向量化的切块",
             total_chunks=0,
         )
 
-    doc.vector_status = VECTOR_STATUS_PROCESSING
-    db.commit()
+    doc.vector_status = models_knowledge_document.VECTOR_STATUS_PROCESSING
+    commit_or_rollback(db)
 
-    return VectorizeSubmitResult(
+    return schemas_knowledge_base.VectorizeSubmitResponse(
         document_id=document_id,
         status="processing",
         message="向量化任务已提交",
@@ -645,60 +409,59 @@ def submit_batch_vectorize(
     db: Session,
     batch_size: int = 20,
     force: bool = False,
-) -> BatchVectorizeSubmitResult:
+):
     """提交批量向量化任务"""
     if force:
         reset_count = (
-            db.query(KnowledgeChunk)
-            .filter(
-                KnowledgeChunk.vector_status.in_([
-                    CHUNK_VECTOR_STATUS_FAILED,
-                    CHUNK_VECTOR_STATUS_COMPLETED,
-                ]),
-            )
-            .update({"vector_status": CHUNK_VECTOR_STATUS_PENDING}, synchronize_session=False)
+            db.execute(
+                update(models_knowledge_chunk.KnowledgeChunk)
+                .where(
+                    models_knowledge_chunk.KnowledgeChunk.vector_status.in_([
+                        models_knowledge_chunk.CHUNK_VECTOR_STATUS_FAILED,
+                        models_knowledge_chunk.CHUNK_VECTOR_STATUS_COMPLETED,
+                    ]),
+                )
+                .values(vector_status=models_knowledge_chunk.CHUNK_VECTOR_STATUS_PENDING)
+            ).rowcount
         )
-        db.commit()
+        commit_or_rollback(db)
         logger.info(
-            "[submit_batch_vectorize] 强制重置所有失败/完成切块: reset_count=%d",
-            reset_count,
+            f"[submit_batch_vectorize] 强制重置所有失败/完成切块: reset_count={reset_count}"
         )
 
-    # 获取待处理的切块
-    pending_chunks = db.query(KnowledgeChunk).filter(
-        KnowledgeChunk.vector_status == CHUNK_VECTOR_STATUS_PENDING
-    ).limit(batch_size * 10).all()
+    pending_chunks = db.execute(
+        select(models_knowledge_chunk.KnowledgeChunk).where(
+            models_knowledge_chunk.KnowledgeChunk.vector_status == models_knowledge_chunk.CHUNK_VECTOR_STATUS_PENDING
+        ).limit(batch_size * 10)
+    ).scalars().all()
 
     if not pending_chunks:
-        result = BatchVectorizeSubmitResult()
-        result.submitted_count = 0
-        return result
+        return schemas_knowledge_base.BatchVectorizeSubmitResponse(submitted=0, message="没有待处理的切块")
 
-    # 立即将切块状态标记为 PROCESSING
     chunk_ids = [c.id for c in pending_chunks]
-    db.query(KnowledgeChunk).filter(
-        KnowledgeChunk.id.in_(chunk_ids)
-    ).update({"vector_status": CHUNK_VECTOR_STATUS_PROCESSING}, synchronize_session=False)
-
-    # 立即将相关文档状态标记为 PROCESSING
-    document_ids = list(set([c.document_id for c in pending_chunks]))
-    db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.id.in_(document_ids)
-    ).update({"vector_status": VECTOR_STATUS_PROCESSING}, synchronize_session=False)
-
-    db.commit()
-
-    logger.info(
-        "[submit_batch_vectorize] 立即更新状态: chunk_count=%d, document_count=%d",
-        len(chunk_ids),
-        len(document_ids),
+    db.execute(
+        update(models_knowledge_chunk.KnowledgeChunk).where(
+            models_knowledge_chunk.KnowledgeChunk.id.in_(chunk_ids)
+        ).values(vector_status=models_knowledge_chunk.CHUNK_VECTOR_STATUS_PROCESSING)
     )
 
-    result = BatchVectorizeSubmitResult()
-    result.submitted_count = len(chunk_ids)
-    result.chunk_ids = chunk_ids
+    document_ids = list(set([c.document_id for c in pending_chunks]))
+    db.execute(
+        update(models_knowledge_document.KnowledgeDocument).where(
+            models_knowledge_document.KnowledgeDocument.id.in_(document_ids)
+        ).values(vector_status=models_knowledge_document.VECTOR_STATUS_PROCESSING)
+    )
 
-    return result
+    commit_or_rollback(db)
+
+    logger.info(
+        f"[submit_batch_vectorize] 立即更新状态: chunk_count={len(chunk_ids)}, document_count={len(document_ids)}"
+    )
+
+    return schemas_knowledge_base.BatchVectorizeSubmitResponse(
+        submitted=len(chunk_ids),
+        message=f"已提交{len(chunk_ids)}个切块的向量化任务",
+    ), chunk_ids
 
 
 def run_vectorize_in_background(document_id: int, batch_size: int = 20):
@@ -715,15 +478,11 @@ def run_vectorize_in_background(document_id: int, batch_size: int = 20):
                 document_id=document_id,
             )
             logger.info(
-                "[run_vectorize_in_background] 已回滚遗留状态: document_id=%d, reset_count=%d",
-                document_id,
-                repair_result["reset_count"],
+                f"[run_vectorize_in_background] 已回滚遗留状态: document_id={document_id}, reset_count={repair_result['reset_count']}"
             )
         except Exception as repair_err:
             logger.error(
-                "[run_vectorize_in_background] 回滚遗留状态失败: document_id=%d, error=%s",
-                document_id,
-                repair_err,
+                f"[run_vectorize_in_background] 回滚遗留状态失败: document_id={document_id}, error={repair_err}"
             )
     finally:
         db.close()
@@ -743,14 +502,147 @@ def run_vectorize_batch_in_background(batch_size: int = 20, chunk_ids: list[int]
                 chunk_ids=chunk_ids,
             )
             logger.info(
-                "[run_vectorize_batch_in_background] 已回滚遗留状态: reset_count=%d, document_count=%d",
-                repair_result["reset_count"],
-                len(repair_result["document_ids"]),
+                f"[run_vectorize_batch_in_background] 已回滚遗留状态: reset_count={repair_result['reset_count']}, document_count={len(repair_result['document_ids'])}"
             )
         except Exception as repair_err:
             logger.error(
-                "[run_vectorize_batch_in_background] 回滚遗留状态失败: error=%s",
-                repair_err,
+                f"[run_vectorize_batch_in_background] 回滚遗留状态失败: error={repair_err}"
             )
     finally:
         db.close()
+
+
+"""辅助函数"""
+
+
+def _reset_processing_chunks_to_pending(
+    db: Session,
+    *,
+    chunk_ids: list[int] | None = None,
+    document_id: int | None = None,
+):
+    """将遗留的 PROCESSING 切块重置为 PENDING，并同步刷新文档状态。"""
+    stmt = select(models_knowledge_chunk.KnowledgeChunk).where(
+        models_knowledge_chunk.KnowledgeChunk.vector_status == models_knowledge_chunk.CHUNK_VECTOR_STATUS_PROCESSING
+    )
+
+    if chunk_ids is not None:
+        if not chunk_ids:
+            return {"reset_count": 0, "document_ids": []}
+        stmt = stmt.where(models_knowledge_chunk.KnowledgeChunk.id.in_(chunk_ids))
+
+    if document_id is not None:
+        stmt = stmt.where(models_knowledge_chunk.KnowledgeChunk.document_id == document_id)
+
+    chunks = db.execute(stmt).scalars().all()
+    if not chunks:
+        return {"reset_count": 0, "document_ids": []}
+
+    target_doc_ids = sorted(set(chunk.document_id for chunk in chunks))
+    target_chunk_ids = [chunk.id for chunk in chunks]
+
+    db.execute(
+        update(models_knowledge_chunk.KnowledgeChunk)
+        .where(models_knowledge_chunk.KnowledgeChunk.id.in_(target_chunk_ids))
+        .values(
+            vector_status=models_knowledge_chunk.CHUNK_VECTOR_STATUS_PENDING,
+            updated_at=datetime.now(),
+        )
+    )
+    commit_or_rollback(db)
+
+    _update_document_vector_status(db, target_doc_ids)
+
+    logger.info(
+        f"[_reset_processing_chunks_to_pending] 已重置遗留状态: chunk_count={len(target_chunk_ids)}, document_count={len(target_doc_ids)}"
+    )
+    return {
+        "reset_count": len(target_chunk_ids),
+        "document_ids": target_doc_ids,
+    }
+
+
+def _update_document_vector_status(db: Session, document_ids: list[int]):
+    """更新文档的向量状态"""
+    for doc_id in set(document_ids):
+        doc = db.scalar(select(models_knowledge_document.KnowledgeDocument).where(models_knowledge_document.KnowledgeDocument.id == doc_id))
+        if not doc:
+            continue
+
+        ChunkModel = models_knowledge_chunk.KnowledgeChunk
+
+        total_chunks = db.scalar(
+            select(func.count(ChunkModel.id)).where(ChunkModel.document_id == doc_id)
+        )
+        if total_chunks == 0:
+            continue
+
+        completed_chunks = db.scalar(
+            select(func.count(ChunkModel.id)).where(
+                ChunkModel.document_id == doc_id,
+                ChunkModel.vector_status == models_knowledge_chunk.CHUNK_VECTOR_STATUS_COMPLETED,
+            )
+        )
+        failed_chunks = db.scalar(
+            select(func.count(ChunkModel.id)).where(
+                ChunkModel.document_id == doc_id,
+                ChunkModel.vector_status == models_knowledge_chunk.CHUNK_VECTOR_STATUS_FAILED,
+            )
+        )
+        processing_chunks = db.scalar(
+            select(func.count(ChunkModel.id)).where(
+                ChunkModel.document_id == doc_id,
+                ChunkModel.vector_status == models_knowledge_chunk.CHUNK_VECTOR_STATUS_PROCESSING,
+            )
+        )
+        pending_chunks = db.scalar(
+            select(func.count(ChunkModel.id)).where(
+                ChunkModel.document_id == doc_id,
+                ChunkModel.vector_status == models_knowledge_chunk.CHUNK_VECTOR_STATUS_PENDING,
+            )
+        )
+
+        if processing_chunks > 0:
+            doc.vector_status = models_knowledge_document.VECTOR_STATUS_PROCESSING
+            doc.vectorized_at = None
+            logger.debug(
+                f"[_update_document_vector_status] 文档状态更新: doc_id={doc_id}, status=PROCESSING (processing={processing_chunks})"
+            )
+        elif failed_chunks > 0:
+            doc.vector_status = models_knowledge_document.VECTOR_STATUS_FAILED
+            doc.vectorized_at = None
+            logger.info(
+                f"[_update_document_vector_status] 文档状态更新: doc_id={doc_id}, status=FAILED (failed={failed_chunks}, completed={completed_chunks})"
+            )
+        elif completed_chunks == total_chunks:
+            doc.vector_status = models_knowledge_document.VECTOR_STATUS_SUCCESS
+            doc.vectorized_at = datetime.now()
+            logger.info(
+                f"[_update_document_vector_status] 文档状态更新: doc_id={doc_id}, status=SUCCESS (completed={completed_chunks})"
+            )
+        elif pending_chunks > 0:
+            doc.vector_status = models_knowledge_document.VECTOR_STATUS_PENDING
+            doc.vectorized_at = None
+            logger.debug(
+                f"[_update_document_vector_status] 文档状态更新: doc_id={doc_id}, status=PENDING (pending={pending_chunks}, completed={completed_chunks})"
+            )
+        else:
+            logger.warning(
+                f"[_update_document_vector_status] 文档状态未更新: doc_id={doc_id}, total={total_chunks}, completed={completed_chunks}, failed={failed_chunks}, processing={processing_chunks}, pending={pending_chunks}"
+            )
+
+        doc.vector_model = settings.EMBEDDING_MODEL
+        doc.vector_dim = settings.EMBEDDING_DIM
+        doc.vector_version = get_vector_version()
+        commit_or_rollback(db)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(constants_kb.RETRYABLE_EXCEPTIONS),
+    reraise=True,
+)
+def _embed_with_retry(embedding_model, text: str):
+    """带重试机制的embedding调用"""
+    return embedding_model.embed_query(text)

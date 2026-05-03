@@ -16,6 +16,7 @@ from app.schemas.task3 import (
     Task3SingleExportResponse,
     Task3WorkspaceExportResponse,
 )
+from app.services.task3.helpers import _parse_question_rounds
 from app.services.task3.planner import process_task3_question
 from app.services.task3.verifier import verify_answer_quality
 from app.utils.exception import ServiceException
@@ -418,33 +419,6 @@ def get_latest_export_info(db: Session):
 
 
 """辅助函数"""
-
-
-def _parse_question_rounds(question_value):
-    """解析题目文本为统一的轮次结构。"""
-    if isinstance(question_value, list):
-        parsed = question_value
-    else:
-        try:
-            parsed = json.loads(question_value)
-        except (json.JSONDecodeError, TypeError):
-            parsed = [{"Q": str(question_value or "")}]
-
-    if not isinstance(parsed, list):
-        parsed = [{"Q": str(parsed)}]
-
-    rounds = []
-    for item in parsed:
-        if isinstance(item, dict):
-            q_text = str(item.get("Q", "")).strip()
-        else:
-            q_text = str(item).strip()
-        if q_text:
-            rounds.append({"Q": q_text})
-
-    if not rounds:
-        rounds.append({"Q": str(question_value or "").strip()})
-    return rounds
 
 
 def _ensure_non_empty_qa_pairs(question_value, qa_pairs: list[dict]):

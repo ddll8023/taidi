@@ -7,10 +7,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.constants import task3 as constants_task3
 from app.core.config import settings
 from app.schemas.common import ErrorCode
 from app.schemas.task3 import (
@@ -24,261 +24,19 @@ from app.schemas.task3 import (
     Task3AnswerContent,
 )
 from app.services import knowledge_base
+from app.services.task3.helpers import (
+    _extract_company_name_from_question,
+    _extract_json_from_response,
+    _get_task3_config,
+    _invoke_llm,
+    _to_jsonable,
+)
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
-from app.utils.model_factory import get_model
 
 logger = setup_logger(__name__)
 
-TASK3_TABLE_SCHEMA: dict[str, dict[str, str]] = {
-    "income_sheet": {
-        "report_id": "财报主表ID",
-        "stock_code": "股票代码",
-        "stock_abbr": "股票简称",
-        "report_year": "报告年份",
-        "report_period": "报告期：Q1/HY/Q3/FY",
-        "report_type": "报告类型：REPORT/SUMMARY",
-        "net_profit": "净利润(万元)",
-        "net_profit_yoy_growth": "净利润同比(%)",
-        "other_income": "其他收益(万元)",
-        "total_operating_revenue": "营业总收入(万元)",
-        "operating_revenue_yoy_growth": "营业总收入同比(%)",
-        "operating_expense_cost_of_sales": "营业总支出-营业支出(万元)",
-        "operating_expense_selling_expenses": "营业总支出-销售费用(万元)",
-        "operating_expense_administrative_expenses": "营业总支出-管理费用(万元)",
-        "operating_expense_financial_expenses": "营业总支出-财务费用(万元)",
-        "operating_expense_rnd_expenses": "营业总支出-研发费用(万元)",
-        "operating_expense_taxes_and_surcharges": "营业总支出-税金及附加(万元)",
-        "total_operating_expenses": "营业总支出(万元)",
-        "operating_profit": "营业利润(万元)",
-        "total_profit": "利润总额(万元)",
-        "asset_impairment_loss": "资产减值损失(万元)",
-        "credit_impairment_loss": "信用减值损失(万元)",
-    },
-    "balance_sheet": {
-        "report_id": "财报主表ID",
-        "stock_code": "股票代码",
-        "stock_abbr": "股票简称",
-        "report_year": "报告年份",
-        "report_period": "报告期：Q1/HY/Q3/FY",
-        "report_type": "报告类型：REPORT/SUMMARY",
-        "asset_cash_and_cash_equivalents": "资产-货币资金(万元)",
-        "asset_accounts_receivable": "资产-应收账款(万元)",
-        "asset_inventory": "资产-存货(万元)",
-        "asset_trading_financial_assets": "资产-交易性金融资产(万元)",
-        "asset_construction_in_progress": "资产-在建工程(万元)",
-        "asset_total_assets": "资产-总资产(万元)",
-        "asset_total_assets_yoy_growth": "资产-总资产同比(%)",
-        "liability_accounts_payable": "负债-应付账款(万元)",
-        "liability_advance_from_customers": "负债-预收账款(万元)",
-        "liability_total_liabilities": "负债-总负债(万元)",
-        "liability_total_liabilities_yoy_growth": "负债-总负债同比(%)",
-        "liability_contract_liabilities": "负债-合同负债(万元)",
-        "liability_short_term_loans": "负债-短期借款(万元)",
-        "asset_liability_ratio": "资产负债率(%)",
-        "equity_unappropriated_profit": "股东权益-未分配利润(万元)",
-        "equity_total_equity": "股东权益合计(万元)",
-    },
-    "cash_flow_sheet": {
-        "report_id": "财报主表ID",
-        "stock_code": "股票代码",
-        "stock_abbr": "股票简称",
-        "report_year": "报告年份",
-        "report_period": "报告期：Q1/HY/Q3/FY",
-        "report_type": "报告类型：REPORT/SUMMARY",
-        "net_cash_flow": "净现金流(元)",
-        "net_cash_flow_yoy_growth": "净现金流-同比增长(%)",
-        "operating_cf_net_amount": "经营性现金流-现金流量净额(万元)",
-        "operating_cf_ratio_of_net_cf": "经营性现金流-净现金流占比(%)",
-        "operating_cf_cash_from_sales": "经营性现金流-销售商品收到的现金(万元)",
-        "investing_cf_net_amount": "投资性现金流-现金流量净额(万元)",
-        "investing_cf_ratio_of_net_cf": "投资性现金流-净现金流占比(%)",
-        "investing_cf_cash_for_investments": "投资性现金流-投资支付的现金(万元)",
-        "investing_cf_cash_from_investment_recovery": "投资性现金流-收回投资收到的现金(万元)",
-        "financing_cf_cash_from_borrowing": "融资性现金流-取得借款收到的现金(万元)",
-        "financing_cf_cash_for_debt_repayment": "融资性现金流-偿还债务支付的现金(万元)",
-        "financing_cf_net_amount": "融资性现金流-现金流量净额(万元)",
-        "financing_cf_ratio_of_net_cf": "融资性现金流-净现金流占比(%)",
-    },
-    "core_performance_indicators_sheet": {
-        "report_id": "财报主表ID",
-        "stock_code": "股票代码",
-        "stock_abbr": "股票简称",
-        "report_year": "报告年份",
-        "report_period": "报告期：Q1/HY/Q3/FY",
-        "report_type": "报告类型：REPORT/SUMMARY",
-        "eps": "每股收益(元)",
-        "total_operating_revenue": "营业总收入(万元)",
-        "operating_revenue_yoy_growth": "营业总收入-同比增长(%)",
-        "operating_revenue_qoq_growth": "营业总收入-季度环比增长(%)",
-        "net_profit_10k_yuan": "净利润(万元)",
-        "net_profit_yoy_growth": "净利润-同比增长(%)",
-        "net_profit_qoq_growth": "净利润-季度环比增长(%)",
-        "net_asset_per_share": "每股净资产(元)",
-        "roe": "净资产收益率(%)",
-        "operating_cf_per_share": "每股经营现金流量(元)",
-        "net_profit_excl_non_recurring": "扣非净利润(万元)",
-        "net_profit_excl_non_recurring_yoy": "扣非净利润同比增长(%)",
-        "gross_profit_margin": "销售毛利率(%)",
-        "net_profit_margin": "销售净利率(%)",
-        "roe_weighted_excl_non_recurring": "加权平均净资产收益率(扣非)(%)",
-    },
-    "company_basic_info": {
-        "stock_code": "股票代码",
-        "stock_abbr": "股票简称",
-        "company_name": "公司名称",
-        "english_name": "英文名称",
-        "csrc_industry": "所属证监会行业",
-        "listed_exchange": "上市交易所原始文本",
-        "exchange": "标准化交易所代码：SH/SZ/BJ",
-        "security_category": "证券类别",
-        "registered_region": "注册区域",
-        "registered_capital_raw": "注册资本原始文本",
-        "registered_capital_yuan": "注册资本标准化数值(元)",
-        "employee_count": "雇员人数",
-        "management_count": "管理人员人数",
-        "source_row_no": "附件1原始序号",
-        "source_file_name": "附件1源文件名",
-        "created_at": "创建时间",
-        "updated_at": "更新时间",
-    },
-}
 
-ALLOWED_TABLES = list(TASK3_TABLE_SCHEMA.keys())
-
-FORBIDDEN_KEYWORDS = [
-    "DROP",
-    "DELETE",
-    "UPDATE",
-    "INSERT",
-    "ALTER",
-    "CREATE",
-    "TRUNCATE",
-    "GRANT",
-    "REVOKE",
-]
-SQL_RESERVED_IDENTIFIERS = {
-    "ALL",
-    "AND",
-    "AS",
-    "ASC",
-    "BETWEEN",
-    "BY",
-    "CASE",
-    "CROSS",
-    "DESC",
-    "DISTINCT",
-    "ELSE",
-    "END",
-    "EXISTS",
-    "FALSE",
-    "FROM",
-    "FULL",
-    "GROUP",
-    "HAVING",
-    "IN",
-    "INNER",
-    "IS",
-    "JOIN",
-    "LEFT",
-    "LIKE",
-    "LIMIT",
-    "NOT",
-    "NULL",
-    "OFFSET",
-    "ON",
-    "OR",
-    "ORDER",
-    "OUTER",
-    "RIGHT",
-    "ROWS",
-    "SELECT",
-    "THEN",
-    "TRUE",
-    "WHEN",
-    "WHERE",
-    "WITH",
-    "UNION",
-}
-SQL_FUNCTIONS = {
-    "ABS",
-    "AVG",
-    "CAST",
-    "COALESCE",
-    "CONCAT",
-    "COUNT",
-    "IFNULL",
-    "MAX",
-    "MIN",
-    "NULLIF",
-    "ROUND",
-    "SUM",
-    "CURRENT_DATE",
-    "CURRENT_TIME",
-    "CURRENT_TIMESTAMP",
-    "NOW",
-    "CURDATE",
-    "CURTIME",
-    "DATE",
-    "YEAR",
-    "MONTH",
-    "DAY",
-    "QUARTER",
-    "WEEK",
-    "STR_TO_DATE",
-    "DATE_FORMAT",
-}
-
-
-def _get_task3_config():
-    """获取任务三执行阶段配置。"""
-    return settings.PROMPT_CONFIG.get_task3_config
-
-
-def _invoke_llm(
-    system_prompt: str,
-    user_prompt: str,
-    max_tokens: int = 8192,
-    temperature: float = 0.1,
-):
-    """调用大模型并返回文本结果。"""
-    try:
-        model = get_model.build_chat_model(
-            max_tokens=max_tokens, temperature=temperature
-        )
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
-        response = model.invoke(messages)
-    except Exception as exc:
-        logger.error("LLM调用失败: error=%s", str(exc))
-        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "LLM调用失败") from exc
-
-    content = getattr(response, "content", None)
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        text_parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text_parts.append(str(block.get("text", "")))
-        return "".join(text_parts).strip()
-    return ""
-
-
-def _extract_json_from_response(response_text: str):
-    """从模型响应中提取 JSON 对象。"""
-    json_match = re.search(r"\{[\s\S]*\}", response_text)
-    if json_match:
-        try:
-            return json.loads(json_match.group())
-        except json.JSONDecodeError:
-            pass
-    try:
-        return json.loads(response_text)
-    except json.JSONDecodeError:
-        return None
 
 
 def _extract_sql_from_response(response_text: str):
@@ -360,15 +118,15 @@ def _extract_table_aliases(sql: str):
         if table_name in cte_names:
             table_marker = f"__cte__:{table_name}"
             aliases[table_name] = table_marker
-            if alias and alias.upper() not in SQL_RESERVED_IDENTIFIERS:
+            if alias and alias.upper() not in constants_task3.SQL_RESERVED_IDENTIFIERS:
                 aliases[alias.lower()] = table_marker
             continue
 
-        if table_name not in TASK3_TABLE_SCHEMA:
+        if table_name not in constants_task3.TASK3_TABLE_SCHEMA:
             continue
 
         aliases[table_name] = table_name
-        if alias and alias.upper() not in SQL_RESERVED_IDENTIFIERS:
+        if alias and alias.upper() not in constants_task3.SQL_RESERVED_IDENTIFIERS:
             aliases[alias.lower()] = table_name
     return aliases
 
@@ -399,7 +157,7 @@ def _validate_sql_identifiers(sql: str):
     allowed_columns = {
         column.lower()
         for table_name in referenced_tables
-        for column in TASK3_TABLE_SCHEMA[table_name]
+        for column in constants_task3.TASK3_TABLE_SCHEMA[table_name]
     }
     cleaned = _strip_sql_literals(sql)
 
@@ -412,7 +170,7 @@ def _validate_sql_identifiers(sql: str):
             return False, f"SQL引用了未知表或别名: {match.group(1)}"
         if str(table_name).startswith("__cte__:"):
             continue
-        if column not in TASK3_TABLE_SCHEMA[table_name]:
+        if column not in constants_task3.TASK3_TABLE_SCHEMA[table_name]:
             return False, f"SQL字段不存在: {match.group(1)}.{match.group(2)}"
 
     scan_sql = re.sub(qualified_ref_pattern, " ", cleaned)
@@ -424,11 +182,11 @@ def _validate_sql_identifiers(sql: str):
 
         if next_char == "(":
             continue
-        if identifier_upper in SQL_RESERVED_IDENTIFIERS:
+        if identifier_upper in constants_task3.SQL_RESERVED_IDENTIFIERS:
             continue
-        if identifier_upper in SQL_FUNCTIONS:
+        if identifier_upper in constants_task3.SQL_FUNCTIONS:
             continue
-        if identifier_lower in TASK3_TABLE_SCHEMA:
+        if identifier_lower in constants_task3.TASK3_TABLE_SCHEMA:
             continue
         if identifier_lower in table_aliases:
             continue
@@ -448,7 +206,7 @@ def _validate_sql(sql: str):
     """校验 SQL 是否满足安全约束。"""
     sql_upper = sql.upper().strip()
 
-    for keyword in FORBIDDEN_KEYWORDS:
+    for keyword in constants_task3.FORBIDDEN_KEYWORDS:
         pattern = r"\b" + keyword + r"\b"
         if re.search(pattern, sql_upper):
             return False, f"SQL包含禁止关键字: {keyword}"
@@ -458,7 +216,7 @@ def _validate_sql(sql: str):
 
     found_tables = _extract_referenced_table_names(sql)
     for table_name in found_tables:
-        if table_name.lower() not in [t.lower() for t in ALLOWED_TABLES]:
+        if table_name.lower() not in [t.lower() for t in constants_task3.ALLOWED_TABLES]:
             return False, f"SQL引用了不允许的表: {table_name}"
 
     identifiers_valid, identifiers_msg = _validate_sql_identifiers(sql)
@@ -481,20 +239,6 @@ def _execute_sql(sql: str, db: Session):
             ErrorCode.AI_SERVICE_ERROR, "服务调用失败，请稍后重试"
         ) from exc
 
-
-def _to_jsonable(value: Any):
-    """将执行结果转换为 JSON 可序列化结构。"""
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")
-    if isinstance(value, dict):
-        return {key: _to_jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_to_jsonable(item) for item in value]
-    return value
 
 
 def execute_step(
@@ -916,13 +660,6 @@ def _format_text_in_clause(values: list[str]):
     return ", ".join(f"'{value}'" for value in values)
 
 
-def _extract_company_name_from_question(question: str):
-    """从问题文本提取单个公司名称。"""
-    match = re.search(r"([\u4e00-\u9fa5]{2,8}(?:药业|集团|制药|股份|医药))", question)
-    if match:
-        return match.group(1)
-    return None
-
 
 def _build_single_company_filter(
     step: TaskStep,
@@ -958,7 +695,7 @@ def _build_schema_ddl():
     lines.append("-- 重要提示：只允许使用以下列出的表，严禁使用任何不存在的表（如 top_cash_flow_companies、temp_table 等）。")
     lines.append("-- 如需获取排名/筛选结果，请使用子查询或 CTE (WITH 语句) 从现有表中查询。")
     lines.append("")
-    for table_name, fields in TASK3_TABLE_SCHEMA.items():
+    for table_name, fields in constants_task3.TASK3_TABLE_SCHEMA.items():
         lines.append(f"CREATE TABLE {table_name} (")
         field_lines = [
             f"  {field_name} VARCHAR/INT/DECIMAL COMMENT '{description}'"

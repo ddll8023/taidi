@@ -10,27 +10,17 @@ from fastapi import UploadFile
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models.chat_message import ChatMessage
-from app.models.chat_session import ChatSession
 from app.models.task2_question_item import Task2QuestionItem
 from app.models.task2_workspace import Task2Workspace
 from app.schemas.common import ErrorCode
-from app.schemas.task2 import (
-    ImportStatus,
-    QuestionStatus,
-    Task2ImportResponse,
-    Task2QuestionItemResponse,
-    Task2QuestionListResponse,
-    Task2WorkspaceResponse,
-)
+from app.schemas import task2 as schemas_task2
 from app.utils.exception import ServiceException
+from app.db.database import commit_or_rollback
+from app.services.task2.helpers import _delete_chart_file, _delete_session_and_charts
+from app.constants import task2 as constants_task2
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
-
-MAIN_NS = {"a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-REL_NS = {"r": "http://schemas.openxmlformats.org/package/2006/relationships"}
-OFFICE_REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
 
 UPLOAD_DIR = os.path.join(os.getcwd(), "uploads", "fujian4", "current")
 
@@ -51,17 +41,17 @@ def get_workspace_info(db: Session):
     workspace = _get_workspace_entity(db)
     if workspace is None:
         return None
-    return Task2WorkspaceResponse.model_validate(workspace)
+    return schemas_task2.Task2WorkspaceResponse.model_validate(workspace)
 
 
 def get_question_list(
     db: Session,
     workspace_id: int,
     status: int | None = None,
-) -> list[Task2QuestionItemResponse]:
+):
     """查询任务二工作台题目列表。"""
     return [
-        Task2QuestionItemResponse.model_validate(item)
+        schemas_task2.Task2QuestionItemResponse.model_validate(item)
         for item in _get_question_entities(db=db, workspace_id=workspace_id, status=status)
     ]
 
@@ -71,23 +61,23 @@ def get_question_detail(question_id: int, db: Session):
     question = db.get(Task2QuestionItem, question_id)
     if question is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
-    return Task2QuestionItemResponse.model_validate(question)
+    return schemas_task2.Task2QuestionItemResponse.model_validate(question)
 
 
 def get_question_stats(db: Session, workspace_id: int):
     """统计任务二工作台题目状态数量。"""
     questions = _get_question_entities(db=db, workspace_id=workspace_id)
     total = len(questions)
-    pending = sum(1 for q in questions if q.status == QuestionStatus.PENDING)
-    answered = sum(1 for q in questions if q.status == QuestionStatus.ANSWERED)
-    failed = sum(1 for q in questions if q.status == QuestionStatus.FAILED)
+    pending = sum(1 for q in questions if q.status == schemas_task2.QuestionStatus.PENDING)
+    answered = sum(1 for q in questions if q.status == schemas_task2.QuestionStatus.ANSWERED)
+    failed = sum(1 for q in questions if q.status == schemas_task2.QuestionStatus.FAILED)
 
-    return {
-        "total": total,
-        "pending": pending,
-        "answered": answered,
-        "failed": failed,
-    }
+    return schemas_task2.Task2QuestionStatsResponse(
+        total=total,
+        pending=pending,
+        answered=answered,
+        failed=failed,
+    )
 
 
 def get_workspace_or_raise(db: Session):
@@ -102,17 +92,17 @@ def get_question_list_response(db: Session, status: int | None = None):
     """查询题目列表并组装完整响应（含工作台校验和统计）。"""
     workspace = get_workspace_info(db)
     if workspace is None:
-        return Task2QuestionListResponse()
+        return schemas_task2.Task2QuestionListResponse()
 
     questions = get_question_list(db=db, workspace_id=workspace.id, status=status)
     stats = get_question_stats(db, workspace.id)
 
-    return Task2QuestionListResponse(
+    return schemas_task2.Task2QuestionListResponse(
         items=questions,
-        total=stats["total"],
-        pending_count=stats["pending"],
-        answered_count=stats["answered"],
-        failed_count=stats["failed"],
+        total=stats.total,
+        pending_count=stats.pending,
+        answered_count=stats.answered,
+        failed_count=stats.failed,
     )
 
 
@@ -132,7 +122,7 @@ async def import_fujian4_from_upload(db: Session, file: UploadFile):
             original_filename=file.filename,
             db=db,
         )
-        return Task2ImportResponse(**result)
+        return result
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -141,16 +131,8 @@ async def import_fujian4_from_upload(db: Session, file: UploadFile):
 """辅助函数"""
 
 
-def _commit_or_raise(db: Session):
-    """提交当前事务，失败时回滚并转换为业务异常。"""
-    try:
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
-
-
 def _column_ref_to_index(cell_ref: str):
+    """将 Excel 列字母引用（如 A、AB）转换为零基数字索引。"""
     letters = "".join(char for char in cell_ref if char.isalpha())
     if not letters:
         return 0
@@ -161,11 +143,12 @@ def _column_ref_to_index(cell_ref: str):
 
 
 def _load_shared_strings(archive: zipfile.ZipFile):
+    """从 xlsx 归档中加载共享字符串表。"""
     if "xl/sharedStrings.xml" not in archive.namelist():
         return []
     root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
     values: list[str] = []
-    for shared_string in root.findall("a:si", MAIN_NS):
+    for shared_string in root.findall("a:si", constants_task2.MAIN_NS):
         text_parts: list[str] = []
         for node in shared_string.iter():
             if node.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t":
@@ -175,25 +158,27 @@ def _load_shared_strings(archive: zipfile.ZipFile):
 
 
 def _get_all_sheet_names(archive: zipfile.ZipFile):
+    """获取 xlsx 工作簿中所有工作表名称。"""
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
-    sheets = workbook.find("a:sheets", MAIN_NS)
+    sheets = workbook.find("a:sheets", constants_task2.MAIN_NS)
     if sheets is None:
         return []
     return [sheet.attrib.get("name", "") for sheet in sheets]
 
 
 def _get_sheet_target(archive: zipfile.ZipFile, sheet_name: str):
+    """根据工作表名称获取其在 xlsx 归档中的文件路径。"""
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
     relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
     rel_map = {
         rel.attrib["Id"]: rel.attrib["Target"]
-        for rel in relationships.findall("r:Relationship", REL_NS)
+        for rel in relationships.findall("r:Relationship", constants_task2.REL_NS)
     }
-    sheets = workbook.find("a:sheets", MAIN_NS)
+    sheets = workbook.find("a:sheets", constants_task2.MAIN_NS)
     for sheet in sheets:
         if sheet.attrib.get("name") != sheet_name:
             continue
-        relation_id = sheet.attrib.get(OFFICE_REL_NS)
+        relation_id = sheet.attrib.get(constants_task2.OFFICE_REL_NS)
         if not relation_id or relation_id not in rel_map:
             break
         target = rel_map[relation_id]
@@ -202,23 +187,24 @@ def _get_sheet_target(archive: zipfile.ZipFile, sheet_name: str):
 
 
 def _read_sheet_rows(archive: zipfile.ZipFile, sheet_target: str):
+    """读取指定工作表中的所有行数据，返回二维列表。"""
     shared_strings = _load_shared_strings(archive)
     root = ET.fromstring(archive.read(sheet_target))
-    sheet_data = root.find("a:sheetData", MAIN_NS)
+    sheet_data = root.find("a:sheetData", constants_task2.MAIN_NS)
     if sheet_data is None:
         return []
     rows: list[list[str]] = []
-    for row in sheet_data.findall("a:row", MAIN_NS):
+    for row in sheet_data.findall("a:row", constants_task2.MAIN_NS):
         cell_values: dict[int, str] = {}
-        for cell in row.findall("a:c", MAIN_NS):
+        for cell in row.findall("a:c", constants_task2.MAIN_NS):
             index = _column_ref_to_index(cell.attrib.get("r", ""))
             cell_type = cell.attrib.get("t")
             value = ""
             if cell_type == "inlineStr":
-                text_node = cell.find("a:is/a:t", MAIN_NS)
+                text_node = cell.find("a:is/a:t", constants_task2.MAIN_NS)
                 value = "" if text_node is None else (text_node.text or "")
             else:
-                raw_node = cell.find("a:v", MAIN_NS)
+                raw_node = cell.find("a:v", constants_task2.MAIN_NS)
                 if raw_node is not None and raw_node.text is not None:
                     raw_value = raw_node.text
                     if cell_type == "s" and raw_value.isdigit():
@@ -236,6 +222,7 @@ def _read_sheet_rows(archive: zipfile.ZipFile, sheet_target: str):
 
 
 def _parse_fujian4_file(file_path: str):
+    """解析附件4 xlsx 文件，提取问题列表。"""
     source_path = Path(file_path)
     if not source_path.exists():
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "附件4文件不存在")
@@ -273,6 +260,7 @@ def _parse_fujian4_file(file_path: str):
 
 
 def _delete_old_workspace_data(db: Session, workspace_id: int):
+    """删除工作台关联的旧题目数据、会话及图表文件。"""
     stmt = select(Task2QuestionItem).where(Task2QuestionItem.workspace_id == workspace_id)
     questions = db.execute(stmt).scalars().all()
 
@@ -285,49 +273,17 @@ def _delete_old_workspace_data(db: Session, workspace_id: int):
                 _delete_chart_file(img_path, chart_dir)
 
     db.execute(delete(Task2QuestionItem).where(Task2QuestionItem.workspace_id == workspace_id))
-    logger.info("已删除工作台 %d 的旧题目数据", workspace_id)
-
-
-def _delete_session_and_charts(db: Session, session_id: str, chart_dir: str):
-    stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
-    messages = db.execute(stmt).scalars().all()
-
-    for m in messages:
-        if m.chart_paths:
-            for chart_url in m.chart_paths:
-                _delete_chart_file(chart_url, chart_dir)
-        db.delete(m)
-
-    session = db.get(ChatSession, session_id)
-    if session:
-        db.delete(session)
-    logger.info("已删除会话 %s 及其图表", session_id)
-
-
-def _delete_chart_file(chart_path: str, chart_dir: str):
-    try:
-        if chart_path.startswith("/api/v1/"):
-            filename = chart_path.split("/")[-1]
-        elif "/" in chart_path or "\\" in chart_path:
-            filename = os.path.basename(chart_path)
-        else:
-            filename = chart_path
-
-        file_path = os.path.join(chart_dir, filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            logger.info("已删除图表文件: %s", file_path)
-    except Exception as e:
-        logger.warning("删除图表文件失败: path=%s error=%s", chart_path, str(e))
+    logger.info(f"已删除工作台 {workspace_id} 的旧题目数据")
 
 
 def _get_or_create_workspace(db: Session):
+    """获取或创建任务二工作台实体。"""
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     workspace = db.execute(stmt).scalar_one_or_none()
 
     if workspace is None:
         workspace = Task2Workspace(
-            import_status=ImportStatus.NOT_IMPORTED,
+            import_status=schemas_task2.ImportStatus.NOT_IMPORTED,
             total_questions=0,
             answered_count=0,
             failed_count=0,
@@ -335,7 +291,7 @@ def _get_or_create_workspace(db: Session):
         )
         db.add(workspace)
         db.flush()
-        logger.info("创建新工作台: id=%d", workspace.id)
+        logger.info(f"创建新工作台: id={workspace.id}")
 
     return workspace
 
@@ -343,16 +299,16 @@ def _get_or_create_workspace(db: Session):
 def _import_fujian4(file_path: str, original_filename: str, db: Session):
     workspace = _get_or_create_workspace(db)
 
-    if workspace.import_status == ImportStatus.IMPORTED and workspace.total_questions > 0:
+    if workspace.import_status == schemas_task2.ImportStatus.IMPORTED and workspace.total_questions > 0:
         logger.info("工作台已有数据，将清空旧数据后重新导入")
         _delete_old_workspace_data(db, workspace.id)
 
-    workspace.import_status = ImportStatus.IMPORTING
+    workspace.import_status = schemas_task2.ImportStatus.IMPORTING
     db.flush()
 
     try:
         questions = _parse_fujian4_file(file_path)
-        logger.info("从附件4解析出 %d 个问题", len(questions))
+        logger.info(f"从附件4解析出 {len(questions)} 个问题")
 
         os.makedirs(UPLOAD_DIR, exist_ok=True)
         saved_filename = f"附件4.xlsx"
@@ -381,7 +337,7 @@ def _import_fujian4(file_path: str, original_filename: str, db: Session):
                 question_type=q.get("type", ""),
                 question_raw_json=q["question"],
                 rounds_json=rounds_json,
-                status=QuestionStatus.PENDING,
+                status=schemas_task2.QuestionStatus.PENDING,
             )
             db.add(question_item)
 
@@ -389,31 +345,32 @@ def _import_fujian4(file_path: str, original_filename: str, db: Session):
         workspace.pending_count = len(questions)
         workspace.answered_count = 0
         workspace.failed_count = 0
-        workspace.import_status = ImportStatus.IMPORTED
-        _commit_or_raise(db)
+        workspace.import_status = schemas_task2.ImportStatus.IMPORTED
+        commit_or_rollback(db)
 
-        logger.info("附件4导入完成: workspace_id=%d total=%d", workspace.id, len(questions))
+        logger.info(f"附件4导入完成: workspace_id={workspace.id} total={len(questions)}")
 
-        return {
-            "workspace_id": workspace.id,
-            "source_file_name": original_filename,
-            "total_questions": len(questions),
-            "message": f"成功导入 {len(questions)} 个问题",
-        }
+        return schemas_task2.Task2ImportResponse(
+            workspace_id=workspace.id,
+            source_file_name=original_filename,
+            total_questions=len(questions),
+            message=f"成功导入 {len(questions)} 个问题",
+        )
 
     except ServiceException as e:
-        workspace.import_status = ImportStatus.IMPORT_FAILED
-        _commit_or_raise(db)
-        logger.error("附件4导入失败: %s", e.message)
+        workspace.import_status = schemas_task2.ImportStatus.IMPORT_FAILED
+        commit_or_rollback(db)
+        logger.error(f"附件4导入失败: {e.message}")
         raise
     except Exception as e:
-        workspace.import_status = ImportStatus.IMPORT_FAILED
-        _commit_or_raise(db)
-        logger.error("附件4导入失败: %s", str(e))
+        workspace.import_status = schemas_task2.ImportStatus.IMPORT_FAILED
+        commit_or_rollback(db)
+        logger.error(f"附件4导入失败: {str(e)}")
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "导入失败") from e
 
 
 def _get_workspace_entity(db: Session):
+    """查询最近一条工作台记录。"""
     stmt = select(Task2Workspace).order_by(Task2Workspace.id.desc()).limit(1)
     return db.execute(stmt).scalar_one_or_none()
 
@@ -422,7 +379,8 @@ def _get_question_entities(
     db: Session,
     workspace_id: int,
     status: int | None = None,
-) -> list[Task2QuestionItem]:
+):
+    """查询指定工作台的题目实体列表。"""
     stmt = select(Task2QuestionItem).where(Task2QuestionItem.workspace_id == workspace_id)
     if status is not None:
         stmt = stmt.where(Task2QuestionItem.status == status)

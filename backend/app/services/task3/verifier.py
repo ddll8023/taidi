@@ -19,95 +19,11 @@ from app.schemas.task3 import (
     Task3AnswerQualityResponse,
     Task3VerificationResultResponse,
 )
+from app.constants import task3 as constants_task3
+from app.services.task3.helpers import _is_attribution_with_financial_data
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
-
-ATTRIBUTION_KEYWORDS = [
-    "原因",
-    "为什么",
-    "为何",
-    "导致",
-    "解释",
-    "归因",
-    "驱动因素",
-    "影响因素",
-    "背离",
-    "差异原因",
-    "变动原因",
-    "分析原因",
-]
-
-FINANCIAL_DATA_KEYWORDS = [
-    "资产负债表",
-    "现金流",
-    "现金流量",
-    "利润表",
-    "营业收入",
-    "营业总收入",
-    "应收账款",
-    "占比",
-    "比例",
-    "财务",
-    "总资产",
-    "总负债",
-    "净利润",
-    "营收",
-]
-
-CAUSE_KEYWORDS = [
-    "原因",
-    "是因为",
-    "由于",
-    "主要因为",
-    "影响因素",
-    "导致",
-    "造成",
-    "为何",
-    "为什么",
-]
-
-MISSING_FINANCIAL_DATA_PATTERNS = [
-    r"无财务数据",
-    r"缺少[^。；\n]{0,30}财务数据",
-    r"没有[^。；\n]{0,30}财务数据",
-    r"无[^。；\n]{0,30}资产负债表",
-    r"缺少[^。；\n]{0,30}资产负债表",
-    r"无[^。；\n]{0,30}应收账款[^。；\n]{0,20}收入数据",
-    r"缺少[^。；\n]{0,30}应收账款[^。；\n]{0,20}收入数据",
-]
-
-INCOMPLETE_ANSWER_PATTERNS = [
-    r"无法计算",
-    r"无法完成",
-    r"无法验证",
-    r"无法执行",
-    r"无法直接回答",
-    r"暂时无法",
-    r"未检索到",
-    r"未获取到",
-    r"无数据",
-    r"不完整",
-    r"部分失败",
-    r"数据仅覆盖",
-    r"缺少20\d{2}",
-    r"建议执行补充查询",
-    r"请确认是否已完成",
-]
-
-REFERENCE_REQUIRED_KEYWORDS = [
-    "研报",
-    "研究报告",
-    "券商报告",
-    "结合研报",
-    "风险",
-    "风险预警",
-    "核心竞争力",
-    "评价",
-    "规划",
-    "项目说明",
-    "可靠性",
-]
 
 
 def verify_execution_trace(
@@ -151,8 +67,8 @@ def verify_answer_quality(
     if len(answer) < 20:
         result.warnings.append("答案过短，可能不完整")
 
-    has_cause_question = any(keyword in question for keyword in CAUSE_KEYWORDS)
-    has_cause_answer = any(keyword in answer for keyword in CAUSE_KEYWORDS)
+    has_cause_question = any(keyword in question for keyword in constants_task3.CAUSE_KEYWORDS)
+    has_cause_answer = any(keyword in answer for keyword in constants_task3.CAUSE_KEYWORDS)
 
     if has_cause_question and not has_cause_answer:
         result.warnings.append("问题询问原因，但答案未解释原因")
@@ -182,10 +98,6 @@ def _add_warning(result: Task3VerificationResultResponse, message: str):
     result.warnings.append(message)
 
 
-def _is_attribution_with_financial_data(question: str):
-    return any(keyword in question for keyword in ATTRIBUTION_KEYWORDS) and any(
-        keyword in question for keyword in FINANCIAL_DATA_KEYWORDS
-    )
 
 
 def _get_answer_result(trace: ExecutionTrace):
@@ -533,13 +445,13 @@ def _verify_subject_consistency(
 def _answer_claims_missing_financial_data(answer_text: str):
     if not answer_text:
         return False
-    return any(re.search(pattern, answer_text) for pattern in MISSING_FINANCIAL_DATA_PATTERNS)
+    return any(re.search(pattern, answer_text) for pattern in constants_task3.MISSING_FINANCIAL_DATA_PATTERNS)
 
 
 def _answer_indicates_incomplete(answer_text: str):
     if not answer_text:
         return False
-    return any(re.search(pattern, answer_text) for pattern in INCOMPLETE_ANSWER_PATTERNS)
+    return any(re.search(pattern, answer_text) for pattern in constants_task3.INCOMPLETE_ANSWER_PATTERNS)
 
 
 def _has_explicit_multi_steps(question: str):
@@ -552,7 +464,7 @@ def _has_explicit_multi_steps(question: str):
 
 def _question_requires_references(question: str):
     """判断题目是否明确要求证据或引用支撑。"""
-    return any(keyword in (question or "") for keyword in REFERENCE_REQUIRED_KEYWORDS)
+    return any(keyword in (question or "") for keyword in constants_task3.REFERENCE_REQUIRED_KEYWORDS)
 
 
 def _has_sql_data(trace: ExecutionTrace):
@@ -658,7 +570,7 @@ def _verify_attribution_evidence(
         return
 
     answer_text = _get_answer_text(trace)
-    if not any(keyword in answer_text for keyword in CAUSE_KEYWORDS):
+    if not any(keyword in answer_text for keyword in constants_task3.CAUSE_KEYWORDS):
         return
 
     sql_row_count = 0
@@ -690,7 +602,7 @@ def _verify_references(
     references = trace.references
     question = trace.plan.question or ""
 
-    if any(keyword in answer_text for keyword in CAUSE_KEYWORDS) and not references:
+    if any(keyword in answer_text for keyword in constants_task3.CAUSE_KEYWORDS) and not references:
         _add_error(result, "回答包含原因类结论，但缺少引用来源")
 
     if _question_requires_references(question) and not references:

@@ -1,40 +1,20 @@
 """知识库文档分块与分块任务提交服务"""
-import re
 
 from pypdf import PdfReader
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.knowledge_chunk import (
-    CHUNK_VECTOR_STATUS_PENDING,
-    KnowledgeChunk,
-    compute_chunk_hash,
-)
-from app.models.knowledge_document import (
-    CHUNK_STATUS_COMPLETED,
-    CHUNK_STATUS_FAILED,
-    CHUNK_STATUS_PENDING,
-    CHUNK_STATUS_PROCESSING,
-    METADATA_STATUS_PDF_UPLOADED,
-    KnowledgeDocument,
-)
-from app.schemas.knowledge_base import KnowledgeChunkItem
+from app.db.database import commit_or_rollback, get_background_db_session
+from app.models import knowledge_chunk as models_knowledge_chunk
+from app.models import knowledge_document as models_knowledge_document
+from app.schemas import knowledge_base as schemas_knowledge_base
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
-from app.db.database import get_background_db_session
+from app.services.knowledge_base.helpers import clean_pdf_text
 
 logger = setup_logger(__name__)
-
-
-"""辅助函数"""
-
-
-def _clean_pdf_text(raw: str):
-    text = raw.strip()
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
 
 
 # ========== 公共入口函数 ==========
@@ -45,6 +25,7 @@ def chunk_text(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
 ):
+    """将纯文本按指定大小和重叠度切块"""
     size = chunk_size or settings.CHUNK_SIZE
     overlap = chunk_overlap or settings.CHUNK_OVERLAP
     if overlap >= size:
@@ -83,6 +64,7 @@ def chunk_pages(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
 ):
+    """将页面列表按指定大小和重叠度切块"""
     size = chunk_size or settings.CHUNK_SIZE
     overlap = chunk_overlap or settings.CHUNK_OVERLAP
 
@@ -134,40 +116,31 @@ def chunk_pages(
     return chunks
 
 
-"""辅助函数"""
-
-
-def _find_split_boundary(text: str):
-    for sep in ["\n\n", "。", "！", "？", ".", "!", "?", "；", ";", "\n", "，", ","]:
-        pos = text.rfind(sep)
-        if pos > 0:
-            return pos + len(sep)
-    return None
-
-
 def chunk_document(db: Session, document_id: int):
-    doc = (
-        db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
-    )
+    """对指定文档执行PDF提取和切块处理"""
+    stmt = select(models_knowledge_document.KnowledgeDocument).where(models_knowledge_document.KnowledgeDocument.id == document_id)
+    doc = db.scalar(stmt)
     if doc is None:
         raise ServiceException(
             ErrorCode.DATA_NOT_FOUND, f"文档不存在: id={document_id}"
         )
 
-    if doc.chunk_status == CHUNK_STATUS_COMPLETED:
-        existing_chunks = (
-            db.query(KnowledgeChunk)
-            .filter(KnowledgeChunk.document_id == document_id)
-            .order_by(KnowledgeChunk.chunk_index)
-            .all()
-        )
+    if doc.chunk_status == models_knowledge_document.CHUNK_STATUS_COMPLETED:
+        existing_chunks = db.scalars(
+            select(models_knowledge_chunk.KnowledgeChunk)
+            .where(models_knowledge_chunk.KnowledgeChunk.document_id == document_id)
+            .order_by(models_knowledge_chunk.KnowledgeChunk.chunk_index)
+        ).all()
         logger.info(
-            "文档已完成切块，跳过: id=%d, chunks=%d", document_id, len(existing_chunks)
+            f"文档已完成切块，跳过: id={document_id}, chunks={len(existing_chunks)}"
         )
-        return [KnowledgeChunkItem.model_validate(c) for c in existing_chunks]
+        return [
+            schemas_knowledge_base.KnowledgeChunkItem.model_validate(c)
+            for c in existing_chunks
+        ]
 
-    doc.chunk_status = CHUNK_STATUS_PROCESSING
-    db.commit()
+    doc.chunk_status = models_knowledge_document.CHUNK_STATUS_PROCESSING
+    commit_or_rollback(db)
 
     try:
         reader = PdfReader(doc.source_path)
@@ -178,7 +151,7 @@ def chunk_document(db: Session, document_id: int):
         pages: list[dict] = []
         for i, page in enumerate(reader.pages):
             page_text = page.extract_text() or ""
-            cleaned = _clean_pdf_text(page_text)
+            cleaned = clean_pdf_text(page_text)
             if cleaned:
                 pages.append({"page_no": i + 1, "text": cleaned})
 
@@ -190,83 +163,59 @@ def chunk_document(db: Session, document_id: int):
 
         page_chunks = chunk_pages(pages)
 
-        existing_count = (
-            db.query(KnowledgeChunk)
-            .filter(KnowledgeChunk.document_id == document_id)
-            .count()
+        existing_count = db.scalar(
+            select(func.count())
+            .select_from(models_knowledge_chunk.KnowledgeChunk)
+            .where(models_knowledge_chunk.KnowledgeChunk.document_id == document_id)
         )
         if existing_count > 0:
-            db.query(KnowledgeChunk).filter(
-                KnowledgeChunk.document_id == document_id
-            ).delete()
+            db.execute(
+                delete(models_knowledge_chunk.KnowledgeChunk).where(models_knowledge_chunk.KnowledgeChunk.document_id == document_id)
+            )
             db.flush()
 
-        chunk_records: list[KnowledgeChunk] = []
+        chunk_records: list[models_knowledge_chunk.KnowledgeChunk] = []
         for idx, chunk_info in enumerate(page_chunks):
             chunk_text_content = chunk_info["text"]
-            chunk_hash = compute_chunk_hash(chunk_text_content)
-            record = KnowledgeChunk(
+            chunk_hash = models_knowledge_chunk.compute_chunk_hash(chunk_text_content)
+            record = models_knowledge_chunk.KnowledgeChunk(
                 document_id=document_id,
                 page_no=chunk_info["page_no"],
                 chunk_index=idx,
                 chunk_text=chunk_text_content,
                 chunk_hash=chunk_hash,
                 char_count=len(chunk_text_content),
-                vector_status=CHUNK_VECTOR_STATUS_PENDING,
+                vector_status=models_knowledge_chunk.CHUNK_VECTOR_STATUS_PENDING,
             )
             db.add(record)
             chunk_records.append(record)
 
         doc.chunk_count = len(page_chunks)
-        doc.chunk_status = CHUNK_STATUS_COMPLETED
-        db.commit()
+        doc.chunk_status = models_knowledge_document.CHUNK_STATUS_COMPLETED
+        commit_or_rollback(db)
 
         for record in chunk_records:
             db.refresh(record)
 
         logger.info(
-            "文档切块完成: id=%d, chunks=%d, pages=%d",
-            document_id,
-            len(page_chunks),
-            len(pages),
+            f"文档切块完成: id={document_id}, chunks={len(page_chunks)}, pages={len(pages)}"
         )
-        return [KnowledgeChunkItem.model_validate(r) for r in chunk_records]
+        return [
+            schemas_knowledge_base.KnowledgeChunkItem.model_validate(r)
+            for r in chunk_records
+        ]
 
-    except Exception as e:
-        doc.chunk_status = CHUNK_STATUS_FAILED
-        doc.chunk_error_message = str(e)[:2000]
-        db.commit()
-        logger.error("文档切块失败: id=%d, error=%s", document_id, str(e))
+    except ServiceException:
+        doc.chunk_status = models_knowledge_document.CHUNK_STATUS_FAILED
+        doc.chunk_error_message = "操作失败"
+        commit_or_rollback(db)
         raise
-
-
-class ChunkSubmitResult:
-    def __init__(self, document_id: int, status: str, message: str):
-        self.document_id = document_id
-        self.status = status
-        self.message = message
-
-    def to_dict(self):
-        return {
-            "document_id": self.document_id,
-            "status": self.status,
-            "message": self.message,
-        }
-
-
-class BatchChunkSubmitResult:
-    def __init__(self):
-        self.submitted: int = 0
-        self.skipped: int = 0
-        self.submitted_ids: list[int] = []
-
-    def to_dict(self):
-        return {
-            "submitted": self.submitted,
-            "skipped": self.skipped,
-            "submitted_ids": self.submitted_ids,
-            "message": f"已提交{self.submitted}个文档的切块任务",
-        }
+    except Exception as e:
+        logger.error(f"文档切块失败: id={document_id}, error={e}", exc_info=True)
+        doc.chunk_status = models_knowledge_document.CHUNK_STATUS_FAILED
+        doc.chunk_error_message = "系统内部错误"
+        commit_or_rollback(db)
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from e
 
 
 def submit_and_run_chunk_task(
@@ -279,9 +228,7 @@ def submit_and_run_chunk_task(
     return result
 
 
-def submit_and_run_batch_chunk(
-    db: Session, document_ids: list[int], background_tasks
-):
+def submit_and_run_batch_chunk(db: Session, document_ids: list[int], background_tasks):
     """提交批量切块任务并注册后台执行"""
     result = submit_batch_chunk(db, document_ids)
     if result.submitted_ids:
@@ -303,30 +250,33 @@ def submit_chunk_task(
     db: Session,
     document_id: int,
     force: bool = False,
-) -> ChunkSubmitResult:
+):
     """提交单个文档的切块任务"""
-    doc = db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+    stmt = select(models_knowledge_document.KnowledgeDocument).where(models_knowledge_document.KnowledgeDocument.id == document_id)
+    doc = db.scalar(stmt)
     if doc is None:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"文档不存在: id={document_id}")
+        raise ServiceException(
+            ErrorCode.DATA_NOT_FOUND, f"文档不存在: id={document_id}"
+        )
 
-    if not force and doc.chunk_status == CHUNK_STATUS_COMPLETED:
-        return ChunkSubmitResult(
+    if not force and doc.chunk_status == models_knowledge_document.CHUNK_STATUS_COMPLETED:
+        return schemas_knowledge_base.ChunkSubmitResponse(
             document_id=document_id,
             status="skipped",
             message="文档已完成切块，跳过",
         )
 
-    if doc.chunk_status == CHUNK_STATUS_PROCESSING:
-        return ChunkSubmitResult(
+    if doc.chunk_status == models_knowledge_document.CHUNK_STATUS_PROCESSING:
+        return schemas_knowledge_base.ChunkSubmitResponse(
             document_id=document_id,
             status="processing",
             message="文档正在切块中",
         )
 
-    doc.chunk_status = CHUNK_STATUS_PROCESSING
-    db.commit()
+    doc.chunk_status = models_knowledge_document.CHUNK_STATUS_PROCESSING
+    commit_or_rollback(db)
 
-    return ChunkSubmitResult(
+    return schemas_knowledge_base.ChunkSubmitResponse(
         document_id=document_id,
         status="processing",
         message="切块任务已提交",
@@ -336,51 +286,65 @@ def submit_chunk_task(
 def submit_batch_chunk(
     db: Session,
     document_ids: list[int],
-) -> BatchChunkSubmitResult:
+):
     """提交批量切块任务"""
-    result = BatchChunkSubmitResult()
+    submitted = 0
+    skipped = 0
+    submitted_ids: list[int] = []
 
     for doc_id in document_ids:
         try:
             submit_result = submit_chunk_task(db, doc_id, force=False)
             if submit_result.status == "processing":
-                result.submitted += 1
-                result.submitted_ids.append(doc_id)
+                submitted += 1
+                submitted_ids.append(doc_id)
             else:
-                result.skipped += 1
+                skipped += 1
         except Exception as e:
             logger.error(f"提交切块任务失败: doc_id={doc_id}, error={e}")
-            result.skipped += 1
+            skipped += 1
 
-    return result
+    return schemas_knowledge_base.BatchChunkSubmitResponse(
+        submitted=submitted,
+        skipped=skipped,
+        submitted_ids=submitted_ids,
+        message=f"已提交{submitted}个文档的切块任务",
+    )
 
 
 def submit_all_pending_chunk(
     db: Session,
     limit: int = 100,
     doc_type: str | None = None,
-) -> BatchChunkSubmitResult:
+):
     """提交所有待处理文档的切块任务"""
-    query = db.query(KnowledgeDocument).filter(
-        KnowledgeDocument.chunk_status == CHUNK_STATUS_PENDING
+    stmt = select(models_knowledge_document.KnowledgeDocument).where(
+        models_knowledge_document.KnowledgeDocument.chunk_status == models_knowledge_document.CHUNK_STATUS_PENDING
     )
 
     if doc_type:
-        query = query.filter(KnowledgeDocument.doc_type == doc_type)
+        stmt = stmt.where(models_knowledge_document.KnowledgeDocument.doc_type == doc_type)
 
-    docs = query.limit(limit).all()
+    docs = db.scalars(stmt.limit(limit)).all()
 
-    result = BatchChunkSubmitResult()
+    submitted = 0
+    skipped = 0
+    submitted_ids: list[int] = []
     for doc in docs:
         try:
             submit_result = submit_chunk_task(db, doc.id, force=False)
             if submit_result.status == "processing":
-                result.submitted += 1
-                result.submitted_ids.append(doc.id)
+                submitted += 1
+                submitted_ids.append(doc.id)
         except Exception as e:
             logger.error(f"提交切块任务失败: doc_id={doc.id}, error={e}")
 
-    return result
+    return schemas_knowledge_base.BatchChunkSubmitResponse(
+        submitted=submitted,
+        skipped=skipped,
+        submitted_ids=submitted_ids,
+        message=f"已提交{submitted}个文档的切块任务",
+    )
 
 
 def run_chunk_in_background(document_id: int):
@@ -389,8 +353,12 @@ def run_chunk_in_background(document_id: int):
     try:
         chunk_document(db, document_id)
         logger.info(f"后台切块完成: document_id={document_id}")
+    except ServiceException as e:
+        logger.error(f"后台切块业务异常: document_id={document_id} error={e.message}")
     except Exception as e:
-        logger.error(f"后台切块失败: document_id={document_id}, error={e}")
+        logger.error(
+            f"后台切块系统异常: document_id={document_id} error={e}", exc_info=True
+        )
     finally:
         db.close()
 
@@ -402,8 +370,24 @@ def run_chunk_batch_in_background(document_ids: list[int]):
         for doc_id in document_ids:
             try:
                 chunk_document(db, doc_id)
+            except ServiceException as e:
+                logger.error(f"切块业务异常: document_id={doc_id} error={e.message}")
             except Exception as e:
-                logger.error(f"切块失败: document_id={doc_id}, error={e}")
+                logger.error(
+                    f"切块系统异常: document_id={doc_id} error={e}", exc_info=True
+                )
         logger.info(f"后台批量切块完成: {len(document_ids)} 个文档")
     finally:
         db.close()
+
+
+"""辅助函数"""
+
+
+def _find_split_boundary(text: str):
+    """在文本中从末尾查找最佳分割位置"""
+    for sep in ["\n\n", "。", "！", "？", ".", "!", "?", "；", ";", "\n", "，", ","]:
+        pos = text.rfind(sep)
+        if pos > 0:
+            return pos + len(sep)
+    return None

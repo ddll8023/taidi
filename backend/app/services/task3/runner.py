@@ -1,10 +1,7 @@
 """任务三工作台执行服务。"""
 
-import json
 from datetime import datetime
-from decimal import Decimal
 
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,157 +14,13 @@ from app.schemas.task3 import (
     Task3BatchAnswerResponse,
     Task3QuestionActionResponse,
 )
+from app.services.task3.helpers import _parse_question_rounds, _to_jsonable
 from app.services.task3.planner import process_task3_question
 from app.services.task3.verifier import verify_execution_trace
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
-
-
-"""辅助函数"""
-
-
-def _to_jsonable(value):
-    """将复杂对象递归转换为 JSON 可序列化结构。"""
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, dict):
-        return {key: _to_jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_to_jsonable(item) for item in value]
-    return value
-
-
-def _build_failure_message(verification: dict | None, fallback: str = "任务三回答未通过校验"):
-    """根据校验结果拼接失败原因文本。"""
-    if not verification:
-        return fallback
-
-    errors = verification.get("errors") or []
-    warnings = verification.get("warnings") or []
-    messages = [str(item) for item in [*errors, *warnings] if item]
-    if not messages:
-        return fallback
-    return "; ".join(messages)[:2000]
-
-
-def _parse_question_rounds(question_json_str: str):
-    """解析题目原始 JSON 为轮次列表。"""
-    try:
-        parsed = json.loads(question_json_str)
-    except (json.JSONDecodeError, TypeError):
-        parsed = [{"Q": question_json_str}]
-
-    if not isinstance(parsed, list):
-        parsed = [{"Q": str(parsed)}]
-
-    rounds = []
-    for item in parsed:
-        if isinstance(item, dict):
-            q_text = str(item.get("Q", "")).strip()
-        else:
-            q_text = str(item).strip()
-        if q_text:
-            rounds.append({"Q": q_text})
-
-    if not rounds:
-        rounds.append({"Q": str(question_json_str or "").strip()})
-    return rounds
-
-
-def _build_standalone_question(q_text: str, previous_rounds: list[dict]):
-    """将当前追问与历史轮次拼接为独立问题。"""
-    if not previous_rounds:
-        return q_text
-
-    history_parts = []
-    for idx, item in enumerate(previous_rounds, start=1):
-        question_text = str(item.get("Q", "")).strip()
-        answer_text = str(item.get("A", "")).strip()
-        if len(answer_text) > 300:
-            answer_text = answer_text[:300] + "..."
-        history_parts.append(
-            f"第{idx}轮问题：{question_text}\n第{idx}轮回答：{answer_text}"
-        )
-
-    history_text = "\n\n".join(history_parts)
-    return (
-        "请结合以下多轮对话上下文，补全当前追问中的省略信息后回答。\n"
-        f"历史上下文：\n{history_text}\n\n"
-        f"当前问题：{q_text}"
-    )
-
-
-def _build_reference_json(ref):
-    """将引用对象规范化为输出字典。"""
-    if isinstance(ref, dict):
-        return {
-            "paper_path": ref.get("paper_path"),
-            "text": ref.get("text") or "",
-            "paper_image": ref.get("paper_image"),
-        }
-    return {
-        "paper_path": ref.paper_path if hasattr(ref, "paper_path") else None,
-        "text": ref.text if hasattr(ref, "text") else "",
-        "paper_image": ref.paper_image if hasattr(ref, "paper_image") else None,
-    }
-
-
-def _build_answer_item(q_text: str, response):
-    """构造单轮回答的输出对象。"""
-    references = []
-    for ref in response.answer.references:
-        ref_json = _build_reference_json(ref)
-        if ref_json.get("text") or ref_json.get("paper_path"):
-            references.append(ref_json)
-
-    answer_payload = {"content": response.answer.content}
-    if references:
-        answer_payload["references"] = references
-
-    return {
-        "Q": q_text,
-        "A": answer_payload,
-    }
-
-
-def _build_retrieval_summary(trace):
-    """从执行轨迹中提取检索摘要。"""
-    retrieve_steps = [
-        r for r in trace.results
-        if r.step_type == StepType.RETRIEVE_EVIDENCE and r.status == StepStatus.COMPLETED
-    ]
-    if not retrieve_steps:
-        return None
-
-    total_hits = sum(
-        r.output.get("evidence_count", 0)
-        for r in retrieve_steps
-    )
-
-    doc_types = set()
-    stock_filters = set()
-    for r in retrieve_steps:
-        evidence_list = r.output.get("evidence", [])
-        for ev in evidence_list:
-            if isinstance(ev, dict):
-                if ev.get("doc_type"):
-                    doc_types.add(ev["doc_type"])
-                if ev.get("stock_code"):
-                    stock_filters.add(ev["stock_code"])
-
-    return {
-        "triggered": True,
-        "hit_count": total_hits,
-        "doc_types": list(doc_types) if doc_types else None,
-        "stock_filter": list(stock_filters)[0] if len(stock_filters) == 1 else (list(stock_filters) if stock_filters else None),
-        "generated_references": len(trace.references) > 0,
-    }
 
 
 # ========== 公共入口函数 ==========
@@ -326,22 +179,6 @@ def rerun_question(question_id: int, db: Session):
     return answer_single_question(question_id, db)
 
 
-def _sync_workspace_stats(db: Session, workspace_id: int):
-    """同步工作台题目统计信息。"""
-    workspace = db.get(Task3Workspace, workspace_id)
-    if workspace is None:
-        return
-
-    stmt = select(Task3QuestionItem).where(Task3QuestionItem.workspace_id == workspace_id)
-    questions = db.execute(stmt).scalars().all()
-
-    workspace.total_questions = len(questions)
-    workspace.answered_count = sum(1 for q in questions if q.status == 2)
-    workspace.failed_count = sum(1 for q in questions if q.status == 3)
-    workspace.pending_count = sum(1 for q in questions if q.status == 0)
-    db.flush()
-
-
 def batch_answer_questions(
     workspace_id: int,
     scope: str,
@@ -382,3 +219,125 @@ def batch_answer_with_workspace_check(scope: str, db: Session):
     from app.services.task3.importer import get_workspace_or_raise
     workspace = get_workspace_or_raise(db)
     return batch_answer_questions(workspace_id=workspace.id, scope=scope, db=db)
+
+
+"""辅助函数"""
+
+
+def _build_failure_message(verification: dict | None, fallback: str = "任务三回答未通过校验"):
+    """根据校验结果拼接失败原因文本。"""
+    if not verification:
+        return fallback
+
+    errors = verification.get("errors") or []
+    warnings = verification.get("warnings") or []
+    messages = [str(item) for item in [*errors, *warnings] if item]
+    if not messages:
+        return fallback
+    return "; ".join(messages)[:2000]
+
+
+def _build_standalone_question(q_text: str, previous_rounds: list[dict]):
+    """将当前追问与历史轮次拼接为独立问题。"""
+    if not previous_rounds:
+        return q_text
+
+    history_parts = []
+    for idx, item in enumerate(previous_rounds, start=1):
+        question_text = str(item.get("Q", "")).strip()
+        answer_text = str(item.get("A", "")).strip()
+        if len(answer_text) > 300:
+            answer_text = answer_text[:300] + "..."
+        history_parts.append(
+            f"第{idx}轮问题：{question_text}\n第{idx}轮回答：{answer_text}"
+        )
+
+    history_text = "\n\n".join(history_parts)
+    return (
+        "请结合以下多轮对话上下文，补全当前追问中的省略信息后回答。\n"
+        f"历史上下文：\n{history_text}\n\n"
+        f"当前问题：{q_text}"
+    )
+
+
+def _build_reference_json(ref):
+    """将引用对象规范化为输出字典。"""
+    if isinstance(ref, dict):
+        return {
+            "paper_path": ref.get("paper_path"),
+            "text": ref.get("text") or "",
+            "paper_image": ref.get("paper_image"),
+        }
+    return {
+        "paper_path": ref.paper_path if hasattr(ref, "paper_path") else None,
+        "text": ref.text if hasattr(ref, "text") else "",
+        "paper_image": ref.paper_image if hasattr(ref, "paper_image") else None,
+    }
+
+
+def _build_answer_item(q_text: str, response):
+    """构造单轮回答的输出对象。"""
+    references = []
+    for ref in response.answer.references:
+        ref_json = _build_reference_json(ref)
+        if ref_json.get("text") or ref_json.get("paper_path"):
+            references.append(ref_json)
+
+    answer_payload = {"content": response.answer.content}
+    if references:
+        answer_payload["references"] = references
+
+    return {
+        "Q": q_text,
+        "A": answer_payload,
+    }
+
+
+def _build_retrieval_summary(trace):
+    """从执行轨迹中提取检索摘要。"""
+    retrieve_steps = [
+        r for r in trace.results
+        if r.step_type == StepType.RETRIEVE_EVIDENCE and r.status == StepStatus.COMPLETED
+    ]
+    if not retrieve_steps:
+        return None
+
+    total_hits = sum(
+        r.output.get("evidence_count", 0)
+        for r in retrieve_steps
+    )
+
+    doc_types = set()
+    stock_filters = set()
+    for r in retrieve_steps:
+        evidence_list = r.output.get("evidence", [])
+        for ev in evidence_list:
+            if isinstance(ev, dict):
+                if ev.get("doc_type"):
+                    doc_types.add(ev["doc_type"])
+                if ev.get("stock_code"):
+                    stock_filters.add(ev["stock_code"])
+
+    return {
+        "triggered": True,
+        "hit_count": total_hits,
+        "doc_types": list(doc_types) if doc_types else None,
+        "stock_filter": list(stock_filters)[0] if len(stock_filters) == 1 else (list(stock_filters) if stock_filters else None),
+        "generated_references": len(trace.references) > 0,
+    }
+
+
+def _sync_workspace_stats(db: Session, workspace_id: int):
+    """同步工作台题目统计信息。"""
+    workspace = db.get(Task3Workspace, workspace_id)
+    if workspace is None:
+        return
+
+    stmt = select(Task3QuestionItem).where(Task3QuestionItem.workspace_id == workspace_id)
+    questions = db.execute(stmt).scalars().all()
+
+    workspace.total_questions = len(questions)
+    workspace.answered_count = sum(1 for q in questions if q.status == 2)
+    workspace.failed_count = sum(1 for q in questions if q.status == 3)
+    workspace.pending_count = sum(1 for q in questions if q.status == 0)
+    db.flush()

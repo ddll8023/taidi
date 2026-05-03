@@ -36,7 +36,7 @@ async def chunk_document(
         result = services_knowledge_base.submit_and_run_chunk_task(
             db, document_id, force, background_tasks
         )
-        return success(data=result.to_dict())
+        return success(data=result.model_dump())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 
@@ -52,7 +52,7 @@ async def chunk_documents_batch(
         result = services_knowledge_base.submit_and_run_batch_chunk(
             db, request.document_ids, background_tasks
         )
-        return success(data=result.to_dict())
+        return success(data=result.model_dump())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 
@@ -68,7 +68,7 @@ async def chunk_all_pending(
         result = services_knowledge_base.submit_and_run_all_pending_chunk(
             db, request.limit, request.doc_type, background_tasks
         )
-        return success(data=result.to_dict())
+        return success(data=result.model_dump())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 
@@ -86,7 +86,7 @@ async def vectorize_document(
         result = services_knowledge_base.submit_and_run_vectorize_task(
             db, document_id, force, batch_size, background_tasks
         )
-        return success(data=result.to_dict())
+        return success(data=result.model_dump())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 
@@ -102,7 +102,7 @@ async def vectorize_chunks(
         result = services_knowledge_base.submit_and_run_batch_vectorize(
             db, request.batch_size, request.force, background_tasks
         )
-        return success(data=result.to_dict())
+        return success(data=result.model_dump())
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 
