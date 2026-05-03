@@ -1,11 +1,12 @@
 """智能问数图表生成服务"""
+from decimal import Decimal
 import os
 import re
-from decimal import Decimal
 from typing import Any
 
 import numpy as np
 
+from app.constants import visualization as constants_visualization
 from app.schemas.chat import IntentResult, QueryType
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
@@ -16,6 +17,9 @@ logger = setup_logger(__name__)
 CHART_DIR = os.path.join(os.getcwd(), "result")
 
 
+# ========== 公共入口函数 ==========
+
+
 def get_chart_image_path(filename: str):
     """获取图表图片路径，不存在则抛出异常"""
     file_path = os.path.join(CHART_DIR, filename)
@@ -24,58 +28,6 @@ def get_chart_image_path(filename: str):
     return file_path
 
 
-CHART_TYPES = [
-    "line",
-    "bar",
-    "pie",
-    "horizontal_bar",
-    "grouped_bar",
-    "radar",
-    "histogram",
-    "scatter",
-    "box",
-]
-PERIOD_SORT_MAP = {
-    "Q1": 1,
-    "HY": 2,
-    "Q3": 3,
-    "FY": 4,
-}
-TIME_COLUMN_TOKENS = ("year", "period", "date", "time", "年", "期", "日期", "时间")
-CATEGORY_COLUMN_TOKENS = (
-    "stock_abbr",
-    "company",
-    "company_name",
-    "name",
-    "abbr",
-    "简称",
-    "名称",
-    "企业",
-    "公司",
-)
-DIMENSION_COLUMN_TOKENS = TIME_COLUMN_TOKENS + (
-    "id",
-    "code",
-    "type",
-    "rank",
-    "编号",
-    "代码",
-    "类型",
-    "排名",
-)
-
-CHART_TYPE_KEYWORDS = {
-    "horizontal_bar": ["水平柱状图", "横向柱状图", "水平条形图", "条形图"],
-    "grouped_bar": ["分组柱状图", "双条形图", "并列柱状图", "对比柱状图"],
-    "radar": ["雷达图", "蜘蛛图", "雷达"],
-    "histogram": ["直方图", "分布图", "频率分布", "历史分布", "直方图展示"],
-    "scatter": ["散点图", "散点", "相关性图"],
-    "box": ["箱线图", "箱型图", "盒须图"],
-}
-
-
-# ========== 公共入口函数 ==========
-
 def generate_chart(
     data: list[dict],
     intent: IntentResult,
@@ -83,13 +35,13 @@ def generate_chart(
     sequence: int = 1,
     requested_chart_type: str | None = None,
 ):
-    """根据查询结果和意图生成图表文件，并返回文件路径与图表类型。"""
+    """根据查询结果和意图生成图表文件，并返回文件路径与图表类型"""
     chart_type = _select_chart_type(data, intent, requested_chart_type)
     if chart_type is None:
-        logger.info("无需生成图表: question_id=%s", question_id)
+        logger.info(f"无需生成图表: question_id={question_id}")
         return None, None
 
-    logger.info("生成图表: question_id=%s chart_type=%s", question_id, chart_type)
+    logger.info(f"生成图表: question_id={question_id} chart_type={chart_type}")
 
     try:
         import matplotlib
@@ -100,8 +52,7 @@ def generate_chart(
         plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
         plt.rcParams["axes.unicode_minus"] = False
     except ImportError:
-        logger.warning("matplotlib未安装，跳过图表生成")
-        return None, None
+        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "图表渲染环境未就绪")
 
     os.makedirs(CHART_DIR, exist_ok=True)
     file_name = f"{question_id}_{sequence}.jpg"
@@ -127,16 +78,19 @@ def generate_chart(
         elif chart_type == "box":
             _render_box_chart(data, intent, plt)
         else:
-            return None, None
+            raise ServiceException(ErrorCode.INTERNAL_ERROR, "不支持的图表类型")
 
         plt.savefig(file_path, dpi=150, bbox_inches="tight")
         plt.close()
-        logger.info("图表已保存: %s", file_path)
+        logger.info(f"图表已保存: {file_path}")
         return file_path, chart_type
-    except Exception as exc:
-        logger.error("图表生成失败: %s", str(exc))
+    except ServiceException:
         plt.close("all")
-        return None, None
+        raise
+    except Exception as exc:
+        logger.error(f"图表生成失败: {exc}")
+        plt.close("all")
+        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "图表生成失败")
 
 
 """辅助函数"""
@@ -144,7 +98,7 @@ def generate_chart(
 
 def _detect_requested_chart_type(question: str):
     """从问题中检测用户请求的图表类型"""
-    for chart_type, keywords in CHART_TYPE_KEYWORDS.items():
+    for chart_type, keywords in constants_visualization.CHART_TYPE_KEYWORDS.items():
         for keyword in keywords:
             if keyword in question:
                 return chart_type
@@ -156,6 +110,7 @@ def _select_chart_type(
     intent: IntentResult,
     requested_chart_type: str | None = None,
 ):
+    """根据数据和意图选择最合适的图表类型"""
     if not data:
         return None
 
@@ -205,7 +160,7 @@ def _select_chart_type(
 
 def _validate_chart_type(chart_type: str, data: list[dict]):
     """验证图表类型是否适用于当前数据"""
-    if chart_type not in CHART_TYPES:
+    if chart_type not in constants_visualization.CHART_TYPES:
         return False
 
     numeric_cols = _find_numeric_columns(data)
@@ -228,6 +183,7 @@ def _validate_chart_type(chart_type: str, data: list[dict]):
 
 
 def _find_numeric_columns(data: list[dict]):
+    """查找数据中所有数值列"""
     if not data:
         return []
 
@@ -250,12 +206,14 @@ def _find_numeric_columns(data: list[dict]):
 
 
 def _has_time_dimension(data: list[dict]):
+    """判断数据是否包含时间维度列"""
     if not data:
         return False
     return any(_is_time_column(key) for key in _collect_columns(data))
 
 
 def _collect_columns(data: list[dict]):
+    """收集数据中所有列名，保持首次出现顺序"""
     columns: list[str] = []
     seen: set[str] = set()
     for row in data:
@@ -267,20 +225,24 @@ def _collect_columns(data: list[dict]):
 
 
 def _normalize_column_name(column: Any):
+    """标准化列名：去除非字母数字字符并转小写"""
     return re.sub(r"[\W_]+", "", str(column)).lower()
 
 
 def _is_time_column(column: str):
+    """判断列名是否为时间维度"""
     key_normalized = _normalize_column_name(column)
-    return any(token in key_normalized for token in TIME_COLUMN_TOKENS)
+    return any(token in key_normalized for token in constants_visualization.TIME_COLUMN_TOKENS)
 
 
 def _is_dimension_column(column: str):
+    """判断列名是否为维度列"""
     key_normalized = _normalize_column_name(column)
-    return any(token in key_normalized for token in DIMENSION_COLUMN_TOKENS)
+    return any(token in key_normalized for token in constants_visualization.DIMENSION_COLUMN_TOKENS)
 
 
 def _is_numeric_value(value: Any):
+    """判断值是否为数值类型或可转为数值的字符串"""
     if value is None or isinstance(value, bool):
         return False
 
@@ -303,6 +265,7 @@ def _is_numeric_value(value: Any):
 
 
 def _to_float(value: Any):
+    """将值转为浮点数，无法转换时返回0.0"""
     if value is None:
         return 0.0
     if isinstance(value, bool):
@@ -322,6 +285,7 @@ def _to_float(value: Any):
 
 
 def _pick_metric_column(numeric_cols: list[str], intent: IntentResult):
+    """从数值列中匹配意图指定的指标列"""
     if not numeric_cols:
         return ""
 
@@ -363,6 +327,7 @@ def _pick_metric_column(numeric_cols: list[str], intent: IntentResult):
 
 
 def _pick_category_column(data: list[dict], numeric_cols: list[str]):
+    """从数据中选取最佳分类列"""
     candidate_cols = [
         column
         for column in _collect_columns(data)
@@ -376,7 +341,7 @@ def _pick_category_column(data: list[dict], numeric_cols: list[str]):
     for index, column in enumerate(candidate_cols):
         normalized_column = _normalize_column_name(column)
         score = 0
-        if any(token in normalized_column for token in CATEGORY_COLUMN_TOKENS):
+        if any(token in normalized_column for token in constants_visualization.CATEGORY_COLUMN_TOKENS):
             score = 100
         score -= index
         if score > best_score:
@@ -387,6 +352,7 @@ def _pick_category_column(data: list[dict], numeric_cols: list[str]):
 
 
 def _extract_report_year(row: dict):
+    """从行数据中提取报告年份"""
     for column in row.keys():
         normalized_column = _normalize_column_name(column)
         if normalized_column == "reportyear" or normalized_column == "year":
@@ -401,6 +367,7 @@ def _extract_report_year(row: dict):
 
 
 def _extract_report_period(row: dict):
+    """从行数据中提取报告期（Q1/HY/Q3/FY）"""
     for column in row.keys():
         normalized_column = _normalize_column_name(column)
         if normalized_column == "reportperiod" or normalized_column == "period":
@@ -412,6 +379,7 @@ def _extract_report_period(row: dict):
 
 
 def _build_time_label(row: dict):
+    """构建时间轴标签（如 2024FY）"""
     report_year = _extract_report_year(row)
     report_period = _extract_report_period(row)
 
@@ -431,6 +399,7 @@ def _build_time_label(row: dict):
 
 
 def _sort_trend_rows(data: list[dict]):
+    """按年份、报告期对趋势数据排序"""
     if not data:
         return []
 
@@ -445,7 +414,7 @@ def _sort_trend_rows(data: list[dict]):
                 if _extract_report_year(row) is not None
                 else 9999
             ),
-            PERIOD_SORT_MAP.get(_extract_report_period(row) or "", 99),
+            constants_visualization.PERIOD_SORT_MAP.get(_extract_report_period(row) or "", 99),
             _build_time_label(row) or "",
         ),
     )
@@ -456,6 +425,7 @@ def _build_x_labels(
     intent: IntentResult,
     numeric_cols: list[str],
 ):
+    """根据数据构建X轴标签列表"""
     if not data:
         return []
 
@@ -491,6 +461,7 @@ def _build_x_labels(
 def _extract_chart_data(
     data: list[dict], intent: IntentResult
 ):
+    """提取图表所需的标签、数值、标题和Y轴标签"""
     x_labels = []
     y_values = []
     title = "数据图表"
@@ -541,6 +512,7 @@ def _extract_chart_data(
 
 
 def _render_line_chart(data: list[dict], intent: IntentResult, plt):
+    """渲染折线图"""
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(x_labels, y_values, marker="o", linewidth=2, markersize=6)
@@ -561,6 +533,7 @@ def _render_line_chart(data: list[dict], intent: IntentResult, plt):
 
 
 def _render_bar_chart(data: list[dict], intent: IntentResult, plt):
+    """渲染柱状图"""
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
     fig, ax = plt.subplots(figsize=(10, 6))
     bars = ax.bar(x_labels, y_values, color="steelblue", alpha=0.8)
@@ -581,6 +554,7 @@ def _render_bar_chart(data: list[dict], intent: IntentResult, plt):
 
 
 def _render_pie_chart(data: list[dict], intent: IntentResult, plt):
+    """渲染饼图"""
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.pie(y_values, labels=x_labels, autopct="%1.1f%%", startangle=90)
@@ -589,6 +563,7 @@ def _render_pie_chart(data: list[dict], intent: IntentResult, plt):
 
 
 def _render_horizontal_bar_chart(data: list[dict], intent: IntentResult, plt):
+    """渲染水平条形图"""
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
     fig, ax = plt.subplots(figsize=(10, max(6, len(x_labels) * 0.4)))
     y_pos = range(len(x_labels))
@@ -611,6 +586,7 @@ def _render_horizontal_bar_chart(data: list[dict], intent: IntentResult, plt):
 
 
 def _render_grouped_bar_chart(data: list[dict], intent: IntentResult, plt):
+    """渲染分组柱状图"""
     if not data:
         return
 
@@ -679,6 +655,7 @@ def _render_grouped_bar_chart(data: list[dict], intent: IntentResult, plt):
 
 
 def _render_radar_chart(data: list[dict], intent: IntentResult, plt):
+    """渲染雷达图"""
     if not data or len(data) < 3:
         return
 
@@ -724,6 +701,7 @@ def _render_radar_chart(data: list[dict], intent: IntentResult, plt):
 
 
 def _render_histogram_chart(data: list[dict], intent: IntentResult, plt):
+    """渲染直方图"""
     x_labels, y_values, title, y_label = _extract_chart_data(data, intent)
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -754,6 +732,7 @@ def _render_histogram_chart(data: list[dict], intent: IntentResult, plt):
 
 
 def _render_scatter_chart(data: list[dict], intent: IntentResult, plt):
+    """渲染散点图"""
     if not data:
         return
 
@@ -797,6 +776,7 @@ def _render_scatter_chart(data: list[dict], intent: IntentResult, plt):
 
 
 def _render_box_chart(data: list[dict], intent: IntentResult, plt):
+    """渲染箱线图"""
     if not data:
         return
 

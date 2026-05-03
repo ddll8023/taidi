@@ -1,12 +1,9 @@
 """福建5表Excel解析服务"""
 from __future__ import annotations
 
+from datetime import datetime
 import io
 import os
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Tuple
-
 import pandas as pd
 
 from app.core.config import settings
@@ -23,7 +20,7 @@ logger = setup_logger(__name__)
 def parse_stock_research_excel(file_path: str):
     """解析个股研报Excel文件"""
     if not os.path.exists(file_path):
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"个股研报文件不存在: {file_path}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "个股研报文件不存在")
 
     logger.info(f"开始解析个股研报 Excel: {file_path}")
 
@@ -31,7 +28,7 @@ def parse_stock_research_excel(file_path: str):
         df = pd.read_excel(file_path)
     except Exception as e:
         logger.error(f"读取个股研报 Excel 失败: {file_path}, 错误: {e}")
-        raise ServiceException(ErrorCode.PARAM_ERROR, f"读取 Excel 文件失败: {e}") from e
+        raise ServiceException(ErrorCode.PARAM_ERROR, "读取 Excel 文件失败") from e
 
     return _parse_stock_research_df(df, "个股研报")
 
@@ -39,7 +36,7 @@ def parse_stock_research_excel(file_path: str):
 def parse_industry_research_excel(file_path: str):
     """解析行业研报Excel文件"""
     if not os.path.exists(file_path):
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"行业研报文件不存在: {file_path}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "行业研报文件不存在")
 
     logger.info(f"开始解析行业研报 Excel: {file_path}")
 
@@ -47,7 +44,7 @@ def parse_industry_research_excel(file_path: str):
         df = pd.read_excel(file_path)
     except Exception as e:
         logger.error(f"读取行业研报 Excel 失败: {file_path}, 错误: {e}")
-        raise ServiceException(ErrorCode.PARAM_ERROR, f"读取 Excel 文件失败: {e}") from e
+        raise ServiceException(ErrorCode.PARAM_ERROR, "读取 Excel 文件失败") from e
 
     return _parse_industry_research_df(df, "行业研报")
 
@@ -60,7 +57,7 @@ def parse_stock_research_excel_from_upload(file_content: bytes):
         df = pd.read_excel(io.BytesIO(file_content))
     except Exception as e:
         logger.error(f"读取上传的个股研报 Excel 失败: {e}")
-        raise ServiceException(ErrorCode.PARAM_ERROR, f"读取 Excel 文件失败: {e}") from e
+        raise ServiceException(ErrorCode.PARAM_ERROR, "读取 Excel 文件失败") from e
 
     fields = list(df.columns)
     records = _parse_stock_research_df(df, "个股研报(上传)")
@@ -75,7 +72,7 @@ def parse_industry_research_excel_from_upload(file_content: bytes):
         df = pd.read_excel(io.BytesIO(file_content))
     except Exception as e:
         logger.error(f"读取上传的行业研报 Excel 失败: {e}")
-        raise ServiceException(ErrorCode.PARAM_ERROR, f"读取 Excel 文件失败: {e}") from e
+        raise ServiceException(ErrorCode.PARAM_ERROR, "读取 Excel 文件失败") from e
 
     fields = list(df.columns)
     records = _parse_industry_research_df(df, "行业研报(上传)")
@@ -98,24 +95,16 @@ def parse_fujian5_excel_data(
     industry_research_data = []
 
     if os.path.exists(stock_research_path):
-        try:
-            stock_research_data = parse_stock_research_excel(stock_research_path)
-            logger.info(f"成功解析个股研报: {len(stock_research_data)} 条")
-        except Exception as e:
-            logger.error(f"解析个股研报失败: {e}")
-            raise
+        stock_research_data = parse_stock_research_excel(stock_research_path)
+        logger.info(f"成功解析个股研报: {len(stock_research_data)} 条")
     else:
         logger.warning(f"个股研报文件不存在: {stock_research_path}")
 
     if os.path.exists(industry_research_path):
-        try:
-            industry_research_data = parse_industry_research_excel(
-                industry_research_path
-            )
-            logger.info(f"成功解析行业研报: {len(industry_research_data)} 条")
-        except Exception as e:
-            logger.error(f"解析行业研报失败: {e}")
-            raise
+        industry_research_data = parse_industry_research_excel(
+            industry_research_path
+        )
+        logger.info(f"成功解析行业研报: {len(industry_research_data)} 条")
     else:
         logger.warning(f"行业研报文件不存在: {industry_research_path}")
 

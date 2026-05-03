@@ -1,42 +1,64 @@
 """企业基本信息处理服务"""
 from __future__ import annotations
 
-import os
-import tempfile
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import company_basic_info as models_company_basic_info
+from app.constants import company_basic_info as constants_company_basic_info
 from app.db.database import commit_or_rollback
+from app.models import company_basic_info as models_company_basic_info
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
 from app.utils.xlsx_reader import read_sheet_as_dicts
 
 
-ATTACHMENT1_SHEET_NAME = "基本信息表"
-ATTACHMENT1_FIELD_MAP = {
-    "序号": "source_row_no",
-    "股票代码": "stock_code",
-    "A股简称": "stock_abbr",
-    "公司名称": "company_name",
-    "英文名称": "english_name",
-    "所属证监会行业": "csrc_industry",
-    "上市交易所": "listed_exchange",
-    "证券类别": "security_category",
-    "注册区域": "registered_region",
-    "注册资本": "registered_capital_raw",
-    "雇员人数": "employee_count",
-    "管理人员人数": "management_count",
-}
-
 # ========== 公共入口函数 ==========
 
-def normalize_registered_capital_to_yuan(raw_value: str | None):
-    """将附件1中的注册资本文本换算为元。"""
+
+def upsert_company_basic_info_records(
+    db: Session,
+    source_file_path: str | Path,
+):
+    """将附件1中的公司基础信息幂等写入 company_basic_info"""
+    rows = _load_company_basic_info_rows(source_file_path)
+
+    inserted_count = 0
+    updated_count = 0
+    for raw_row in rows:
+        payload = _build_company_basic_info_payload(raw_row, Path(source_file_path).name)
+        stock_code = str(payload["stock_code"])
+
+        existing = db.execute(
+            select(models_company_basic_info.CompanyBasicInfo).where(
+                models_company_basic_info.CompanyBasicInfo.stock_code == stock_code
+            )
+        ).scalar_one_or_none()
+
+        if existing is None:
+            db.add(models_company_basic_info.CompanyBasicInfo(**payload))
+            inserted_count += 1
+            continue
+
+        for field, value in payload.items():
+            setattr(existing, field, value)
+        updated_count += 1
+
+    commit_or_rollback(db)
+    return {
+        "total": len(rows),
+        "inserted": inserted_count,
+        "updated": updated_count,
+    }
+
+
+# ========== 辅助函数 ==========
+
+
+def _normalize_registered_capital_to_yuan(raw_value: str | None):
+    """将附件1中的注册资本文本换算为元"""
     if raw_value is None:
         return None
 
@@ -63,22 +85,22 @@ def normalize_registered_capital_to_yuan(raw_value: str | None):
         raise ServiceException(ErrorCode.PARAM_ERROR, f"无法解析注册资本：{raw_value}") from exc
 
 
-def load_company_basic_info_rows(source_file_path: str | Path):
-    """直接从附件1读取公司基础信息行。"""
-    rows = read_sheet_as_dicts(source_file_path, ATTACHMENT1_SHEET_NAME)
+def _load_company_basic_info_rows(source_file_path: str | Path):
+    """直接从附件1读取公司基础信息行"""
+    rows = read_sheet_as_dicts(source_file_path, constants_company_basic_info.ATTACHMENT1_SHEET_NAME)
     if not rows:
         raise ServiceException(ErrorCode.PARAM_ERROR, "附件1-基本信息表为空")
     return rows
 
 
-def build_company_basic_info_payload(
+def _build_company_basic_info_payload(
     raw_row: dict[str, str],
     source_file_name: str,
 ):
-    """将附件1原始行映射为 ORM 入库载荷。"""
+    """将附件1原始行映射为 ORM 入库载荷"""
     payload = {
         target_field: raw_row.get(source_field, "").strip()
-        for source_field, target_field in ATTACHMENT1_FIELD_MAP.items()
+        for source_field, target_field in constants_company_basic_info.ATTACHMENT1_FIELD_MAP.items()
     }
 
     missing_fields = [
@@ -96,7 +118,7 @@ def build_company_basic_info_payload(
     payload["exchange"] = models_company_basic_info.normalize_exchange_code(
         listed_exchange
     )
-    payload["registered_capital_yuan"] = normalize_registered_capital_to_yuan(
+    payload["registered_capital_yuan"] = _normalize_registered_capital_to_yuan(
         str(payload["registered_capital_raw"]).strip() or None
     )
     payload["source_file_name"] = source_file_name
@@ -106,57 +128,3 @@ def build_company_basic_info_payload(
         payload[field] = int(value) if value else None
 
     return payload
-
-
-def upsert_company_basic_info_records(
-    db: Session,
-    source_file_path: str | Path,
-):
-    """将附件1中的公司基础信息幂等写入 company_basic_info。"""
-    source_path = Path(source_file_path)
-    rows = load_company_basic_info_rows(source_path)
-
-    inserted_count = 0
-    updated_count = 0
-    for raw_row in rows:
-        payload = build_company_basic_info_payload(raw_row, source_path.name)
-        stock_code = str(payload["stock_code"])
-
-        existing = db.execute(
-            select(models_company_basic_info.CompanyBasicInfo).where(
-                models_company_basic_info.CompanyBasicInfo.stock_code == stock_code
-            )
-        ).scalar_one_or_none()
-
-        if existing is None:
-            db.add(models_company_basic_info.CompanyBasicInfo(**payload))
-            inserted_count += 1
-            continue
-
-        for field, value in payload.items():
-            setattr(existing, field, value)
-        updated_count += 1
-
-    commit_or_rollback(db)
-    return {
-        "total": len(rows),
-        "inserted": inserted_count,
-        "updated": updated_count,
-    }
-
-
-async def import_companies_from_upload(db: Session, file: UploadFile):
-    """接收上传文件，校验格式后导入公司基本信息"""
-    if not file.filename or not file.filename.endswith(('.xlsx', '.xls')):
-        raise ServiceException(ErrorCode.PARAM_ERROR, "仅支持 Excel 文件（.xlsx 或 .xls）")
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    try:
-        return upsert_company_basic_info_records(db, tmp_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)

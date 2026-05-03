@@ -1,4 +1,6 @@
 """数据上传处理 API 路由"""
+import os
+import tempfile
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, File, Path, Body, UploadFile, BackgroundTasks
@@ -8,7 +10,7 @@ from app.db.database import get_db
 from app.services import analysis_data as services_analysis_data
 from app.services import company_basic_info as services_company_basic_info
 from app.schemas.response import success, error
-from app.schemas.common import ApiResponse
+from app.schemas.common import ApiResponse, ErrorCode
 from app.utils.exception import ServiceException
 from app.schemas import analysis_data as schemas_analysis_data
 
@@ -127,8 +129,20 @@ async def import_companies(
 ):
     """导入附件1公司基本信息"""
     try:
-        result = await services_company_basic_info.import_companies_from_upload(db, file)
-        return success(data=result)
+        if not file.filename or not file.filename.endswith(('.xlsx', '.xls')):
+            raise ServiceException(ErrorCode.PARAM_ERROR, "仅支持 Excel 文件（.xlsx 或 .xls）")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        try:
+            result = services_company_basic_info.upsert_company_basic_info_records(db, tmp_path)
+            return success(data=result)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 

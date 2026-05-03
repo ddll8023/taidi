@@ -4,29 +4,12 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.constants import validation_log as constants_validation_log
+from app.db.database import commit_or_rollback
 from app.models import financial_report as models_financial_report
 from app.models import validation_log as models_validation_log
-from app.db.database import commit_or_rollback
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
-
-
-STRUCT_SCHEMA_MESSAGE_KEYWORDS = (
-    "顶层必须是对象",
-    "缺少表",
-    "包含未定义表",
-    "值必须是列表",
-    "记录必须是对象",
-    "只允许一条记录",
-    "不允许输出主表身份字段",
-    "存在未定义字段",
-)
-COMPANY_MATCH_MESSAGE_KEYWORDS = (
-    "company_basic_info",
-    "股票简称",
-    "股票代码",
-    "交易所",
-)
 
 
 # ========== 公共入口函数 ==========
@@ -112,7 +95,7 @@ def mark_validation_stage_failed(
 def infer_report_identity_check_type(message: str):
     """根据消息内容推断报告身份校验的检查类型"""
     normalized = _normalize_message(message)
-    if any(keyword in normalized for keyword in COMPANY_MATCH_MESSAGE_KEYWORDS):
+    if any(keyword in normalized for keyword in constants_validation_log.COMPANY_MATCH_MESSAGE_KEYWORDS):
         return models_validation_log.VALIDATION_CHECK_TYPE_COMPANY_MATCH
     return models_validation_log.VALIDATION_CHECK_TYPE_PDF_METADATA
 
@@ -120,7 +103,7 @@ def infer_report_identity_check_type(message: str):
 def infer_structured_validation_check_type(message: str):
     """根据消息内容推断结构化数据校验的检查类型"""
     normalized = _normalize_message(message)
-    if any(keyword in normalized for keyword in STRUCT_SCHEMA_MESSAGE_KEYWORDS):
+    if any(keyword in normalized for keyword in constants_validation_log.STRUCT_SCHEMA_MESSAGE_KEYWORDS):
         return models_validation_log.VALIDATION_CHECK_TYPE_STRUCT_SCHEMA
     return models_validation_log.VALIDATION_CHECK_TYPE_STRUCT_VALUE
 
@@ -167,7 +150,7 @@ def _normalize_message(message: str):
     """规范化消息文本，为空时抛出异常"""
     normalized = str(message).strip()
     if not normalized:
-        raise ServiceException(ErrorCode.INTERNAL_ERROR, "validation_log.message 不能为空")
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "校验日志消息不能为空")
     return normalized
 
 

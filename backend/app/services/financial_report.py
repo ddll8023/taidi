@@ -9,7 +9,9 @@ from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.constants import financial_report as constants_financial_report
 from app.core.config import settings
+from app.db.database import commit_or_rollback
 from app.models import company_basic_info as models_company_basic_info
 from app.models import financial_report as models_financial_report
 from app.schemas import financial_report as schemas_financial_report
@@ -27,14 +29,14 @@ SZSE_FILE_NAME_PATTERN = re.compile(
     r"^(?P<stock_abbr>.+?)[：:](?P<report_body>.+?)(?:\s-\s[0-9a-fA-F]{32})?\.pdf$"
 )
 SZSE_REPORT_BODY_PATTERN = re.compile(
-    r"^(?:(?P<company_prefix>[\u4e00-\u9fa5A-Za-z0-9（）()·\-\s]+?))?"
+    r"^(?:(?P<company_prefix>[一-龥A-Za-z0-9（）()·\-\s]+?))?"
     r"(?P<report_year>\d{4})\s*年\s*"
     r"(?P<report_label>第一季度报告|一季度报告|半年度报告\s*摘\s*要|半年度报告|第三季度报告|三季度报告|年度报告\s*摘\s*要|年度报告)"
     r"(?P<full_text>\s*全文)?"
     r"(?P<suffixes>(?:\s*[（(](?:更正前|更正后|更新前|更新后|英文版|\d+)[)）])*)$"
 )
 REPORT_TITLE_PATTERN = re.compile(
-    r"(?P<title>(?P<company_name>[\u4e00-\u9fa5A-Za-z0-9（）()·\-\s]+?)\s*(?P<report_year>20\d{2})\s*年\s*(?P<report_label>第一季度报告|一季度报告|半年度报告\s*摘\s*要|半年度报告|第三季度报告|三季度报告|年度报告\s*摘\s*要|年度报告))"
+    r"(?P<title>(?P<company_name>[一-龥A-Za-z0-9（）()·\-\s]+?)\s*(?P<report_year>20\d{2})\s*年\s*(?P<report_label>第一季度报告|一季度报告|半年度报告\s*摘\s*要|半年度报告|第三季度报告|三季度报告|年度报告\s*摘\s*要|年度报告))"
 )
 PDF_STOCK_CODE_PATTERNS = (
     re.compile(
@@ -44,19 +46,19 @@ PDF_STOCK_CODE_PATTERNS = (
 )
 PDF_PRIMARY_STOCK_ABBR_PATTERNS = (
     re.compile(
-        r"(?:证券简称|股票简称|公司简称)(?:\s*[:：]\s*|\s+)(?P<stock_abbr>[\u4e00-\u9fa5A-Za-z0-9·()（） \t\u3000]{2,30}?)"
+        r"(?:证券简称|股票简称|公司简称)(?:\s*[:：]\s*|\s+)(?P<stock_abbr>[一-龥A-Za-z0-9·()（） \t　]{2,30}?)"
         r"(?=(?:\s+(?:股票代码|证券代码|公司代码|Stock\s+Code)\b)|[\r\n]|$)",
         flags=re.IGNORECASE,
     ),
 )
 PDF_FALLBACK_STOCK_ABBR_PATTERNS = (
     re.compile(
-        r"(?:公司的中文简称(?:\s*[（(]如有[)）])?)(?:\s*[:：]\s*|\s+)(?P<stock_abbr>[\u4e00-\u9fa5A-Za-z0-9·()（） \t\u3000]{2,30})"
+        r"(?:公司的中文简称(?:\s*[（(]如有[)）])?)(?:\s*[:：]\s*|\s+)(?P<stock_abbr>[一-龥A-Za-z0-9·()（） \t　]{2,30})"
         r"(?=[\r\n]|$)",
         flags=re.IGNORECASE,
     ),
     re.compile(
-        r"(?:Company\s+Abbreviation\s+in\s+Chinese(?:\s*[（(]\s*If\s+any\s*[)）])?)(?:\s*[:：]\s*|\s+)(?P<stock_abbr>[\u4e00-\u9fa5A-Za-z0-9·()（） \t\u3000]{2,30})"
+        r"(?:Company\s+Abbreviation\s+in\s+Chinese(?:\s*[（(]\s*If\s+any\s*[)）])?)(?:\s*[:：]\s*|\s+)(?P<stock_abbr>[一-龥A-Za-z0-9·()（） \t　]{2,30})"
         r"(?=[\r\n]|$)",
         flags=re.IGNORECASE,
     ),
@@ -73,21 +75,6 @@ STOCK_ABBR_HEADER_KEYWORDS = (
 EXPLICIT_DATE_PATTERN = re.compile(
     r"(?P<year>20\d{2})\s*[年/-]\s*(?P<month>\d{1,2})\s*[月/-]\s*(?P<day>\d{1,2})\s*日?"
 )
-DERIVED_LISTED_EXCHANGE_MAP = {
-    "SH": "上海证券交易所",
-    "SZ": "深圳证券交易所",
-    "BJ": "北京证券交易所",
-}
-REPORT_LABEL_TO_META = {
-    "一季度报告": ("Q1", "REPORT", "一季度报告"),
-    "第一季度报告": ("Q1", "REPORT", "一季度报告"),
-    "半年度报告": ("HY", "REPORT", "半年度报告"),
-    "半年度报告摘要": ("HY", "SUMMARY", "半年度报告摘要"),
-    "三季度报告": ("Q3", "REPORT", "三季度报告"),
-    "第三季度报告": ("Q3", "REPORT", "三季度报告"),
-    "年度报告": ("FY", "REPORT", "年度报告"),
-    "年度报告摘要": ("FY", "SUMMARY", "年度报告摘要"),
-}
 
 
 @dataclass(frozen=True)
@@ -103,7 +90,347 @@ class ResolvedFinancialReportMetadata:
     report_date: date | None
 
 
+# ========== 公共入口函数 ==========
+
+
+def resolve_financial_report_metadata(
+    db: Session,
+    source_file_name: str,
+    file_path: str,
+):
+    """解析并合并文件名和PDF内容中的财报身份元数据"""
+    normalized_file_name = _normalize_file_name(source_file_name)
+    preview_text = _extract_pdf_preview_text(file_path)
+    title_meta = _parse_report_title_meta(preview_text)
+    pdf_security_meta = _parse_pdf_security_meta(preview_text)
+
+    filename_report_date: date | None = None
+    filename_stock_code: str | None = None
+    filename_stock_abbr: str | None = None
+    filename_report_year: int | None = None
+    filename_report_period: str | None = None
+    filename_report_type: str | None = None
+    filename_report_label: str | None = None
+    filename_exchange: str | None = None
+
+    sse_match = SSE_FILE_NAME_PATTERN.match(normalized_file_name)
+    if sse_match is not None:
+        filename_stock_code = sse_match.group("stock_code")
+        filename_report_date = _parse_report_date_token(sse_match.group("report_date"))
+        filename_exchange = "SH"
+    else:
+        szse_file_match = SZSE_FILE_NAME_PATTERN.match(normalized_file_name)
+        if szse_file_match is not None:
+            filename_stock_abbr = szse_file_match.group("stock_abbr").strip()
+
+        szse_meta = _parse_szse_file_name_meta(normalized_file_name)
+        if szse_meta is not None:
+            filename_stock_abbr = str(szse_meta["stock_abbr"])
+            filename_report_year = int(szse_meta["report_year"])
+            filename_report_period = str(szse_meta["report_period"])
+            filename_report_type = str(szse_meta["report_type"])
+            filename_report_label = str(szse_meta["report_label"])
+
+    report_year = _require_report_field(
+        "report_year",
+        _merge_field(
+            "report_year",
+            filename_report_year,
+            title_meta["report_year"] if title_meta is not None else None,
+        ),
+    )
+    report_period = _require_report_field(
+        "report_period",
+        _merge_field(
+            "report_period",
+            filename_report_period,
+            title_meta["report_period"] if title_meta is not None else None,
+        ),
+    )
+    report_type = _require_report_field(
+        "report_type",
+        _merge_field(
+            "report_type",
+            filename_report_type,
+            title_meta["report_type"] if title_meta is not None else None,
+        ),
+    )
+    report_label = _require_report_field(
+        "report_label",
+        _merge_field(
+            "report_label",
+            filename_report_label,
+            title_meta["report_label"] if title_meta is not None else None,
+        ),
+    )
+    stock_code = _merge_field(
+        "stock_code", filename_stock_code, pdf_security_meta["stock_code"]
+    )
+    stock_abbr = _merge_field(
+        "stock_abbr", filename_stock_abbr, pdf_security_meta["stock_abbr"]
+    )
+    if stock_code is None and stock_abbr is None:
+        raise ServiceException(
+            ErrorCode.PARAM_ERROR,
+            "未能从文件名或 PDF 元数据中解析股票代码或股票简称",
+        )
+
+    if stock_code is not None:
+        try:
+            company = _load_company_by_stock_code(db, str(stock_code))
+        except ServiceException as exc:
+            if exc.code != ErrorCode.DATA_NOT_FOUND:
+                raise
+
+            inferred_exchange = filename_exchange or _infer_exchange_from_stock_code(
+                str(stock_code)
+            )
+            normalized_stock_abbr = _normalize_stock_abbr_value(
+                stock_abbr if stock_abbr is not None else None
+            )
+            if inferred_exchange is None or not normalized_stock_abbr:
+                raise
+
+            company_name = ""
+            if title_meta is not None:
+                company_name = _normalize_stock_abbr_value(
+                    str(title_meta.get("company_name") or "")
+                )
+            if not company_name:
+                company_name = normalized_stock_abbr
+
+            company = _create_pdf_derived_company(
+                db,
+                stock_code=str(stock_code),
+                stock_abbr=normalized_stock_abbr,
+                company_name=company_name,
+                exchange=inferred_exchange,
+                source_file_name=source_file_name,
+            )
+        if stock_abbr is not None and stock_abbr != company.stock_abbr:
+            if _is_equivalent_stock_abbr(stock_abbr, company.stock_abbr):
+                logger.warning(
+                    f"财报文件中的股票简称 {stock_abbr} 与主数据 {company.stock_abbr} 仅存在格式差异，按一致处理"
+                )
+            else:
+                logger.warning(
+                    f"财报文件中的股票简称 {stock_abbr} 与附件1主数据 {company.stock_abbr} 不一致，但 stock_code={stock_code} 一致，继续处理"
+                )
+    else:
+        company = _load_company_by_stock_abbr(db, str(stock_abbr))
+        stock_code = company.stock_code
+
+    final_exchange = filename_exchange or company.exchange
+    if final_exchange != company.exchange:
+        raise ServiceException(
+            ErrorCode.PARAM_ERROR,
+            f"财报来源交易所 {final_exchange} 与附件1主数据 {company.exchange} 不一致",
+        )
+
+    report_date = filename_report_date or _parse_explicit_date_from_text(preview_text)
+    report_title = ""
+    if title_meta is not None:
+        report_title = str(title_meta["report_title"]).strip()
+    if not report_title:
+        report_title = f"{company.company_name} {report_year}年{report_label}"
+
+    return ResolvedFinancialReportMetadata(
+        stock_code=company.stock_code,
+        stock_abbr=company.stock_abbr,
+        exchange=company.exchange,
+        report_year=int(report_year),
+        report_period=models_financial_report.normalize_report_period(
+            str(report_period)
+        ),
+        report_type=str(report_type),
+        report_label=str(report_label),
+        report_title=report_title,
+        report_date=report_date,
+    )
+
+
+def upsert_financial_report_from_source(
+    db: Session,
+    source_file_name: str,
+    file_path: str,
+    structured_json_path: str | None = None,
+):
+    """根据PDF源文件信息新建或更新财报主表"""
+    metadata = resolve_financial_report_metadata(db, source_file_name, file_path)
+    entity = db.execute(
+        select(models_financial_report.FinancialReport).where(
+            models_financial_report.FinancialReport.stock_code == metadata.stock_code,
+            models_financial_report.FinancialReport.report_year == metadata.report_year,
+            models_financial_report.FinancialReport.report_period
+            == metadata.report_period,
+            models_financial_report.FinancialReport.report_type == metadata.report_type,
+        )
+    ).scalar_one_or_none()
+
+    if entity is None:
+        entity = models_financial_report.FinancialReport(
+            stock_code=metadata.stock_code,
+            stock_abbr=metadata.stock_abbr,
+            exchange=metadata.exchange,
+            report_year=metadata.report_year,
+            report_period=metadata.report_period,
+            report_type=metadata.report_type,
+            report_label=metadata.report_label,
+            report_title=metadata.report_title,
+            report_date=metadata.report_date,
+            period_sort_key=models_financial_report.get_period_sort_key(
+                metadata.report_period
+            ),
+            source_priority=models_financial_report.get_report_source_priority(
+                metadata.report_type
+            ),
+            source_file_name=source_file_name,
+            storage_path=file_path,
+            structured_json_path=structured_json_path,
+            parse_status=schemas_financial_report.ParseStatus.PENDING,
+            review_status=schemas_financial_report.ReviewStatus.PENDING,
+            validate_status=schemas_financial_report.ValidateStatus.PENDING,
+            validate_message=None,
+            import_status=schemas_financial_report.ImportStatus.SUCCESS,
+            vector_status=schemas_financial_report.VectorStatus.PENDING,
+            vector_model=settings.EMBEDDING_MODEL,
+            vector_dim=settings.EMBEDDING_DIM,
+            vector_version=_get_vector_version(),
+            vector_error_message=None,
+            vectorized_at=None,
+        )
+        db.add(entity)
+        commit_or_rollback(db)
+        db.refresh(entity)
+        return schemas_financial_report.FinancialReportResponse.model_validate(entity)
+
+    entity.stock_abbr = metadata.stock_abbr
+    entity.exchange = metadata.exchange
+    entity.report_label = metadata.report_label
+    entity.report_title = metadata.report_title
+    if metadata.report_date is not None or entity.report_date is None:
+        entity.report_date = metadata.report_date
+    entity.period_sort_key = models_financial_report.get_period_sort_key(
+        metadata.report_period
+    )
+    entity.source_priority = models_financial_report.get_report_source_priority(
+        metadata.report_type
+    )
+    entity.source_file_name = source_file_name
+    entity.storage_path = file_path
+    entity.structured_json_path = structured_json_path
+    entity.parse_status = schemas_financial_report.ParseStatus.PENDING
+    entity.review_status = schemas_financial_report.ReviewStatus.PENDING
+    entity.validate_status = schemas_financial_report.ValidateStatus.PENDING
+    entity.validate_message = None
+    entity.import_status = schemas_financial_report.ImportStatus.SUCCESS
+    entity.vector_status = schemas_financial_report.VectorStatus.PENDING
+    entity.vector_model = settings.EMBEDDING_MODEL
+    entity.vector_dim = settings.EMBEDDING_DIM
+    entity.vector_version = _get_vector_version()
+    entity.vector_error_message = None
+    entity.vectorized_at = None
+    commit_or_rollback(db)
+    db.refresh(entity)
+    return schemas_financial_report.FinancialReportResponse.model_validate(entity)
+
+
+def validate_structured_report_identity(
+    data: dict[str, list],
+    financial_report: models_financial_report.FinancialReport,
+):
+    """校验结构化数据中每条记录的身份字段与财报主表一致"""
+    for records in data.values():
+        if not records:
+            continue
+
+        for record in records:
+            if record is None:
+                continue
+            if not isinstance(record, dict):
+                raise ServiceException(
+                    ErrorCode.PARAM_ERROR,
+                    "结构化结果中的记录必须是对象",
+                )
+
+            raw_stock_code = record.get("stock_code")
+            if raw_stock_code not in (None, ""):
+                normalized_code = (
+                    models_company_basic_info.normalize_company_stock_code(
+                        str(raw_stock_code)
+                    )
+                )
+                if normalized_code != financial_report.stock_code:
+                    raise ServiceException(
+                        ErrorCode.PARAM_ERROR,
+                        "结构化结果中的 stock_code 与财报主表身份不一致",
+                    )
+
+            raw_stock_abbr = record.get("stock_abbr")
+            if raw_stock_abbr not in (None, ""):
+                normalized_abbr = str(raw_stock_abbr).strip()
+                if normalized_abbr != financial_report.stock_abbr:
+                    raise ServiceException(
+                        ErrorCode.PARAM_ERROR,
+                        "结构化结果中的 stock_abbr 与财报主表身份不一致",
+                    )
+
+            raw_report_year = record.get("report_year")
+            if raw_report_year not in (None, ""):
+                normalized_year = int(str(raw_report_year).strip())
+                if normalized_year != financial_report.report_year:
+                    raise ServiceException(
+                        ErrorCode.PARAM_ERROR,
+                        "结构化结果中的 report_year 与财报主表身份不一致",
+                    )
+
+            raw_report_period = record.get("report_period")
+            if raw_report_period not in (None, ""):
+                normalized_period = models_financial_report.normalize_report_period(
+                    str(raw_report_period)
+                )
+                if normalized_period != financial_report.report_period:
+                    raise ServiceException(
+                        ErrorCode.PARAM_ERROR,
+                        "结构化结果中的 report_period 与财报主表身份不一致",
+                    )
+
+            raw_report_type = record.get("report_type")
+            if raw_report_type not in (None, ""):
+                normalized_type = models_financial_report.normalize_report_type(
+                    str(raw_report_type)
+                )
+                if normalized_type != financial_report.report_type:
+                    raise ServiceException(
+                        ErrorCode.PARAM_ERROR,
+                        "结构化结果中的 report_type 与财报主表身份不一致",
+                    )
+
+
+def build_report_fact_identity_payload(
+    financial_report: models_financial_report.FinancialReport,
+):
+    """构建财报身份标识字典，用于向下游传递"""
+    return {
+        "stock_code": financial_report.stock_code,
+        "stock_abbr": financial_report.stock_abbr,
+        "report_year": financial_report.report_year,
+        "report_period": financial_report.report_period,
+        "report_type": financial_report.report_type,
+    }
+
+
 """辅助函数"""
+
+
+def _get_vector_version():
+    """生成向量模型版本标识字符串"""
+    return (
+        f"{settings.EMBEDDING_MODEL}:"
+        f"{settings.EMBEDDING_DIM}:"
+        f"{settings.CHUNK_SIZE}:"
+        f"{settings.CHUNK_OVERLAP}"
+    )
 
 
 def _normalize_file_name(source_file_name: str):
@@ -129,7 +456,7 @@ def _normalize_name_token(raw_value: str | None):
 
     normalized = str(raw_value).strip()
     normalized = normalized.replace("（", "(").replace("）", ")")
-    normalized = re.sub(r"[\s\u3000]+", "", normalized)
+    normalized = re.sub(r"[\s　]+", "", normalized)
     return normalized
 
 
@@ -141,7 +468,7 @@ def _normalize_stock_abbr_value(raw_value: str | None):
     normalized = str(raw_value).strip()
     normalized = re.sub(r"^[（(]\s*如有\s*[)）]\s*", "", normalized)
     normalized = re.sub(r"^[（(]\s*if\s+any\s*[)）]\s*", "", normalized, flags=re.IGNORECASE)
-    normalized = re.sub(r"[ \t\u3000]+", " ", normalized)
+    normalized = re.sub(r"[ \t　]+", " ", normalized)
     return normalized
 
 
@@ -224,7 +551,7 @@ def _parse_report_title_meta(preview_text: str):
         return None
 
     normalized_report_label = re.sub(r"\s+", "", match.group("report_label"))
-    report_period, report_type, report_label = REPORT_LABEL_TO_META[
+    report_period, report_type, report_label = constants_financial_report.REPORT_LABEL_TO_META[
         normalized_report_label
     ]
     return {
@@ -258,7 +585,7 @@ def _parse_szse_file_name_meta(
         return None
 
     normalized_report_label = re.sub(r"\s+", "", body_match.group("report_label"))
-    report_period, report_type, report_label = REPORT_LABEL_TO_META[
+    report_period, report_type, report_label = constants_financial_report.REPORT_LABEL_TO_META[
         normalized_report_label
     ]
     return {
@@ -463,7 +790,7 @@ def _create_pdf_derived_company(
     normalized_code = models_company_basic_info.normalize_company_stock_code(stock_code)
     normalized_abbr = _normalize_stock_abbr_value(stock_abbr)
     normalized_company_name = _normalize_stock_abbr_value(company_name) or normalized_abbr
-    listed_exchange = DERIVED_LISTED_EXCHANGE_MAP[exchange]
+    listed_exchange = constants_financial_report.DERIVED_LISTED_EXCHANGE_MAP[exchange]
     entity = models_company_basic_info.CompanyBasicInfo(
         stock_code=normalized_code,
         stock_abbr=normalized_abbr,
@@ -476,348 +803,6 @@ def _create_pdf_derived_company(
     db.add(entity)
     db.flush()
     logger.warning(
-        "company_basic_info 缺少股票代码 %s，已根据 PDF 身份信息补建最小主数据",
-        normalized_code,
+        f"company_basic_info 缺少股票代码 {normalized_code}，已根据 PDF 身份信息补建最小主数据"
     )
     return entity
-
-
-# ========== 公共入口函数 ==========
-
-def resolve_financial_report_metadata(
-    db: Session,
-    source_file_name: str,
-    file_path: str,
-):
-    """解析并合并文件名和PDF内容中的财报身份元数据"""
-    normalized_file_name = _normalize_file_name(source_file_name)
-    preview_text = _extract_pdf_preview_text(file_path)
-    title_meta = _parse_report_title_meta(preview_text)
-    pdf_security_meta = _parse_pdf_security_meta(preview_text)
-
-    filename_report_date: date | None = None
-    filename_stock_code: str | None = None
-    filename_stock_abbr: str | None = None
-    filename_report_year: int | None = None
-    filename_report_period: str | None = None
-    filename_report_type: str | None = None
-    filename_report_label: str | None = None
-    filename_exchange: str | None = None
-
-    sse_match = SSE_FILE_NAME_PATTERN.match(normalized_file_name)
-    if sse_match is not None:
-        filename_stock_code = sse_match.group("stock_code")
-        filename_report_date = _parse_report_date_token(sse_match.group("report_date"))
-        filename_exchange = "SH"
-    else:
-        szse_file_match = SZSE_FILE_NAME_PATTERN.match(normalized_file_name)
-        if szse_file_match is not None:
-            filename_stock_abbr = szse_file_match.group("stock_abbr").strip()
-
-        szse_meta = _parse_szse_file_name_meta(normalized_file_name)
-        if szse_meta is not None:
-            filename_stock_abbr = str(szse_meta["stock_abbr"])
-            filename_report_year = int(szse_meta["report_year"])
-            filename_report_period = str(szse_meta["report_period"])
-            filename_report_type = str(szse_meta["report_type"])
-            filename_report_label = str(szse_meta["report_label"])
-
-    report_year = _require_report_field(
-        "report_year",
-        _merge_field(
-            "report_year",
-            filename_report_year,
-            title_meta["report_year"] if title_meta is not None else None,
-        ),
-    )
-    report_period = _require_report_field(
-        "report_period",
-        _merge_field(
-            "report_period",
-            filename_report_period,
-            title_meta["report_period"] if title_meta is not None else None,
-        ),
-    )
-    report_type = _require_report_field(
-        "report_type",
-        _merge_field(
-            "report_type",
-            filename_report_type,
-            title_meta["report_type"] if title_meta is not None else None,
-        ),
-    )
-    report_label = _require_report_field(
-        "report_label",
-        _merge_field(
-            "report_label",
-            filename_report_label,
-            title_meta["report_label"] if title_meta is not None else None,
-        ),
-    )
-    stock_code = _merge_field(
-        "stock_code", filename_stock_code, pdf_security_meta["stock_code"]
-    )
-    stock_abbr = _merge_field(
-        "stock_abbr", filename_stock_abbr, pdf_security_meta["stock_abbr"]
-    )
-    if stock_code is None and stock_abbr is None:
-        raise ServiceException(
-            ErrorCode.PARAM_ERROR,
-            "未能从文件名或 PDF 元数据中解析股票代码或股票简称",
-        )
-
-    if stock_code is not None:
-        try:
-            company = _load_company_by_stock_code(db, str(stock_code))
-        except ServiceException as exc:
-            if exc.code != ErrorCode.DATA_NOT_FOUND:
-                raise
-
-            inferred_exchange = filename_exchange or _infer_exchange_from_stock_code(
-                str(stock_code)
-            )
-            normalized_stock_abbr = _normalize_stock_abbr_value(
-                stock_abbr if stock_abbr is not None else None
-            )
-            if inferred_exchange is None or not normalized_stock_abbr:
-                raise
-
-            company_name = ""
-            if title_meta is not None:
-                company_name = _normalize_stock_abbr_value(
-                    str(title_meta.get("company_name") or "")
-                )
-            if not company_name:
-                company_name = normalized_stock_abbr
-
-            company = _create_pdf_derived_company(
-                db,
-                stock_code=str(stock_code),
-                stock_abbr=normalized_stock_abbr,
-                company_name=company_name,
-                exchange=inferred_exchange,
-                source_file_name=source_file_name,
-            )
-        if stock_abbr is not None and stock_abbr != company.stock_abbr:
-            if _is_equivalent_stock_abbr(stock_abbr, company.stock_abbr):
-                logger.warning(
-                    "财报文件中的股票简称 %s 与主数据 %s 仅存在格式差异，按一致处理",
-                    stock_abbr,
-                    company.stock_abbr,
-                )
-            else:
-                logger.warning(
-                    "财报文件中的股票简称 %s 与附件1主数据 %s 不一致，但 stock_code=%s 一致，继续处理",
-                    stock_abbr,
-                    company.stock_abbr,
-                    stock_code,
-                )
-    else:
-        company = _load_company_by_stock_abbr(db, str(stock_abbr))
-        stock_code = company.stock_code
-
-    final_exchange = filename_exchange or company.exchange
-    if final_exchange != company.exchange:
-        raise ServiceException(
-            ErrorCode.PARAM_ERROR,
-            f"财报来源交易所 {final_exchange} 与附件1主数据 {company.exchange} 不一致",
-        )
-
-    report_date = filename_report_date or _parse_explicit_date_from_text(preview_text)
-    report_title = ""
-    if title_meta is not None:
-        report_title = str(title_meta["report_title"]).strip()
-    if not report_title:
-        report_title = f"{company.company_name} {report_year}年{report_label}"
-
-    return ResolvedFinancialReportMetadata(
-        stock_code=company.stock_code,
-        stock_abbr=company.stock_abbr,
-        exchange=company.exchange,
-        report_year=int(report_year),
-        report_period=models_financial_report.normalize_report_period(
-            str(report_period)
-        ),
-        report_type=str(report_type),
-        report_label=str(report_label),
-        report_title=report_title,
-        report_date=report_date,
-    )
-
-
-def _get_vector_version():
-    """生成向量模型版本标识字符串"""
-    return (
-        f"{settings.EMBEDDING_MODEL}:"
-        f"{settings.EMBEDDING_DIM}:"
-        f"{settings.CHUNK_SIZE}:"
-        f"{settings.CHUNK_OVERLAP}"
-    )
-
-
-def upsert_financial_report_from_source(
-    db: Session,
-    source_file_name: str,
-    file_path: str,
-    structured_json_path: str | None = None,
-):
-    """根据PDF源文件信息新建或更新财报主表"""
-    metadata = resolve_financial_report_metadata(db, source_file_name, file_path)
-    entity = db.execute(
-        select(models_financial_report.FinancialReport).where(
-            models_financial_report.FinancialReport.stock_code == metadata.stock_code,
-            models_financial_report.FinancialReport.report_year == metadata.report_year,
-            models_financial_report.FinancialReport.report_period
-            == metadata.report_period,
-            models_financial_report.FinancialReport.report_type == metadata.report_type,
-        )
-    ).scalar_one_or_none()
-
-    if entity is None:
-        entity = models_financial_report.FinancialReport(
-            stock_code=metadata.stock_code,
-            stock_abbr=metadata.stock_abbr,
-            exchange=metadata.exchange,
-            report_year=metadata.report_year,
-            report_period=metadata.report_period,
-            report_type=metadata.report_type,
-            report_label=metadata.report_label,
-            report_title=metadata.report_title,
-            report_date=metadata.report_date,
-            period_sort_key=models_financial_report.get_period_sort_key(
-                metadata.report_period
-            ),
-            source_priority=models_financial_report.get_report_source_priority(
-                metadata.report_type
-            ),
-            source_file_name=source_file_name,
-            storage_path=file_path,
-            structured_json_path=structured_json_path,
-            parse_status=schemas_financial_report.ParseStatus.PENDING,
-            review_status=schemas_financial_report.ReviewStatus.PENDING,
-            validate_status=schemas_financial_report.ValidateStatus.PENDING,
-            validate_message=None,
-            import_status=schemas_financial_report.ImportStatus.SUCCESS,
-            vector_status=schemas_financial_report.VectorStatus.PENDING,
-            vector_model=settings.EMBEDDING_MODEL,
-            vector_dim=settings.EMBEDDING_DIM,
-            vector_version=_get_vector_version(),
-            vector_error_message=None,
-            vectorized_at=None,
-        )
-        db.add(entity)
-        db.flush()
-        return schemas_financial_report.FinancialReportResponse.model_validate(entity)
-
-    entity.stock_abbr = metadata.stock_abbr
-    entity.exchange = metadata.exchange
-    entity.report_label = metadata.report_label
-    entity.report_title = metadata.report_title
-    if metadata.report_date is not None or entity.report_date is None:
-        entity.report_date = metadata.report_date
-    entity.period_sort_key = models_financial_report.get_period_sort_key(
-        metadata.report_period
-    )
-    entity.source_priority = models_financial_report.get_report_source_priority(
-        metadata.report_type
-    )
-    entity.source_file_name = source_file_name
-    entity.storage_path = file_path
-    entity.structured_json_path = structured_json_path
-    entity.parse_status = schemas_financial_report.ParseStatus.PENDING
-    entity.review_status = schemas_financial_report.ReviewStatus.PENDING
-    entity.validate_status = schemas_financial_report.ValidateStatus.PENDING
-    entity.validate_message = None
-    entity.import_status = schemas_financial_report.ImportStatus.SUCCESS
-    entity.vector_status = schemas_financial_report.VectorStatus.PENDING
-    entity.vector_model = settings.EMBEDDING_MODEL
-    entity.vector_dim = settings.EMBEDDING_DIM
-    entity.vector_version = _get_vector_version()
-    entity.vector_error_message = None
-    entity.vectorized_at = None
-    return schemas_financial_report.FinancialReportResponse.model_validate(entity)
-
-
-def validate_structured_report_identity(
-    data: dict[str, list],
-    financial_report: models_financial_report.FinancialReport,
-):
-    """校验结构化数据中每条记录的身份字段与财报主表一致"""
-    for records in data.values():
-        if not records:
-            continue
-
-        for record in records:
-            if record is None:
-                continue
-            if not isinstance(record, dict):
-                raise ServiceException(
-                    ErrorCode.PARAM_ERROR,
-                    "结构化结果中的记录必须是对象",
-                )
-
-            raw_stock_code = record.get("stock_code")
-            if raw_stock_code not in (None, ""):
-                normalized_code = (
-                    models_company_basic_info.normalize_company_stock_code(
-                        str(raw_stock_code)
-                    )
-                )
-                if normalized_code != financial_report.stock_code:
-                    raise ServiceException(
-                        ErrorCode.PARAM_ERROR,
-                        "结构化结果中的 stock_code 与财报主表身份不一致",
-                    )
-
-            raw_stock_abbr = record.get("stock_abbr")
-            if raw_stock_abbr not in (None, ""):
-                normalized_abbr = str(raw_stock_abbr).strip()
-                if normalized_abbr != financial_report.stock_abbr:
-                    raise ServiceException(
-                        ErrorCode.PARAM_ERROR,
-                        "结构化结果中的 stock_abbr 与财报主表身份不一致",
-                    )
-
-            raw_report_year = record.get("report_year")
-            if raw_report_year not in (None, ""):
-                normalized_year = int(str(raw_report_year).strip())
-                if normalized_year != financial_report.report_year:
-                    raise ServiceException(
-                        ErrorCode.PARAM_ERROR,
-                        "结构化结果中的 report_year 与财报主表身份不一致",
-                    )
-
-            raw_report_period = record.get("report_period")
-            if raw_report_period not in (None, ""):
-                normalized_period = models_financial_report.normalize_report_period(
-                    str(raw_report_period)
-                )
-                if normalized_period != financial_report.report_period:
-                    raise ServiceException(
-                        ErrorCode.PARAM_ERROR,
-                        "结构化结果中的 report_period 与财报主表身份不一致",
-                    )
-
-            raw_report_type = record.get("report_type")
-            if raw_report_type not in (None, ""):
-                normalized_type = models_financial_report.normalize_report_type(
-                    str(raw_report_type)
-                )
-                if normalized_type != financial_report.report_type:
-                    raise ServiceException(
-                        ErrorCode.PARAM_ERROR,
-                        "结构化结果中的 report_type 与财报主表身份不一致",
-                    )
-
-
-def build_report_fact_identity_payload(
-    financial_report: models_financial_report.FinancialReport,
-):
-    """构建财报身份标识字典，用于向下游传递"""
-    return {
-        "stock_code": financial_report.stock_code,
-        "stock_abbr": financial_report.stock_abbr,
-        "report_year": financial_report.report_year,
-        "report_period": financial_report.report_period,
-        "report_type": financial_report.report_type,
-    }

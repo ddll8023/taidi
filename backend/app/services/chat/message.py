@@ -257,12 +257,16 @@ def process_chat_message(
                         query_result, result_companies = execute_query(sql, db)
 
     chart_question_id = question_id or session_id[:8]
-    chart_path, chart_type = services_visualization.generate_chart(
-        data=query_result,
-        intent=intent,
-        question_id=chart_question_id,
-        sequence=chart_sequence,
-    )
+    try:
+        chart_path, chart_type = services_visualization.generate_chart(
+            data=query_result,
+            intent=intent,
+            question_id=chart_question_id,
+            sequence=chart_sequence,
+        )
+    except ServiceException:
+        logger.warning(f"图表生成失败，跳过图表: question_id={chart_question_id}")
+        chart_path, chart_type = None, None
 
     answer_text = _build_answer(question, query_result, intent)
 

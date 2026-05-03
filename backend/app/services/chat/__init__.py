@@ -1,5 +1,6 @@
 """智能问数对话服务"""
 from app.services.chat.message import process_chat_message
+from app.services.visualization import get_chart_image_path
 from app.services.chat.session import (
     get_chat_sessions,
     get_chat_history,
