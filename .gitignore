@@ -21,6 +21,8 @@ backend/result
 frontend/node_modules
 frontend/dist
  
+financial_report.sql
+knowledge_chunk_embedding_20260425_104240.json
 start_backend.sh
 start_frontend.sh
 
