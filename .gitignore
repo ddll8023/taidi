@@ -4,6 +4,8 @@
 .superpowers
 __pycache__/
 
+B题测试数据
+B题数据及提交说明
 
 CLAUDE.md
 start_backend.bat
@@ -19,8 +21,7 @@ backend/result
 frontend/node_modules
 frontend/dist
  
+start_backend.sh
+start_frontend.sh
 
-
-financial_report.sql
-knowledge_chunk_embedding_20260425_104240.json
 nul

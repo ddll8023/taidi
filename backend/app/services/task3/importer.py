@@ -14,14 +14,8 @@ from sqlalchemy.orm import Session
 from app.db.database import commit_or_rollback
 from app.models.task3_question_item import Task3QuestionItem
 from app.models.task3_workspace import Task3Workspace
+from app.schemas import task3 as schemas_task3
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
-from app.schemas.task3 import (
-    Task3ImportResponse,
-    Task3ImportStatus,
-    Task3QuestionItemResponse,
-    Task3QuestionStatsResponse,
-    Task3WorkspaceResponse,
-)
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
@@ -43,7 +37,7 @@ def get_workspace_info(db: Session):
     workspace = db.execute(stmt).scalar_one_or_none()
     if workspace is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "工作台不存在，请先导入附件6")
-    return Task3WorkspaceResponse.model_validate(workspace)
+    return schemas_task3.Task3WorkspaceResponse.model_validate(workspace)
 
 
 def get_question_detail(db: Session, question_id: int):
@@ -52,7 +46,7 @@ def get_question_detail(db: Session, question_id: int):
     if question is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "题目不存在")
     _normalize_question_item(question)
-    return Task3QuestionItemResponse.model_validate(question)
+    return schemas_task3.Task3QuestionItemResponse.model_validate(question)
 
 
 def get_question_stats(
@@ -82,17 +76,12 @@ def get_question_stats(
             Task3QuestionItem.status == 3,
         )
     ) or 0
-    return Task3QuestionStatsResponse(
+    return schemas_task3.Task3QuestionStatsResponse(
         total=total,
         pending=pending,
         answered=answered,
         failed=failed,
     )
-
-
-def get_workspace_or_raise(db: Session):
-    """获取工作台，不存在时抛异常。"""
-    return get_workspace_info(db)
 
 
 def get_question_list_response(
@@ -122,7 +111,7 @@ def get_question_list_response(
         _normalize_question_item(question)
 
     return PaginatedResponse(
-        lists=[Task3QuestionItemResponse.model_validate(q) for q in questions],
+        lists=[schemas_task3.Task3QuestionItemResponse.model_validate(q) for q in questions],
         pagination=PaginationInfo(
             page=page,
             page_size=page_size,
@@ -132,15 +121,10 @@ def get_question_list_response(
     )
 
 
-def get_question_detail_or_raise(db: Session, question_id: int):
-    """获取单个题目详情，不存在时抛异常。"""
-    return get_question_detail(db=db, question_id=question_id)
-
-
 def get_or_create_workspace(db: Session):
     """获取工作台，不存在时自动创建。"""
     workspace = _get_or_create_workspace_entity(db)
-    return Task3WorkspaceResponse.model_validate(workspace)
+    return schemas_task3.Task3WorkspaceResponse.model_validate(workspace)
 
 
 def import_fujian6(
@@ -157,7 +141,7 @@ def import_fujian6(
         logger.info(f"工作台已有数据，将清空旧数据后重新导入")
         db.execute(delete(Task3QuestionItem).where(Task3QuestionItem.workspace_id == workspace.id))
 
-    workspace.import_status = Task3ImportStatus.IMPORTING
+    workspace.import_status = schemas_task3.Task3ImportStatus.IMPORTING
     db.flush()
 
     try:
@@ -197,12 +181,12 @@ def import_fujian6(
         workspace.pending_count = len(questions)
         workspace.answered_count = 0
         workspace.failed_count = 0
-        workspace.import_status = Task3ImportStatus.IMPORTED
+        workspace.import_status = schemas_task3.Task3ImportStatus.IMPORTED
         commit_or_rollback(db)
 
         logger.info(f"附件6导入完成: workspace_id={workspace.id} total={len(questions)}")
 
-        return Task3ImportResponse(
+        return schemas_task3.Task3ImportResponse(
             workspace_id=workspace.id,
             source_file_name=original_filename,
             total_questions=len(questions),
@@ -210,11 +194,11 @@ def import_fujian6(
         )
 
     except ServiceException:
-        workspace.import_status = Task3ImportStatus.IMPORT_FAILED
+        workspace.import_status = schemas_task3.Task3ImportStatus.IMPORT_FAILED
         commit_or_rollback(db)
         raise
     except Exception as exc:
-        workspace.import_status = Task3ImportStatus.IMPORT_FAILED
+        workspace.import_status = schemas_task3.Task3ImportStatus.IMPORT_FAILED
         commit_or_rollback(db)
         logger.error(f"导入附件6失败: error={exc}", exc_info=True)
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "导入失败") from exc
@@ -364,7 +348,7 @@ def _get_or_create_workspace_entity(db: Session):
     workspace = db.execute(stmt).scalar_one_or_none()
     if workspace is None:
         workspace = Task3Workspace(
-            import_status=Task3ImportStatus.NOT_IMPORTED,
+            import_status=schemas_task3.Task3ImportStatus.NOT_IMPORTED,
             total_questions=0,
             answered_count=0,
             failed_count=0,

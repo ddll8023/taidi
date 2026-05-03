@@ -177,7 +177,7 @@ async def get_question_detail(
 ):
     """获取单题详情"""
     try:
-        result = services_task3.get_question_detail_or_raise(db=db, question_id=question_id)
+        result = services_task3.get_question_detail(db=db, question_id=question_id)
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)

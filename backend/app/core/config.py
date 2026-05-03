@@ -7,10 +7,10 @@ from app.core.prompt_config import PromptConfig, prompt_config
 
 
 class Settings(BaseSettings):
-    MYSQL_HOST: str = "localhost"
+    MYSQL_HOST: str = "127.0.0.1"
     MYSQL_PORT: int = 3306
     MYSQL_USER: str = "root"
-    MYSQL_PASSWORD: str = ""
+    MYSQL_PASSWORD: str = "admin123"
     MYSQL_DATABASE: str = "financial_report"
 
     @property

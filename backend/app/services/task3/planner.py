@@ -5,24 +5,19 @@ import re
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.constants import task3 as constants_task3
 from app.core.config import settings
+from app.models.company_basic_info import CompanyBasicInfo
+from app.schemas import task3 as schemas_task3
 from app.schemas.common import ErrorCode
-from app.schemas.task3 import (
-    ExecutionPlan,
-    Reference,
-    StepResult,
-    StepStatus,
-    StepType,
-    TaskStep,
-)
 from app.services.task3.helpers import (
-    _extract_company_name_from_question,
-    _extract_json_from_response,
-    _invoke_llm,
-    _is_attribution_with_financial_data,
+    extract_company_name_from_question,
+    extract_json_from_response,
+    invoke_llm,
+    is_attribution_with_financial_data,
 )
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
@@ -30,8 +25,154 @@ from app.utils.logger_config import setup_logger
 logger = setup_logger(__name__)
 
 
-
 # ========== 公共入口函数 ==========
+
+
+def validate_plan(plan: schemas_task3.ExecutionPlan):
+    """校验执行计划的依赖关系与关键步骤。"""
+    errors = []
+
+    if not plan.steps:
+        errors.append("执行计划不能为空")
+        return False, errors
+
+    step_ids = {s.step_id for s in plan.steps}
+
+    for step in plan.steps:
+        for dep_id in step.depends_on:
+            if dep_id not in step_ids:
+                errors.append(f"步骤 {step.step_id} 依赖不存在的步骤 {dep_id}")
+
+    if not any(s.step_type == schemas_task3.StepType.COMPOSE_ANSWER for s in plan.steps):
+        errors.append("执行计划必须包含 compose_answer 步骤")
+
+    visited = set()
+    for step in plan.get_ordered_steps():
+        for dep_id in step.depends_on:
+            if dep_id not in visited:
+                errors.append(f"步骤 {step.step_id} 的依赖 {dep_id} 尚未执行")
+        visited.add(step.step_id)
+
+    return len(errors) == 0, errors
+
+
+def get_next_executable_steps(
+    plan: schemas_task3.ExecutionPlan,
+    completed_step_ids: set[str],
+    failed_step_ids: set[str] | None = None,
+):
+    """获取当前可以执行的步骤列表。"""
+    if failed_step_ids is None:
+        failed_step_ids = set()
+
+    executable = []
+    for step in plan.get_ordered_steps():
+        if step.step_id in completed_step_ids:
+            continue
+        if step.step_id in failed_step_ids:
+            continue
+
+        all_deps_met = True
+        for dep_id in step.depends_on:
+            if dep_id not in completed_step_ids:
+                all_deps_met = False
+                break
+            if dep_id in failed_step_ids:
+                all_deps_met = False
+                break
+
+        if all_deps_met:
+            executable.append(step)
+
+    return executable
+
+
+def execute_plan(
+    plan: schemas_task3.ExecutionPlan,
+    db: Session,
+    stop_on_failure: bool = False,
+):
+    """执行任务三计划并返回执行轨迹。"""
+    from app.services.task3 import executor as services_task3_executor
+
+    is_valid, errors = validate_plan(plan)
+    if not is_valid:
+        raise ServiceException(
+            ErrorCode.AI_SERVICE_ERROR,
+            f"执行计划无效: {'; '.join(errors)}",
+        )
+
+    context: dict[str, Any] = dict(plan.context)
+    results: dict[str, schemas_task3.StepResult] = {}
+    references: list[schemas_task3.Reference] = []
+
+    completed_step_ids: set[str] = set()
+    failed_step_ids: set[str] = set()
+
+    max_iterations = len(plan.steps) * 2
+    iteration = 0
+
+    while len(completed_step_ids) + len(failed_step_ids) < len(plan.steps):
+        iteration += 1
+        if iteration > max_iterations:
+            logger.warning(f"执行调度超过最大迭代次数，终止执行")
+            break
+
+        executable_steps = get_next_executable_steps(
+            plan, completed_step_ids, failed_step_ids
+        )
+
+        if not executable_steps:
+            remaining = set(s.step_id for s in plan.steps) - completed_step_ids - failed_step_ids
+            if remaining:
+                logger.warning(f"存在无法执行的步骤: {remaining}")
+                for step_id in remaining:
+                    step = plan.get_step(step_id)
+                    if step:
+                        result = schemas_task3.StepResult(
+                            step_id=step_id,
+                            step_type=step.step_type,
+                            status=schemas_task3.StepStatus.SKIPPED,
+                            output={},
+                            error_message="依赖步骤失败，跳过执行",
+                        )
+                        results[step_id] = result
+                        failed_step_ids.add(step_id)
+            break
+
+        for step in executable_steps:
+            result = services_task3_executor.execute_step(
+                step=step,
+                db=db,
+                plan=plan,
+                context=context,
+                results=results,
+                references=references,
+            )
+
+            if result.status == schemas_task3.StepStatus.COMPLETED:
+                completed_step_ids.add(step.step_id)
+            else:
+                failed_step_ids.add(step.step_id)
+                if stop_on_failure:
+                    logger.warning(f"步骤执行失败，停止执行: step_id={step.step_id}")
+                    break
+
+        if stop_on_failure and failed_step_ids:
+            break
+
+    trace = services_task3_executor.build_execution_trace(
+        plan=plan,
+        results=results,
+        references=references,
+    )
+    logger.info(
+        f"执行计划完成: steps={len(plan.steps)}, "
+        f"completed={len(completed_step_ids)}, failed={len(failed_step_ids)}"
+    )
+
+    return trace
+
 
 def plan_task3_question(
     question: str,
@@ -42,7 +183,7 @@ def plan_task3_question(
     if db:
         context = _ensure_context_resolved(question, context, db)
 
-    if _is_attribution_with_financial_data(question):
+    if is_attribution_with_financial_data(question):
         plan = _create_hybrid_plan(question, context, db)
         logger.info(f"归因+财务混合型规划: question={question[:50]}, steps={len(plan.steps)}")
         return plan
@@ -79,174 +220,6 @@ def plan_task3_question(
     return plan
 
 
-def execute_plan(
-    plan: ExecutionPlan,
-    db: Session,
-    stop_on_failure: bool = False,
-):
-    """执行任务三计划并返回执行轨迹。"""
-    from app.services.task3 import executor as services_task3_executor
-
-    is_valid, errors = validate_plan(plan)
-    if not is_valid:
-        raise ServiceException(
-            ErrorCode.AI_SERVICE_ERROR,
-            f"执行计划无效: {'; '.join(errors)}",
-        )
-
-    context: dict[str, Any] = dict(plan.context)
-    results: dict[str, StepResult] = {}
-    references: list[Reference] = []
-
-    completed_step_ids: set[str] = set()
-    failed_step_ids: set[str] = set()
-
-    max_iterations = len(plan.steps) * 2
-    iteration = 0
-
-    while len(completed_step_ids) + len(failed_step_ids) < len(plan.steps):
-        iteration += 1
-        if iteration > max_iterations:
-            logger.warning(f"执行调度超过最大迭代次数，终止执行")
-            break
-
-        executable_steps = get_next_executable_steps(
-            plan, completed_step_ids, failed_step_ids
-        )
-
-        if not executable_steps:
-            remaining = set(s.step_id for s in plan.steps) - completed_step_ids - failed_step_ids
-            if remaining:
-                logger.warning(f"存在无法执行的步骤: {remaining}")
-                for step_id in remaining:
-                    step = plan.get_step(step_id)
-                    if step:
-                        result = StepResult(
-                            step_id=step_id,
-                            step_type=step.step_type,
-                            status=StepStatus.SKIPPED,
-                            output={},
-                            error_message="依赖步骤失败，跳过执行",
-                        )
-                        results[step_id] = result
-                        failed_step_ids.add(step_id)
-            break
-
-        for step in executable_steps:
-            result = services_task3_executor.execute_step(
-                step=step,
-                db=db,
-                plan=plan,
-                context=context,
-                results=results,
-                references=references,
-            )
-
-            if result.status == StepStatus.COMPLETED:
-                completed_step_ids.add(step.step_id)
-            else:
-                failed_step_ids.add(step.step_id)
-                if stop_on_failure:
-                    logger.warning(f"步骤执行失败，停止执行: step_id={step.step_id}")
-                    break
-
-        if stop_on_failure and failed_step_ids:
-            break
-
-    trace = services_task3_executor.build_execution_trace(
-        plan=plan,
-        results=results,
-        references=references,
-    )
-    logger.info(
-        f"执行计划完成: steps={len(plan.steps)}, "
-        f"completed={len(completed_step_ids)}, failed={len(failed_step_ids)}"
-    )
-
-    return trace
-
-
-def process_task3_question(
-    question: str,
-    db: Session,
-    context: dict | None = None,
-):
-    """处理任务三问题并组装最终回答。"""
-    plan = plan_task3_question(question, context, db)
-
-    trace = execute_plan(plan, db)
-
-    answer = trace.plan.question
-    for result in trace.results:
-        if result.step_type == StepType.COMPOSE_ANSWER and result.status == StepStatus.COMPLETED:
-            if result.output.get("answer"):
-                answer = result.output["answer"]
-            break
-
-    from app.schemas.task3 import Task3AnswerContent
-
-    answer_content = Task3AnswerContent(
-        content=answer,
-        references=[],
-    )
-
-    if trace.references:
-        answer_content.references = [Reference(**r) for r in trace.references]
-
-    from app.schemas.task3 import Task3Response
-
-    sql = None
-    for result in trace.results:
-        if result.step_type == StepType.SQL_QUERY and result.status == StepStatus.COMPLETED:
-            sql = result.output.get("sql")
-            break
-
-    return Task3Response(
-        answer=answer_content,
-        sql=sql,
-        execution_trace=trace,
-    )
-
-
-def create_plan_response(question: str, context: dict | None, db: Session):
-    """生成执行计划并返回 Task3PlanResponse。"""
-    from app.schemas.task3 import Task3PlanResponse
-
-    plan = plan_task3_question(question, context, db)
-    return Task3PlanResponse(
-        plan=plan,
-        reasoning=f"已生成包含 {len(plan.steps)} 个步骤的执行计划",
-    )
-
-
-def plan_and_execute(question: str, context: dict | None, db: Session):
-    """生成计划并执行，返回 Task3ExecuteResponse。"""
-    from app.schemas.task3 import Task3ExecuteResponse
-
-    plan = plan_task3_question(question, context, db)
-    trace = execute_plan(plan, db)
-    return Task3ExecuteResponse(
-        plan=plan,
-        trace=trace,
-    )
-
-
-def plan_execute_and_verify(question: str, context: dict | None, db: Session):
-    """生成计划、执行并验证，返回 Task3VerifyResponse。"""
-    from app.schemas.task3 import Task3VerifyResponse
-    from app.services.task3.verifier import verify_execution_trace
-
-    plan = plan_task3_question(question, context, db)
-    trace = execute_plan(plan, db)
-    verification = verify_execution_trace(db, trace)
-    return Task3VerifyResponse(
-        answer=trace.final_answer,
-        verification=verification,
-        references=trace.references,
-    )
-
-"""辅助函数"""
-
 def analyze_question(question: str, context: dict | None = None):
     """分析问题意图并返回结构化结果。"""
     config = settings.PROMPT_CONFIG.get_task3_config
@@ -265,17 +238,91 @@ def analyze_question(question: str, context: dict | None = None):
         context=context_str,
     )
 
-    response_text = _invoke_llm(
+    response_text = invoke_llm(
         system_prompt, user_prompt, max_tokens=4096, temperature=0.0
     )
     logger.info(f"规划分析结果: {response_text[:500]}")
 
-    parsed = _extract_json_from_response(response_text)
+    parsed = extract_json_from_response(response_text)
     if parsed is None:
         logger.warning(f"规划分析返回非JSON，使用默认计划")
         return _create_default_plan(question)
 
     return parsed
+
+
+def process_task3_question(
+    question: str,
+    db: Session,
+    context: dict | None = None,
+):
+    """处理任务三问题并组装最终回答。"""
+    plan = plan_task3_question(question, context, db)
+
+    trace = execute_plan(plan, db)
+
+    answer = trace.plan.question
+    for result in trace.results:
+        if result.step_type == schemas_task3.StepType.COMPOSE_ANSWER and result.status == schemas_task3.StepStatus.COMPLETED:
+            if result.output.get("answer"):
+                answer = result.output["answer"]
+            break
+
+    answer_content = schemas_task3.Task3AnswerContent(
+        content=answer,
+        references=[],
+    )
+
+    if trace.references:
+        answer_content.references = [schemas_task3.Reference(**r) for r in trace.references]
+
+    sql = None
+    for result in trace.results:
+        if result.step_type == schemas_task3.StepType.SQL_QUERY and result.status == schemas_task3.StepStatus.COMPLETED:
+            sql = result.output.get("sql")
+            break
+
+    return schemas_task3.Task3Response(
+        answer=answer_content,
+        sql=sql,
+        execution_trace=trace,
+    )
+
+
+def create_plan_response(question: str, context: dict | None, db: Session):
+    """生成执行计划并返回 Task3PlanResponse。"""
+    plan = plan_task3_question(question, context, db)
+    return schemas_task3.Task3PlanResponse(
+        plan=plan,
+        reasoning=f"已生成包含 {len(plan.steps)} 个步骤的执行计划",
+    )
+
+
+def plan_and_execute(question: str, context: dict | None, db: Session):
+    """生成计划并执行，返回 Task3ExecuteResponse。"""
+    plan = plan_task3_question(question, context, db)
+    trace = execute_plan(plan, db)
+    return schemas_task3.Task3ExecuteResponse(
+        plan=plan,
+        trace=trace,
+    )
+
+
+def plan_execute_and_verify(question: str, context: dict | None, db: Session):
+    """生成计划、执行并验证，返回 Task3VerifyResponse。"""
+    from app.services.task3.verifier import verify_execution_trace
+
+    plan = plan_task3_question(question, context, db)
+    trace = execute_plan(plan, db)
+    verification = verify_execution_trace(db, trace)
+    return schemas_task3.Task3VerifyResponse(
+        answer=trace.final_answer,
+        verification=verification,
+        references=trace.references,
+    )
+
+
+"""辅助函数"""
 
 
 def _create_default_plan(question: str):
@@ -437,8 +484,6 @@ def _resolve_stock_code_from_question(question: str, db: Session | None = None):
     """从问题文本中提取公司名称并解析股票代码。"""
     if not db:
         return None
-    from app.models.company_basic_info import CompanyBasicInfo
-    from sqlalchemy import select
 
     stmt = select(
         CompanyBasicInfo.stock_code,
@@ -457,13 +502,10 @@ def _resolve_stock_code_from_question(question: str, db: Session | None = None):
     return None
 
 
-
 def _resolve_companies_from_question(question: str, db: Session | None = None):
     """从问题文本中解析所有提及的公司信息。"""
     if not db:
         return []
-    from app.models.company_basic_info import CompanyBasicInfo
-    from sqlalchemy import select
 
     stmt = select(
         CompanyBasicInfo.stock_code,
@@ -518,7 +560,7 @@ def _create_knowledge_plan_dict(question: str, context: dict | None = None, db: 
         params["stock_code"] = stock_code
     else:
         # 兜底：当公司不在数据库中时，提取公司名称用于检索结果二次过滤
-        company_name = _extract_company_name_from_question(question)
+        company_name = extract_company_name_from_question(question)
         if company_name:
             params["company_name_filter"] = company_name
 
@@ -552,12 +594,12 @@ def _create_knowledge_plan(question: str, context: dict | None = None, db: Sessi
     merged_context = dict(context) if context else {}
     if plan_dict.get("context"):
         merged_context.update(plan_dict["context"])
-    return ExecutionPlan(
+    return schemas_task3.ExecutionPlan(
         question=question,
         steps=[
-            TaskStep(
+            schemas_task3.TaskStep(
                 step_id=step["step_id"],
-                step_type=StepType(step["step_type"]),
+                step_type=schemas_task3.StepType(step["step_type"]),
                 goal=step["goal"],
                 depends_on=step["depends_on"],
                 params=step["params"],
@@ -607,38 +649,38 @@ def _create_hybrid_plan(
         evidence_params["stock_code"] = stock_code
     else:
         # 兜底：当公司不在数据库中时，提取公司名称用于检索结果二次过滤
-        company_name = _extract_company_name_from_question(question)
+        company_name = extract_company_name_from_question(question)
         if company_name:
             evidence_params["company_name_filter"] = company_name
 
     steps = [
-        TaskStep(
+        schemas_task3.TaskStep(
             step_id="s1",
-            step_type=StepType.SQL_QUERY,
+            step_type=schemas_task3.StepType.SQL_QUERY,
             goal=f"查询结构化财务数据: {question[:120]}",
             depends_on=[],
             params=sql_params,
             priority=0,
         ),
-        TaskStep(
+        schemas_task3.TaskStep(
             step_id="s2",
-            step_type=StepType.RETRIEVE_EVIDENCE,
+            step_type=schemas_task3.StepType.RETRIEVE_EVIDENCE,
             goal=f"从知识库检索研报证据: {question[:120]}",
             depends_on=[],
             params=evidence_params,
             priority=0,
         ),
-        TaskStep(
+        schemas_task3.TaskStep(
             step_id="s3",
-            step_type=StepType.VERIFY,
+            step_type=schemas_task3.StepType.VERIFY,
             goal="校验SQL查询结果与题目假设的一致性",
             depends_on=["s1"],
             params={"check_type": "consistency"},
             priority=50,
         ),
-        TaskStep(
+        schemas_task3.TaskStep(
             step_id="s4",
-            step_type=StepType.COMPOSE_ANSWER,
+            step_type=schemas_task3.StepType.COMPOSE_ANSWER,
             goal="综合结构化数据与研报证据生成归因分析答案",
             depends_on=["s1", "s2", "s3"],
             params={"include_references": True, "format": "evidence_based"},
@@ -646,7 +688,7 @@ def _create_hybrid_plan(
         ),
     ]
 
-    return ExecutionPlan(
+    return schemas_task3.ExecutionPlan(
         question=question,
         steps=steps,
         context=merged_context,
@@ -665,17 +707,17 @@ def create_execution_plan(
     for step_data in plan_dict.get("steps", []):
         try:
             step_type_str = step_data.get("step_type", "sql_query")
-            step_type = StepType(step_type_str)
+            step_type = schemas_task3.StepType(step_type_str)
         except ValueError:
-            step_type = StepType.SQL_QUERY
+            step_type = schemas_task3.StepType.SQL_QUERY
 
         raw_params = step_data.get("params", {})
         params = raw_params if isinstance(raw_params, dict) else {}
-        if step_type == StepType.SQL_QUERY and "sql" in params:
+        if step_type == schemas_task3.StepType.SQL_QUERY and "sql" in params:
             params = {key: value for key, value in params.items() if key != "sql"}
             params.setdefault("description", step_data.get("goal", ""))
 
-        step = TaskStep(
+        step = schemas_task3.TaskStep(
             step_id=step_data.get("step_id", f"s{len(steps) + 1}"),
             step_type=step_type,
             goal=step_data.get("goal", ""),
@@ -687,17 +729,17 @@ def create_execution_plan(
 
     if not steps:
         steps = [
-            TaskStep(
+            schemas_task3.TaskStep(
                 step_id="s1",
-                step_type=StepType.SQL_QUERY,
+                step_type=schemas_task3.StepType.SQL_QUERY,
                 goal=f"查询与问题相关的数据",
                 depends_on=[],
                 params={},
                 priority=0,
             ),
-            TaskStep(
+            schemas_task3.TaskStep(
                 step_id="s2",
-                step_type=StepType.COMPOSE_ANSWER,
+                step_type=schemas_task3.StepType.COMPOSE_ANSWER,
                 goal="生成最终答案",
                 depends_on=["s1"],
                 params={"include_references": False},
@@ -709,7 +751,7 @@ def create_execution_plan(
     if plan_dict.get("context"):
         merged_context.update(plan_dict["context"])
 
-    plan = ExecutionPlan(
+    plan = schemas_task3.ExecutionPlan(
         question=question,
         steps=steps,
         context=merged_context,
@@ -827,17 +869,17 @@ def _ensure_context_resolved(
 def _create_simple_plan(question: str, context: dict | None = None):
     """构造简单问题的降级计划。"""
     steps = [
-        TaskStep(
+        schemas_task3.TaskStep(
             step_id="s1",
-            step_type=StepType.SQL_QUERY,
+            step_type=schemas_task3.StepType.SQL_QUERY,
             goal=f"根据问题查询结构化财务数据: {question[:120]}",
             depends_on=[],
             params={"description": question},
             priority=0,
         ),
-        TaskStep(
+        schemas_task3.TaskStep(
             step_id="s2",
-            step_type=StepType.COMPOSE_ANSWER,
+            step_type=schemas_task3.StepType.COMPOSE_ANSWER,
             goal="生成最终答案",
             depends_on=["s1"],
             params={"include_references": False},
@@ -845,7 +887,7 @@ def _create_simple_plan(question: str, context: dict | None = None):
         ),
     ]
 
-    return ExecutionPlan(
+    return schemas_task3.ExecutionPlan(
         question=question,
         steps=steps,
         context=dict(context) if context else {},
@@ -870,9 +912,6 @@ def _count_multi_intent_actions(question: str):
 
 def _enrich_context_from_db(context: dict, db: Session):
     """补充上下文中的公司解析信息。"""
-    from app.models.company_basic_info import CompanyBasicInfo
-    from sqlalchemy import select
-
     enriched = dict(context)
 
     if "companies" in enriched:
@@ -900,64 +939,3 @@ def _enrich_context_from_db(context: dict, db: Session):
                 enriched["resolved_companies"] = resolved_companies
 
     return enriched
-
-
-def validate_plan(plan: ExecutionPlan):
-    """校验执行计划的依赖关系与关键步骤。"""
-    errors = []
-
-    if not plan.steps:
-        errors.append("执行计划不能为空")
-        return False, errors
-
-    step_ids = {s.step_id for s in plan.steps}
-
-    for step in plan.steps:
-        for dep_id in step.depends_on:
-            if dep_id not in step_ids:
-                errors.append(f"步骤 {step.step_id} 依赖不存在的步骤 {dep_id}")
-
-    if not any(s.step_type == StepType.COMPOSE_ANSWER for s in plan.steps):
-        errors.append("执行计划必须包含 compose_answer 步骤")
-
-    visited = set()
-    for step in plan.get_ordered_steps():
-        for dep_id in step.depends_on:
-            if dep_id not in visited:
-                errors.append(f"步骤 {step.step_id} 的依赖 {dep_id} 尚未执行")
-        visited.add(step.step_id)
-
-    return len(errors) == 0, errors
-
-
-def get_next_executable_steps(
-    plan: ExecutionPlan,
-    completed_step_ids: set[str],
-    failed_step_ids: set[str] | None = None,
-):
-    """获取当前可以执行的步骤列表。"""
-    if failed_step_ids is None:
-        failed_step_ids = set()
-
-    executable = []
-    for step in plan.get_ordered_steps():
-        if step.step_id in completed_step_ids:
-            continue
-        if step.step_id in failed_step_ids:
-            continue
-
-        all_deps_met = True
-        for dep_id in step.depends_on:
-            if dep_id not in completed_step_ids:
-                all_deps_met = False
-                break
-            if dep_id in failed_step_ids:
-                all_deps_met = False
-                break
-
-        if all_deps_met:
-            executable.append(step)
-
-    return executable
-
-

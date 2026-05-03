@@ -1,23 +1,17 @@
 """任务三结果导出服务。"""
 
+from datetime import datetime
 import json
 import os
 import re
-from datetime import datetime
 
 from openpyxl import Workbook
 from sqlalchemy.orm import Session
 
 from app.db.database import commit_or_rollback
 from app.schemas.common import ErrorCode
-from app.schemas.task3 import (
-    Reference,
-    Task3ExportContentResponse,
-    Task3LatestExportResponse,
-    Task3SingleExportResponse,
-    Task3WorkspaceExportResponse,
-)
-from app.services.task3.helpers import _parse_question_rounds
+from app.schemas import task3 as schemas_task3
+from app.services.task3.helpers import parse_question_rounds
 from app.services.task3.planner import process_task3_question
 from app.services.task3.verifier import verify_answer_quality
 from app.utils.exception import ServiceException
@@ -46,7 +40,7 @@ def export_result_3(questions: list[dict], db: Session):
         question_id = item.get("id", f"C{idx + 1:03d}")
         question_text = item.get("question", "")
 
-        rounds = _parse_question_rounds(question_text)
+        rounds = parse_question_rounds(question_text)
         merged_question_text = " ".join(item.get("Q", "") for item in rounds)
 
         logger.info(f"处理问题 {idx + 1}/{len(questions)}: {question_id}")
@@ -196,11 +190,11 @@ def export_single_question_result(
                 ref_dict["paper_image"] = ref.paper_image
             references_list.append(ref_dict)
 
-        return Task3SingleExportResponse(
+        return schemas_task3.Task3SingleExportResponse(
             id=question_id,
             question=question,
             sql=response.sql,
-            answer=Task3ExportContentResponse(
+            answer=schemas_task3.Task3ExportContentResponse(
                 content=answer_content.content,
                 references=references_list,
             ),
@@ -215,7 +209,7 @@ def export_single_question_result(
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "导出失败") from exc
 
 
-def format_reference_for_output(ref: Reference):
+def format_reference_for_output(ref: schemas_task3.Reference):
     """将引用对象格式化为导出结构。"""
     return {
         "paper_path": ref.paper_path,
@@ -311,7 +305,7 @@ def export_result_3_from_workspace(db: Session):
     for question in questions:
         question_id = question.question_code
         question_text = question.question_raw_json or ""
-        rounds = _parse_question_rounds(question_text)
+        rounds = parse_question_rounds(question_text)
         try:
             answer_json = _ensure_non_empty_qa_pairs(question_text, question.answer_json or [])
             answer_json = _remove_task3_answer_images(answer_json)
@@ -369,7 +363,7 @@ def export_result_3_from_workspace(db: Session):
 
     logger.info(f"result_3.xlsx 导出完成: path={result_path}, success={success_count}, failed={fail_count}")
 
-    return Task3WorkspaceExportResponse(
+    return schemas_task3.Task3WorkspaceExportResponse(
         xlsx_path=result_path,
         success_count=success_count,
         fail_count=fail_count,
@@ -388,7 +382,7 @@ def get_latest_export_info(db: Session):
     if workspace is None or not workspace.last_export_path:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "暂无导出记录")
 
-    return Task3LatestExportResponse(
+    return schemas_task3.Task3LatestExportResponse(
         xlsx_path=workspace.last_export_path,
         exported_at=workspace.last_exported_at.isoformat() if workspace.last_exported_at else None,
         total_questions=workspace.total_questions,
@@ -404,7 +398,7 @@ def _ensure_non_empty_qa_pairs(question_value, qa_pairs: list[dict]):
     if qa_pairs:
         return qa_pairs
 
-    rounds = _parse_question_rounds(question_value)
+    rounds = parse_question_rounds(question_value)
     first_question = rounds[0].get("Q", "") if rounds else str(question_value or "")
     return [
         {

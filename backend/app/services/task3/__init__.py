@@ -16,10 +16,8 @@ from app.services.task3.runner import (
 )
 from app.services.task3.importer import (
     get_workspace_info,
-    get_workspace_or_raise,
     get_question_list_response,
     get_question_detail,
-    get_question_detail_or_raise,
     get_question_stats,
     import_fujian6,
 )

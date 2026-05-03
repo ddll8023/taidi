@@ -1,33 +1,27 @@
 """任务三结果校验服务。"""
 
-import re
+import ast
 from decimal import Decimal
+import operator
+import re
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.constants import task3 as constants_task3
 from app.models.balance_sheet import BalanceSheet
 from app.models.cash_flow_sheet import CashFlowSheet
 from app.models.company_basic_info import CompanyBasicInfo
 from app.models.income_sheet import IncomeSheet
-from app.schemas.task3 import (
-    ExecutionTrace,
-    Reference,
-    StepResult,
-    StepStatus,
-    StepType,
-    Task3AnswerQualityResponse,
-    Task3VerificationResultResponse,
-)
-from app.constants import task3 as constants_task3
-from app.services.task3.helpers import _is_attribution_with_financial_data
+from app.schemas import task3 as schemas_task3
+from app.services.task3.helpers import is_attribution_with_financial_data
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
 
 def verify_execution_trace(
-    db: Session, trace: ExecutionTrace
+    db: Session, trace: schemas_task3.ExecutionTrace
 ):
     """校验任务三执行轨迹并返回结构化结果。"""
     result = _create_verification_result()
@@ -49,10 +43,10 @@ def verify_execution_trace(
 
 
 def verify_answer_quality(
-    answer: str, references: list[Reference], question: str
+    answer: str, references: list[schemas_task3.Reference], question: str
 ):
     """校验答案文本与引用是否满足基本质量要求。"""
-    result = Task3AnswerQualityResponse(
+    result = schemas_task3.Task3AnswerQualityResponse(
         has_answer=bool(answer and answer.strip()),
         answer_length=len(answer) if answer else 0,
         has_references=len(references) > 0,
@@ -82,41 +76,42 @@ def verify_answer_quality(
 
 def _create_verification_result():
     """创建空的校验结果结构。"""
-    return Task3VerificationResultResponse()
+    return schemas_task3.Task3VerificationResultResponse()
 
 
-def _add_error(result: Task3VerificationResultResponse, message: str):
+def _add_error(result: schemas_task3.Task3VerificationResultResponse, message: str):
     """向校验结果追加错误。"""
     result.errors.append(message)
     result.passed = False
 
 
-def _add_warning(result: Task3VerificationResultResponse, message: str):
+def _add_warning(result: schemas_task3.Task3VerificationResultResponse, message: str):
     """向校验结果追加警告。"""
     result.warnings.append(message)
 
 
-
-
-def _get_answer_result(trace: ExecutionTrace):
+def _get_answer_result(trace: schemas_task3.ExecutionTrace):
+    """获取答案组装步骤的执行结果。"""
     return next(
         (
             item
             for item in trace.results
-            if item.step_type == StepType.COMPOSE_ANSWER and item.status == StepStatus.COMPLETED
+            if item.step_type == schemas_task3.StepType.COMPOSE_ANSWER and item.status == schemas_task3.StepStatus.COMPLETED
         ),
         None,
     )
 
 
-def _get_answer_text(trace: ExecutionTrace):
+def _get_answer_text(trace: schemas_task3.ExecutionTrace):
+    """获取最终答案文本。"""
     answer_result = _get_answer_result(trace)
     if answer_result is not None:
         return str(answer_result.output.get("answer", ""))
     return str(trace.final_answer or "")
 
 
-def _resolve_target_companies(db: Session, trace: ExecutionTrace):
+def _resolve_target_companies(db: Session, trace: schemas_task3.ExecutionTrace):
+    """解析题目涉及的目标公司信息。"""
     context = trace.plan.context or {}
     resolved_companies = context.get("resolved_companies")
     if isinstance(resolved_companies, list) and resolved_companies:
@@ -190,12 +185,12 @@ def _resolve_target_companies(db: Session, trace: ExecutionTrace):
 
 
 def _verify_completeness(
-    trace: ExecutionTrace, result: Task3VerificationResultResponse
+    trace: schemas_task3.ExecutionTrace, result: schemas_task3.Task3VerificationResultResponse
 ):
     """校验执行轨迹的完整性。"""
-    completed_steps = [item for item in trace.results if item.status == StepStatus.COMPLETED]
-    failed_steps = [item for item in trace.results if item.status == StepStatus.FAILED]
-    skipped_steps = [item for item in trace.results if item.status == StepStatus.SKIPPED]
+    completed_steps = [item for item in trace.results if item.status == schemas_task3.StepStatus.COMPLETED]
+    failed_steps = [item for item in trace.results if item.status == schemas_task3.StepStatus.FAILED]
+    skipped_steps = [item for item in trace.results if item.status == schemas_task3.StepStatus.SKIPPED]
 
     result.details["completeness"] = {
         "total_steps": len(trace.plan.steps),
@@ -211,7 +206,7 @@ def _verify_completeness(
         _add_warning(result, f"步骤 {step_result.step_id} 被跳过: {step_result.error_message}")
 
     has_compose_answer = any(
-        item.step_type == StepType.COMPOSE_ANSWER and item.status == StepStatus.COMPLETED
+        item.step_type == schemas_task3.StepType.COMPOSE_ANSWER and item.status == schemas_task3.StepStatus.COMPLETED
         for item in trace.results
     )
     if not has_compose_answer:
@@ -219,25 +214,25 @@ def _verify_completeness(
 
 
 def _verify_route_requirements(
-    trace: ExecutionTrace, result: Task3VerificationResultResponse
+    trace: schemas_task3.ExecutionTrace, result: schemas_task3.Task3VerificationResultResponse
 ):
     """校验题型与执行路由是否匹配。"""
     question = trace.plan.question or ""
     plan_step_types = [step.step_type for step in trace.plan.steps]
-    has_sql_step = StepType.SQL_QUERY in plan_step_types
-    has_retrieve_step = StepType.RETRIEVE_EVIDENCE in plan_step_types
+    has_sql_step = schemas_task3.StepType.SQL_QUERY in plan_step_types
+    has_retrieve_step = schemas_task3.StepType.RETRIEVE_EVIDENCE in plan_step_types
 
     route_type = "unknown"
-    if plan_step_types == [StepType.RETRIEVE_EVIDENCE, StepType.COMPOSE_ANSWER]:
+    if plan_step_types == [schemas_task3.StepType.RETRIEVE_EVIDENCE, schemas_task3.StepType.COMPOSE_ANSWER]:
         route_type = "knowledge_only"
     elif plan_step_types == [
-        StepType.SQL_QUERY,
-        StepType.RETRIEVE_EVIDENCE,
-        StepType.VERIFY,
-        StepType.COMPOSE_ANSWER,
+        schemas_task3.StepType.SQL_QUERY,
+        schemas_task3.StepType.RETRIEVE_EVIDENCE,
+        schemas_task3.StepType.VERIFY,
+        schemas_task3.StepType.COMPOSE_ANSWER,
     ]:
         route_type = "hybrid"
-    elif plan_step_types == [StepType.SQL_QUERY, StepType.COMPOSE_ANSWER]:
+    elif plan_step_types == [schemas_task3.StepType.SQL_QUERY, schemas_task3.StepType.COMPOSE_ANSWER]:
         route_type = "sql_only"
     elif plan_step_types:
         route_type = "dynamic"
@@ -248,7 +243,7 @@ def _verify_route_requirements(
         "step_types": [step_type.value for step_type in plan_step_types],
     }
 
-    if _is_attribution_with_financial_data(question):
+    if is_attribution_with_financial_data(question):
         if not has_sql_step:
             _add_error(result, "归因分析类财务问题缺少 SQL 查询步骤")
         if not has_retrieve_step:
@@ -256,13 +251,13 @@ def _verify_route_requirements(
 
 
 def _verify_consistency(
-    trace: ExecutionTrace, result: Task3VerificationResultResponse
+    trace: schemas_task3.ExecutionTrace, result: schemas_task3.Task3VerificationResultResponse
 ):
     """校验多个 SQL 结果之间的一致性。"""
     sql_results = [
         item
         for item in trace.results
-        if item.step_type == StepType.SQL_QUERY and item.status == StepStatus.COMPLETED
+        if item.step_type == schemas_task3.StepType.SQL_QUERY and item.status == schemas_task3.StepStatus.COMPLETED
     ]
     if len(sql_results) < 2:
         return
@@ -273,9 +268,9 @@ def _verify_consistency(
 
 
 def _check_cross_result_consistency(
-    result1: StepResult,
-    result2: StepResult,
-    verification_result: Task3VerificationResultResponse,
+    result1: schemas_task3.StepResult,
+    result2: schemas_task3.StepResult,
+    verification_result: schemas_task3.Task3VerificationResultResponse,
 ):
     """对比两个 SQL 结果在关键字段上的差异。"""
     data1 = result1.output.get("data", [])
@@ -313,17 +308,17 @@ def _check_cross_result_consistency(
 
 
 def _verify_reasonableness(
-    trace: ExecutionTrace, result: Task3VerificationResultResponse
+    trace: schemas_task3.ExecutionTrace, result: schemas_task3.Task3VerificationResultResponse
 ):
     """校验结果数值的合理性。"""
     for step_result in trace.results:
-        if step_result.step_type == StepType.SQL_QUERY and step_result.status == StepStatus.COMPLETED:
+        if step_result.step_type == schemas_task3.StepType.SQL_QUERY and step_result.status == schemas_task3.StepStatus.COMPLETED:
             _check_data_reasonableness(step_result, result)
 
 
 def _check_data_reasonableness(
-    step_result: StepResult,
-    verification_result: Task3VerificationResultResponse,
+    step_result: schemas_task3.StepResult,
+    verification_result: schemas_task3.Task3VerificationResultResponse,
 ):
     """检查同比和比率字段是否存在异常值。"""
     data = step_result.output.get("data", [])
@@ -372,8 +367,8 @@ def _check_data_reasonableness(
 
 def _verify_subject_consistency(
     db: Session,
-    trace: ExecutionTrace,
-    result: Task3VerificationResultResponse,
+    trace: schemas_task3.ExecutionTrace,
+    result: schemas_task3.Task3VerificationResultResponse,
 ):
     """校验检索证据主体是否与题目主体一致。"""
     target_companies = _resolve_target_companies(db, trace)
@@ -394,9 +389,9 @@ def _verify_subject_consistency(
 
     evidence_list = []
     for step_result in trace.results:
-        if step_result.step_type != StepType.RETRIEVE_EVIDENCE:
+        if step_result.step_type != schemas_task3.StepType.RETRIEVE_EVIDENCE:
             continue
-        if step_result.status != StepStatus.COMPLETED:
+        if step_result.status != schemas_task3.StepStatus.COMPLETED:
             continue
         evidence = step_result.output.get("evidence", [])
         if isinstance(evidence, list):
@@ -441,18 +436,21 @@ def _verify_subject_consistency(
 
 
 def _answer_claims_missing_financial_data(answer_text: str):
+    """判断答案是否声称缺少财务数据。"""
     if not answer_text:
         return False
     return any(re.search(pattern, answer_text) for pattern in constants_task3.MISSING_FINANCIAL_DATA_PATTERNS)
 
 
 def _answer_indicates_incomplete(answer_text: str):
+    """判断答案是否表示回答不完整。"""
     if not answer_text:
         return False
     return any(re.search(pattern, answer_text) for pattern in constants_task3.INCOMPLETE_ANSWER_PATTERNS)
 
 
 def _has_explicit_multi_steps(question: str):
+    """判断题目是否包含显式多步骤要求。"""
     step_markers = re.findall(r"[①②③④⑤⑥⑦⑧⑨⑩]|\d+\.", question or "")
     clause_count = len(
         [item for item in re.split(r"[；;。]\s*|\n+", question or "") if item.strip()]
@@ -465,11 +463,12 @@ def _question_requires_references(question: str):
     return any(keyword in (question or "") for keyword in constants_task3.REFERENCE_REQUIRED_KEYWORDS)
 
 
-def _has_sql_data(trace: ExecutionTrace):
+def _has_sql_data(trace: schemas_task3.ExecutionTrace):
+    """判断执行轨迹中是否包含有效的 SQL 查询数据。"""
     for step_result in trace.results:
-        if step_result.step_type != StepType.SQL_QUERY:
+        if step_result.step_type != schemas_task3.StepType.SQL_QUERY:
             continue
-        if step_result.status != StepStatus.COMPLETED:
+        if step_result.status != schemas_task3.StepStatus.COMPLETED:
             continue
         data = step_result.output.get("data", [])
         if isinstance(data, list) and data:
@@ -478,6 +477,7 @@ def _has_sql_data(trace: ExecutionTrace):
 
 
 def _has_structured_financial_data(db: Session, stock_code: str):
+    """判断指定公司是否存在结构化财务数据。"""
     count_queries = [
         select(func.count()).select_from(IncomeSheet).where(IncomeSheet.stock_code == stock_code),
         select(func.count()).select_from(CashFlowSheet).where(CashFlowSheet.stock_code == stock_code),
@@ -492,8 +492,8 @@ def _has_structured_financial_data(db: Session, stock_code: str):
 
 def _verify_false_missing_claim(
     db: Session,
-    trace: ExecutionTrace,
-    result: Task3VerificationResultResponse,
+    trace: schemas_task3.ExecutionTrace,
+    result: schemas_task3.Task3VerificationResultResponse,
 ):
     """校验答案是否错误声称结构化财务数据缺失。"""
     answer_text = _get_answer_text(trace)
@@ -519,8 +519,8 @@ def _verify_false_missing_claim(
 
 
 def _verify_multi_intent_coverage(
-    trace: ExecutionTrace,
-    result: Task3VerificationResultResponse,
+    trace: schemas_task3.ExecutionTrace,
+    result: schemas_task3.Task3VerificationResultResponse,
 ):
     """校验显式多步骤问题是否只给出了部分结论。"""
     question = trace.plan.question or ""
@@ -533,20 +533,20 @@ def _verify_multi_intent_coverage(
 
     completed_sql_steps = [
         item for item in trace.results
-        if item.step_type == StepType.SQL_QUERY and item.status == StepStatus.COMPLETED
+        if item.step_type == schemas_task3.StepType.SQL_QUERY and item.status == schemas_task3.StepStatus.COMPLETED
     ]
     if len(completed_sql_steps) == 1 and _question_requires_references(question):
         retrieve_steps = [
             item for item in trace.results
-            if item.step_type == StepType.RETRIEVE_EVIDENCE and item.status == StepStatus.COMPLETED
+            if item.step_type == schemas_task3.StepType.RETRIEVE_EVIDENCE and item.status == schemas_task3.StepStatus.COMPLETED
         ]
         if not retrieve_steps:
             _add_error(result, "多步骤题缺少证据检索步骤，执行链未完整覆盖题目要求")
 
 
 def _verify_metric_requirement_coverage(
-    trace: ExecutionTrace,
-    result: Task3VerificationResultResponse,
+    trace: schemas_task3.ExecutionTrace,
+    result: schemas_task3.Task3VerificationResultResponse,
 ):
     """校验关键指标是否被正确回答，避免偷换题目指标。"""
     question = trace.plan.question or ""
@@ -559,12 +559,12 @@ def _verify_metric_requirement_coverage(
 
 
 def _verify_attribution_evidence(
-    trace: ExecutionTrace,
-    result: Task3VerificationResultResponse,
+    trace: schemas_task3.ExecutionTrace,
+    result: schemas_task3.Task3VerificationResultResponse,
 ):
     """校验归因类财务问题是否具备最基本的财务证据与引用支撑。"""
     question = trace.plan.question or ""
-    if not _is_attribution_with_financial_data(question):
+    if not is_attribution_with_financial_data(question):
         return
 
     answer_text = _get_answer_text(trace)
@@ -573,9 +573,9 @@ def _verify_attribution_evidence(
 
     sql_row_count = 0
     for step_result in trace.results:
-        if step_result.step_type != StepType.SQL_QUERY:
+        if step_result.step_type != schemas_task3.StepType.SQL_QUERY:
             continue
-        if step_result.status != StepStatus.COMPLETED:
+        if step_result.status != schemas_task3.StepStatus.COMPLETED:
             continue
         data = step_result.output.get("data", [])
         if isinstance(data, list):
@@ -589,7 +589,7 @@ def _verify_attribution_evidence(
 
 
 def _verify_references(
-    trace: ExecutionTrace, result: Task3VerificationResultResponse
+    trace: schemas_task3.ExecutionTrace, result: schemas_task3.Task3VerificationResultResponse
 ):
     """校验原因类答案是否附带引用。"""
     answer_result = _get_answer_result(trace)
@@ -612,6 +612,42 @@ def _verify_references(
             _add_warning(result, "存在空引用证据")
 
 
+_SAFE_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _safe_eval(expr: str) -> float:
+    """安全计算数学表达式，仅支持数字和基本运算符。"""
+    tree = ast.parse(expr, mode="eval")
+    return _eval_node(tree.body)
+
+
+def _eval_node(node) -> float:
+    """递归求值 AST 节点。"""
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, (int, float)):
+            return node.value
+        raise ValueError(f"不支持的常量类型: {type(node.value)}")
+    if isinstance(node, ast.UnaryOp):
+        op = _SAFE_OPERATORS.get(type(node.op))
+        if op is None:
+            raise ValueError(f"不支持的一元运算符: {type(node.op)}")
+        return op(_eval_node(node.operand))
+    if isinstance(node, ast.BinOp):
+        op = _SAFE_OPERATORS.get(type(node.op))
+        if op is None:
+            raise ValueError(f"不支持的二元运算符: {type(node.op)}")
+        return op(_eval_node(node.left), _eval_node(node.right))
+    raise ValueError(f"不支持的 AST 节点类型: {type(node)}")
+
+
 def _verify_calculation(formula: str, expected_value: float, actual_data: dict):
     """校验公式计算值是否接近期望值。"""
     expr = formula
@@ -620,7 +656,7 @@ def _verify_calculation(formula: str, expected_value: float, actual_data: dict):
             expr = expr.replace(field, str(float(value)))
     try:
         sanitized_expr = re.sub(r"[a-zA-Z_][a-zA-Z0-9_]*", "0", expr)
-        result = eval(sanitized_expr, {"__builtins__": {}}, {})
+        result = _safe_eval(sanitized_expr)
     except Exception as exc:
         logger.warning(f"计算验证失败: formula={formula}, error={exc}")
         return False
@@ -630,8 +666,8 @@ def _verify_calculation(formula: str, expected_value: float, actual_data: dict):
 
 
 def _verify_sql_result_count(
-    step_result: StepResult,
-    verification_result: Task3VerificationResultResponse,
+    step_result: schemas_task3.StepResult,
+    verification_result: schemas_task3.Task3VerificationResultResponse,
     expected_min: int | None = None,
     expected_max: int | None = None,
 ):

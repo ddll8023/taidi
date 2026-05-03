@@ -1,10 +1,10 @@
 """任务三执行步骤服务。"""
 
+from datetime import datetime
+from decimal import Decimal
 import json
 import re
 import time
-from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import text
@@ -12,30 +12,95 @@ from sqlalchemy.orm import Session
 
 from app.constants import task3 as constants_task3
 from app.core.config import settings
+from app.schemas import task3 as schemas_task3
 from app.schemas.common import ErrorCode
-from app.schemas.task3 import (
-    ExecutionPlan,
-    ExecutionTrace,
-    Reference,
-    StepResult,
-    StepStatus,
-    StepType,
-    TaskStep,
-    Task3AnswerContent,
-)
 from app.services import knowledge_base
-from app.services.task3.helpers import (
-    _extract_company_name_from_question,
-    _extract_json_from_response,
-    _invoke_llm,
-    _to_jsonable,
-)
+from app.services import task3 as services_task3
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
 
+def execute_step(
+    step: schemas_task3.TaskStep,
+    db: Session,
+    plan: schemas_task3.ExecutionPlan,
+    context: dict[str, Any],
+    results: dict[str, schemas_task3.StepResult],
+    references: list[schemas_task3.Reference],
+):
+    """执行单个任务三步骤并更新执行状态。"""
+    start_time = time.time()
+    logger.info(
+        f"执行步骤: step_id={step.step_id}, type={step.step_type}, goal={step.goal}"
+    )
+
+    try:
+        if step.step_type == schemas_task3.StepType.SQL_QUERY:
+            output = _execute_sql_query(step, db, context)
+        elif step.step_type == schemas_task3.StepType.DERIVE_METRIC:
+            output = _execute_derive_metric(step, context)
+        elif step.step_type == schemas_task3.StepType.RETRIEVE_EVIDENCE:
+            output = _execute_retrieve_evidence(step, context, references)
+        elif step.step_type == schemas_task3.StepType.AGGREGATE:
+            output = _execute_aggregate(step, context)
+        elif step.step_type == schemas_task3.StepType.VERIFY:
+            output = _execute_verify(step, context)
+        elif step.step_type == schemas_task3.StepType.COMPOSE_ANSWER:
+            output = _execute_compose_answer(step, plan, results, references)
+        else:
+            raise ServiceException(
+                ErrorCode.AI_SERVICE_ERROR, f"未知的步骤类型: {step.step_type}"
+            )
+
+        output = services_task3.helpers.convert_to_jsonable(output)
+        execution_time_ms = int((time.time() - start_time) * 1000)
+        result = schemas_task3.StepResult(
+            step_id=step.step_id,
+            step_type=step.step_type,
+            status=schemas_task3.StepStatus.COMPLETED,
+            output=output,
+            execution_time_ms=execution_time_ms,
+        )
+        results[step.step_id] = result
+        context[step.step_id] = output
+        logger.info(f"步骤完成: step_id={step.step_id}, time_ms={execution_time_ms}")
+        return result
+    except Exception as exc:
+        execution_time_ms = int((time.time() - start_time) * 1000)
+        error_message = exc.message if isinstance(exc, ServiceException) else "系统内部错误"
+        result = schemas_task3.StepResult(
+            step_id=step.step_id,
+            step_type=step.step_type,
+            status=schemas_task3.StepStatus.FAILED,
+            output={},
+            error_message=error_message,
+            execution_time_ms=execution_time_ms,
+        )
+        results[step.step_id] = result
+        logger.error(f"步骤失败: step_id={step.step_id}, error={exc}", exc_info=True)
+        return result
+
+
+def build_execution_trace(
+    plan: schemas_task3.ExecutionPlan,
+    results: dict[str, schemas_task3.StepResult],
+    references: list[schemas_task3.Reference],
+):
+    """根据当前执行状态构造任务三执行轨迹。"""
+    final_answer = _get_final_answer(plan, results, references)
+    return schemas_task3.ExecutionTrace(
+        plan=plan,
+        results=list(results.values()),
+        final_answer=final_answer.content,
+        references=[services_task3.helpers.convert_to_jsonable(reference) for reference in references],
+        started_at=plan.created_at,
+        finished_at=datetime.now(),
+    )
+
+
+"""辅助函数"""
 
 
 def _extract_sql_from_response(response_text: str):
@@ -239,89 +304,7 @@ def _execute_sql(sql: str, db: Session):
         ) from exc
 
 
-
-def execute_step(
-    step: TaskStep,
-    db: Session,
-    plan: ExecutionPlan,
-    context: dict[str, Any],
-    results: dict[str, StepResult],
-    references: list[Reference],
-):
-    """执行单个任务三步骤并更新执行状态。"""
-    start_time = time.time()
-    logger.info(
-        f"执行步骤: step_id={step.step_id}, type={step.step_type}, goal={step.goal}"
-    )
-
-    try:
-        if step.step_type == StepType.SQL_QUERY:
-            output = _execute_sql_query(step, db, context)
-        elif step.step_type == StepType.DERIVE_METRIC:
-            output = _execute_derive_metric(step, context)
-        elif step.step_type == StepType.RETRIEVE_EVIDENCE:
-            output = _execute_retrieve_evidence(step, context, references)
-        elif step.step_type == StepType.AGGREGATE:
-            output = _execute_aggregate(step, context)
-        elif step.step_type == StepType.VERIFY:
-            output = _execute_verify(step, context)
-        elif step.step_type == StepType.COMPOSE_ANSWER:
-            output = _execute_compose_answer(step, plan, results, references)
-        else:
-            raise ServiceException(
-                ErrorCode.AI_SERVICE_ERROR, f"未知的步骤类型: {step.step_type}"
-            )
-
-        output = _to_jsonable(output)
-        execution_time_ms = int((time.time() - start_time) * 1000)
-        result = StepResult(
-            step_id=step.step_id,
-            step_type=step.step_type,
-            status=StepStatus.COMPLETED,
-            output=output,
-            execution_time_ms=execution_time_ms,
-        )
-        results[step.step_id] = result
-        context[step.step_id] = output
-        logger.info(f"步骤完成: step_id={step.step_id}, time_ms={execution_time_ms}")
-        return result
-    except Exception as exc:
-        execution_time_ms = int((time.time() - start_time) * 1000)
-        error_message = exc.message if isinstance(exc, ServiceException) else "系统内部错误"
-        result = StepResult(
-            step_id=step.step_id,
-            step_type=step.step_type,
-            status=StepStatus.FAILED,
-            output={},
-            error_message=error_message,
-            execution_time_ms=execution_time_ms,
-        )
-        results[step.step_id] = result
-        logger.error(f"步骤失败: step_id={step.step_id}, error={exc}", exc_info=True)
-        return result
-
-
-def build_execution_trace(
-    plan: ExecutionPlan,
-    results: dict[str, StepResult],
-    references: list[Reference],
-):
-    """根据当前执行状态构造任务三执行轨迹。"""
-    final_answer = _get_final_answer(plan, results, references)
-    return ExecutionTrace(
-        plan=plan,
-        results=list(results.values()),
-        final_answer=final_answer.content,
-        references=[_to_jsonable(reference) for reference in references],
-        started_at=plan.created_at,
-        finished_at=datetime.now(),
-    )
-
-
-"""辅助函数"""
-
-
-def _execute_sql_query(step: TaskStep, db: Session, context: dict[str, Any]):
+def _execute_sql_query(step: schemas_task3.TaskStep, db: Session, context: dict[str, Any]):
     """执行 SQL 查询步骤。"""
     params = step.params
     sql = params.get("sql")
@@ -371,7 +354,7 @@ def _execute_sql_query(step: TaskStep, db: Session, context: dict[str, Any]):
     return {"sql": sql, "data": data, "row_count": len(data)}
 
 
-def _generate_sql_for_step(step: TaskStep, context: dict[str, Any]):
+def _generate_sql_for_step(step: schemas_task3.TaskStep, context: dict[str, Any]):
     """为步骤生成 SQL 语句。"""
     deterministic_sql = _build_rule_based_sql(step, context)
     if deterministic_sql:
@@ -423,7 +406,7 @@ def _generate_sql_for_step(step: TaskStep, context: dict[str, Any]):
         params=json.dumps(step.params, ensure_ascii=False),
         context=context_desc,
     )
-    response_text = _invoke_llm(
+    response_text = services_task3.helpers.invoke_llm(
         system_prompt, user_prompt, max_tokens=2048, temperature=0.0
     )
     sql = _extract_sql_from_response(response_text)
@@ -432,7 +415,7 @@ def _generate_sql_for_step(step: TaskStep, context: dict[str, Any]):
     return sql
 
 
-def _build_rule_based_sql(step: TaskStep, context: dict[str, Any]):
+def _build_rule_based_sql(step: schemas_task3.TaskStep, context: dict[str, Any]):
     """按题型生成规则化 SQL，降低关键场景对 LLM 自由生成的依赖。"""
     question = _get_step_question_text(step, context)
     resolved_companies = _get_resolved_companies(context)
@@ -616,7 +599,7 @@ def _build_rule_based_sql(step: TaskStep, context: dict[str, Any]):
     return None
 
 
-def _get_step_question_text(step: TaskStep, context: dict[str, Any]):
+def _get_step_question_text(step: schemas_task3.TaskStep, context: dict[str, Any]):
     """提取当前步骤实际对应的问题文本。"""
     for key in ["original_question", "standalone_question"]:
         value = context.get(key)
@@ -652,9 +635,8 @@ def _format_text_in_clause(values: list[str]):
     return ", ".join(f"'{value}'" for value in values)
 
 
-
 def _build_single_company_filter(
-    step: TaskStep,
+    step: schemas_task3.TaskStep,
     context: dict[str, Any],
     question: str,
     alias: str = "",
@@ -674,7 +656,7 @@ def _build_single_company_filter(
         if first_company.get("stock_abbr"):
             return f"{prefix}stock_abbr = '{first_company['stock_abbr']}'"
 
-    company_name = _extract_company_name_from_question(question)
+    company_name = services_task3.helpers.extract_company_name_from_question(question)
     if company_name:
         return f"{prefix}stock_abbr = '{company_name}'"
 
@@ -699,7 +681,7 @@ def _build_schema_ddl():
     return "\n".join(lines)
 
 
-def _execute_derive_metric(step: TaskStep, context: dict[str, Any]):
+def _execute_derive_metric(step: schemas_task3.TaskStep, context: dict[str, Any]):
     """执行派生指标计算步骤。"""
     params = step.params
     formula = params.get("formula", "")
@@ -855,9 +837,9 @@ def _evaluate_formula(formula: str, row: dict):
 
 
 def _execute_retrieve_evidence(
-    step: TaskStep,
+    step: schemas_task3.TaskStep,
     context: dict[str, Any],
-    references: list[Reference],
+    references: list[schemas_task3.Reference],
 ):
     """执行证据检索步骤并收集引用。"""
     params = step.params
@@ -909,7 +891,7 @@ def _execute_retrieve_evidence(
 
     for evidence in evidence_list:
         references.append(
-            Reference(
+            schemas_task3.Reference(
                 paper_path=evidence.get("paper_path"),
                 text=evidence.get("text", ""),
                 page_no=evidence.get("page_no"),
@@ -927,7 +909,7 @@ def _execute_retrieve_evidence(
     }
 
 
-def _execute_aggregate(step: TaskStep, context: dict[str, Any]):
+def _execute_aggregate(step: schemas_task3.TaskStep, context: dict[str, Any]):
     """执行聚合统计步骤。"""
     params = step.params
     operation = params.get("operation", "avg")
@@ -986,7 +968,7 @@ def _execute_aggregate(step: TaskStep, context: dict[str, Any]):
     return output
 
 
-def _execute_verify(step: TaskStep, context: dict[str, Any]):
+def _execute_verify(step: schemas_task3.TaskStep, context: dict[str, Any]):
     """执行计划内轻量校验步骤。"""
     params = step.params
     check_type = params.get("check_type", "consistency")
@@ -1039,7 +1021,7 @@ def _execute_verify(step: TaskStep, context: dict[str, Any]):
     return verification_result
 
 
-def _aggregate_count_and_avg(step: TaskStep, dep_data: list[dict[str, Any]]):
+def _aggregate_count_and_avg(step: schemas_task3.TaskStep, dep_data: list[dict[str, Any]]):
     """按净利润率分组，统计公司数量并计算平均资产负债率。"""
     merged_rows: dict[str, dict[str, Any]] = {}
     for row in dep_data:
@@ -1101,10 +1083,10 @@ def _aggregate_count_and_avg(step: TaskStep, dep_data: list[dict[str, Any]]):
 
 
 def _execute_compose_answer(
-    step: TaskStep,
-    plan: ExecutionPlan,
-    results: dict[str, StepResult],
-    references: list[Reference],
+    step: schemas_task3.TaskStep,
+    plan: schemas_task3.ExecutionPlan,
+    results: dict[str, schemas_task3.StepResult],
+    references: list[schemas_task3.Reference],
 ):
     """基于执行结果生成最终回答文本。"""
     config = settings.PROMPT_CONFIG.get_task3_config
@@ -1115,17 +1097,17 @@ def _execute_compose_answer(
         question=plan.question,
         execution_trace=execution_summary,
     )
-    answer_text = _invoke_llm(
+    answer_text = services_task3.helpers.invoke_llm(
         system_prompt, user_prompt, max_tokens=8192, temperature=0.3
     )
     return {"answer": answer_text, "has_references": len(references) > 0}
 
 
-def _build_execution_summary(results: dict[str, StepResult]):
+def _build_execution_summary(results: dict[str, schemas_task3.StepResult]):
     """将执行结果汇总为模型可读摘要。"""
     summary_parts = []
     for step_id, result in results.items():
-        if result.status == StepStatus.COMPLETED:
+        if result.status == schemas_task3.StepStatus.COMPLETED:
             output_summary = {}
             if result.output:
                 if "data" in result.output:
@@ -1170,21 +1152,21 @@ def _build_execution_summary(results: dict[str, StepResult]):
                 }
             )
 
-    return json.dumps(_to_jsonable(summary_parts), ensure_ascii=False, indent=2)
+    return json.dumps(services_task3.helpers.convert_to_jsonable(summary_parts), ensure_ascii=False, indent=2)
 
 
 def _get_final_answer(
-    plan: ExecutionPlan,
-    results: dict[str, StepResult],
-    references: list[Reference],
+    plan: schemas_task3.ExecutionPlan,
+    results: dict[str, schemas_task3.StepResult],
+    references: list[schemas_task3.Reference],
 ):
     """从执行结果中提取最终答案。"""
     answer_content = ""
     for step_id in reversed(list(results.keys())):
         result = results[step_id]
         if (
-            result.step_type == StepType.COMPOSE_ANSWER
-            and result.status == StepStatus.COMPLETED
+            result.step_type == schemas_task3.StepType.COMPOSE_ANSWER
+            and result.status == schemas_task3.StepStatus.COMPLETED
         ):
             answer_content = result.output.get("answer", "")
             break
@@ -1192,24 +1174,24 @@ def _get_final_answer(
     if not answer_content:
         answer_content = _generate_fallback_answer(plan, results)
 
-    return Task3AnswerContent(content=answer_content, references=references)
+    return schemas_task3.Task3AnswerContent(content=answer_content, references=references)
 
 
 def _generate_fallback_answer(
-    plan: ExecutionPlan,
-    results: dict[str, StepResult],
+    plan: schemas_task3.ExecutionPlan,
+    results: dict[str, schemas_task3.StepResult],
 ):
     """在无法生成答案时构造降级回答。"""
     parts = []
     for step in plan.get_ordered_steps():
         result = results.get(step.step_id)
-        if result is None or result.status != StepStatus.COMPLETED:
+        if result is None or result.status != schemas_task3.StepStatus.COMPLETED:
             continue
-        if result.step_type == StepType.SQL_QUERY:
+        if result.step_type == schemas_task3.StepType.SQL_QUERY:
             data = result.output.get("data", [])
             if data:
                 parts.append(f"查询到 {len(data)} 条数据。")
-        elif result.step_type == StepType.AGGREGATE:
+        elif result.step_type == schemas_task3.StepType.AGGREGATE:
             agg_result = result.output.get("result")
             if agg_result is not None:
                 parts.append(f"聚合结果: {agg_result}")

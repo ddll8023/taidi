@@ -1,9 +1,9 @@
 """任务三跨文件共享辅助函数"""
 
-import json
-import re
 from datetime import datetime
 from decimal import Decimal
+import json
+import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -17,7 +17,7 @@ from app.utils.model_factory import get_model
 logger = setup_logger(__name__)
 
 
-def _to_jsonable(value: Any):
+def convert_to_jsonable(value: Any):
     """将复杂对象递归转换为 JSON 可序列化结构。"""
     if isinstance(value, Decimal):
         return float(value)
@@ -26,13 +26,13 @@ def _to_jsonable(value: Any):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     if isinstance(value, dict):
-        return {key: _to_jsonable(item) for key, item in value.items()}
+        return {key: convert_to_jsonable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [_to_jsonable(item) for item in value]
+        return [convert_to_jsonable(item) for item in value]
     return value
 
 
-def _parse_question_rounds(question_value):
+def parse_question_rounds(question_value):
     """解析题目文本为统一的轮次结构。"""
     if isinstance(question_value, list):
         parsed = question_value
@@ -59,7 +59,7 @@ def _parse_question_rounds(question_value):
     return rounds
 
 
-def _extract_json_from_response(response_text: str):
+def extract_json_from_response(response_text: str):
     """从模型响应中提取 JSON 结构。"""
     json_match = re.search(r"\{[\s\S]*\}", response_text)
     if json_match:
@@ -73,7 +73,7 @@ def _extract_json_from_response(response_text: str):
         return None
 
 
-def _invoke_llm(
+def invoke_llm(
     system_prompt: str,
     user_prompt: str,
     max_tokens: int = 8192,
@@ -108,20 +108,18 @@ def _invoke_llm(
     return ""
 
 
-def _is_attribution_with_financial_data(question: str):
+def is_attribution_with_financial_data(question: str):
     """判断题目是否同时涉及归因分析和财务数据。"""
     has_attribution = any(kw in question for kw in constants_task3.ATTRIBUTION_KEYWORDS)
     has_financial = any(kw in question for kw in constants_task3.FINANCIAL_DATA_KEYWORDS)
     return has_attribution and has_financial
 
 
-def _extract_company_name_from_question(question: str):
+def extract_company_name_from_question(question: str):
     """从问题文本中直接提取公司名称（不依赖数据库）。
 
     当公司不在 company_basic_info 表中时，作为检索过滤的兜底手段。
     """
-    import re
-
     generic_company_keywords = [
         "所有公司",
         "全部公司",

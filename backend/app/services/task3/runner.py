@@ -9,13 +9,8 @@ from app.db.database import commit_or_rollback
 from app.models.task3_question_item import Task3QuestionItem
 from app.models.task3_workspace import Task3Workspace
 from app.schemas.common import ErrorCode
-from app.schemas.task3 import (
-    StepStatus,
-    StepType,
-    Task3BatchAnswerResponse,
-    Task3QuestionActionResponse,
-)
-from app.services.task3.helpers import _parse_question_rounds, _to_jsonable
+from app.schemas import task3 as schemas_task3
+from app.services.task3.helpers import parse_question_rounds, convert_to_jsonable
 from app.services.task3.planner import process_task3_question
 from app.services.task3.verifier import verify_execution_trace
 from app.utils.exception import ServiceException
@@ -36,7 +31,7 @@ def answer_single_question(question_id: int, db: Session):
     db.flush()
 
     try:
-        rounds = _parse_question_rounds(question.question_raw_json or "")
+        rounds = parse_question_rounds(question.question_raw_json or "")
         answer_json = []
         all_sqls = []
         verifications = []
@@ -72,7 +67,7 @@ def answer_single_question(question_id: int, db: Session):
                 retrieval_summaries.append(retrieval_summary)
 
             for result in trace.results:
-                if result.step_type == StepType.SQL_QUERY and result.status == StepStatus.COMPLETED:
+                if result.step_type == schemas_task3.StepType.SQL_QUERY and result.status == schemas_task3.StepStatus.COMPLETED:
                     sql = result.output.get("sql")
                     if sql:
                         all_sqls.append(sql)
@@ -94,15 +89,15 @@ def answer_single_question(question_id: int, db: Session):
             "rounds": retrieval_summaries,
         } if retrieval_summaries else None
 
-        question.answer_json = _to_jsonable(answer_json)
+        question.answer_json = convert_to_jsonable(answer_json)
         question.sql_text = "\n\n".join(all_sqls) if all_sqls else None
         question.execution_plan = (
-            {"rounds": _to_jsonable(execution_plans)}
+            {"rounds": convert_to_jsonable(execution_plans)}
             if execution_plans
             else None
         )
-        question.verification = _to_jsonable(verification)
-        question.retrieval_summary = _to_jsonable(retrieval_summary)
+        question.verification = convert_to_jsonable(verification)
+        question.retrieval_summary = convert_to_jsonable(retrieval_summary)
         if answer_json and verification.get("passed", False):
             question.status = 2  # 已完成
             question.last_error = None
@@ -115,7 +110,7 @@ def answer_single_question(question_id: int, db: Session):
         commit_or_rollback(db)
         db.refresh(question)
 
-        return Task3QuestionActionResponse(
+        return schemas_task3.Task3QuestionActionResponse(
             id=question.id,
             status=question.status,
             answered_at=question.answered_at,
@@ -150,7 +145,7 @@ def delete_question_answer(question_id: int, db: Session):
     _sync_workspace_stats(db, question.workspace_id)
     commit_or_rollback(db)
 
-    return Task3QuestionActionResponse(
+    return schemas_task3.Task3QuestionActionResponse(
         id=question_id,
         status=question.status,
         answered_at=question.answered_at,
@@ -207,13 +202,13 @@ def batch_answer_questions(
     _sync_workspace_stats(db, workspace_id)
     commit_or_rollback(db)
 
-    return Task3BatchAnswerResponse(success=success_count, failed=failed_count)
+    return schemas_task3.Task3BatchAnswerResponse(success=success_count, failed=failed_count)
 
 
 def batch_answer_with_workspace_check(scope: str, db: Session):
     """校验工作台后批量回答题目。"""
-    from app.services.task3.importer import get_workspace_or_raise
-    workspace = get_workspace_or_raise(db)
+    from app.services.task3.importer import get_workspace_info
+    workspace = get_workspace_info(db)
     return batch_answer_questions(workspace_id=workspace.id, scope=scope, db=db)
 
 
@@ -310,7 +305,7 @@ def _build_retrieval_summary(trace):
     """从执行轨迹中提取检索摘要。"""
     retrieve_steps = [
         r for r in trace.results
-        if r.step_type == StepType.RETRIEVE_EVIDENCE and r.status == StepStatus.COMPLETED
+        if r.step_type == schemas_task3.StepType.RETRIEVE_EVIDENCE and r.status == schemas_task3.StepStatus.COMPLETED
     ]
     if not retrieve_steps:
         return None
