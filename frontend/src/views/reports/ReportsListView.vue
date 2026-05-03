@@ -24,7 +24,6 @@ const jumpPageInput = ref('')
 
 const searchKeyword = ref('')
 const parseStatusFilter = ref('')
-const vectorStatusFilter = ref('')
 const sortBy = ref('updated_at')
 const sortOrder = ref('desc')
 
@@ -34,15 +33,6 @@ const PARSE_STATUS_OPTIONS = [
   { value: '1', label: '解析成功' },
   { value: '2', label: '解析失败' },
   { value: '3', label: '解析中' }
-]
-
-const VECTOR_STATUS_OPTIONS = [
-  { value: '', label: '全部向量化状态' },
-  { value: '0', label: '待向量化' },
-  { value: '1', label: '向量化中' },
-  { value: '2', label: '已完成' },
-  { value: '3', label: '失败' },
-  { value: '4', label: '已跳过' }
 ]
 
 const SORT_BY_OPTIONS = [
@@ -234,71 +224,6 @@ const formatStatusLabel = (value, fallback = '待接口返回') => {
   return rawValue.replace(/[_-]/g, ' ')
 }
 
-const resolveVectorStatusMeta = (value) => {
-  const numValue = Number(value)
-
-  if (!Number.isNaN(numValue)) {
-    const numericStatusMap = {
-      0: { key: 'pending', label: '待向量化', tone: 'warning' },
-      1: { key: 'processing', label: '向量化中', tone: 'accent' },
-      2: { key: 'completed', label: '已完成', tone: 'success' },
-      3: { key: 'failed', label: '失败', tone: 'danger' },
-      4: { key: 'skipped', label: '已跳过', tone: 'neutral' }
-    }
-
-    if (numericStatusMap[numValue] !== undefined) {
-      return numericStatusMap[numValue]
-    }
-  }
-
-  const rawValue = `${value || ''}`.trim()
-  const normalizedValue = rawValue.toLowerCase()
-
-  if (!rawValue || ['idle', 'not_started', 'pending', 'unprocessed'].includes(normalizedValue) || rawValue === '未执行') {
-    return {
-      key: 'pending',
-      label: '未执行',
-      tone: 'warning'
-    }
-  }
-
-  if (
-    ['in_progress', 'processing', 'queued', 'running'].includes(normalizedValue) ||
-    rawValue === '处理中'
-  ) {
-    return {
-      key: 'processing',
-      label: '处理中',
-      tone: 'accent'
-    }
-  }
-
-  if (
-    ['completed', 'done', 'success', 'vectorized'].includes(normalizedValue) ||
-    rawValue === '已完成'
-  ) {
-    return {
-      key: 'completed',
-      label: '已完成',
-      tone: 'success'
-    }
-  }
-
-  if (['error', 'failed'].includes(normalizedValue) || rawValue === '失败') {
-    return {
-      key: 'failed',
-      label: '失败',
-      tone: 'danger'
-    }
-  }
-
-  return {
-    key: 'unknown',
-    label: formatStatusLabel(rawValue, '未知状态'),
-    tone: 'neutral'
-  }
-}
-
 const resolveParseStatusMeta = (value) => {
   if (value === undefined || value === null || value === '') {
     return { key: 'unknown', label: '待接口返回', tone: 'neutral' }
@@ -369,9 +294,6 @@ const buildParsingStatusItems = (item) => {
 
 const normalizeReportItem = (item, index) => {
   const id = pickValue(item, ['id', 'report_id', 'reportId'])
-  const vectorStatusMeta = resolveVectorStatusMeta(
-    pickValue(item, ['vector_status', 'vectorStatus', 'embedding_status', 'embeddingStatus'])
-  )
   const parsingResult = buildParsingStatusItems(item)
 
   return {
@@ -387,10 +309,7 @@ const normalizeReportItem = (item, index) => {
     parseStatusKey: parsingResult.parseStatusKey,
     uploadedAtText: formatDateTime(
       pickValue(item, ['uploaded_at', 'upload_time', 'created_at', 'createdAt'])
-    ),
-    vectorStatusKey: vectorStatusMeta.key,
-    vectorStatusLabel: vectorStatusMeta.label,
-    vectorStatusTone: vectorStatusMeta.tone
+    )
   }
 }
 
@@ -455,10 +374,6 @@ const buildFilterParams = () => {
 
   if (parseStatusFilter.value !== '') {
     params.parse_status = parseStatusFilter.value
-  }
-
-  if (vectorStatusFilter.value !== '') {
-    params.vector_status = vectorStatusFilter.value
   }
 
   if (sortBy.value) {
@@ -527,7 +442,6 @@ const handleSearch = async () => {
 const resetFilters = async () => {
   searchKeyword.value = ''
   parseStatusFilter.value = ''
-  vectorStatusFilter.value = ''
   sortBy.value = 'updated_at'
   sortOrder.value = 'desc'
   listState.page = 1
@@ -775,7 +689,7 @@ onUnmounted(() => {
             <p class="shell-kicker">Records</p>
             <h2 class="mt-2 text-xl font-semibold text-ink-900">财报记录列表</h2>
             <p class="mt-2 max-w-3xl text-sm leading-6 text-ink-600">
-              展示文件信息、解析状态、向量化状态和操作区。向量化功能待后端实现后开放。
+              展示文件信息、解析状态和操作区。
             </p>
             <p class="mt-4 text-sm text-ink-500">{{ pageSummary }}</p>
           </div>
@@ -816,15 +730,6 @@ onUnmounted(() => {
               <FontAwesomeIcon :icon="['fas', 'rotate-right']" aria-hidden="true" />
               <span>{{ isRetryingAll ? '重试中...' : '批量重试' }}</span>
             </button>
-            <button
-              type="button"
-              class="shell-button"
-              disabled
-              title="向量化功能待后端实现"
-            >
-              <FontAwesomeIcon :icon="['fas', 'gears']" aria-hidden="true" />
-              <span>一键向量化（待实现）</span>
-            </button>
           </div>
         </div>
 
@@ -832,13 +737,10 @@ onUnmounted(() => {
           <FilterBar
             :search-value="searchKeyword"
             :parse-status-options="PARSE_STATUS_OPTIONS"
-            :vector-status-options="VECTOR_STATUS_OPTIONS"
             :parse-status-value="parseStatusFilter"
-            :vector-status-value="vectorStatusFilter"
             :is-loading="isLoading"
             @update:search-value="searchKeyword = $event"
             @update:parse-status-value="parseStatusFilter = $event"
-            @update:vector-status-value="vectorStatusFilter = $event"
             @search="handleSearch"
             @reset="resetFilters"
           />
@@ -893,7 +795,7 @@ onUnmounted(() => {
         <AppEmptyState
           v-else-if="!hasRecords"
           title="当前没有记录"
-          description="上传财报文件后，记录会出现在这里，并直接展示解析状态和向量化状态。"
+          description="上传财报文件后，记录会出现在这里，并直接展示解析状态。"
         />
 
         <div v-else class="flex flex-col overflow-hidden rounded-[28px] border border-black/5 bg-white" style="height: 600px;">
@@ -904,23 +806,22 @@ onUnmounted(() => {
                   <th>文件信息</th>
                   <th>报告标题</th>
                   <th>解析状态</th>
-                  <th>向量化状态</th>
                   <th>操作区</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="report in listState.items" :key="report.key">
-                  <td class="w-[26%]">
+                  <td class="w-[30%]">
                     <div class="space-y-2">
                       <p class="font-medium text-ink-900">{{ report.fileName }}</p>
                       <p class="text-xs uppercase tracking-[0.16em] text-ink-400">上传时间</p>
                       <p class="text-sm text-ink-600">{{ report.uploadedAtText }}</p>
                     </div>
                   </td>
-                  <td class="w-[26%]">
+                  <td class="w-[30%]">
                     <p class="text-sm leading-6 text-ink-700">{{ report.reportTitle }}</p>
                   </td>
-                  <td class="w-[16%]">
+                  <td class="w-[18%]">
                     <div class="space-y-2">
                       <div
                         v-for="statusItem in report.parseStatusItems"
@@ -935,13 +836,7 @@ onUnmounted(() => {
                       </div>
                     </div>
                   </td>
-                  <td class="w-[12%]">
-                    <StatusBadge
-                      :label="report.vectorStatusLabel"
-                      :tone="report.vectorStatusTone"
-                    />
-                  </td>
-                  <td class="w-[20%]">
+                  <td class="w-[22%]">
                     <div class="flex flex-wrap gap-2">
                       <button
                         v-if="report.parseStatusKey === 'pending'"
@@ -971,16 +866,6 @@ onUnmounted(() => {
                       >
                         <FontAwesomeIcon :icon="['fas', 'rotate-right']" aria-hidden="true" />
                         <span>重新解析</span>
-                      </button>
-                      <button
-                        v-if="report.parseStatusKey === 'success' && report.vectorStatusKey === 'pending'"
-                        type="button"
-                        class="shell-button"
-                        disabled
-                        title="向量化功能待后端实现"
-                      >
-                        <FontAwesomeIcon :icon="['fas', 'gears']" aria-hidden="true" />
-                        <span>向量化（待实现）</span>
                       </button>
                       <button
                         v-if="report.parseStatusKey === 'success'"

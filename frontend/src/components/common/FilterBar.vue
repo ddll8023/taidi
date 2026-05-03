@@ -17,15 +17,7 @@ const props = defineProps({
     type: Array,
     required: true
   },
-  vectorStatusOptions: {
-    type: Array,
-    required: true
-  },
   parseStatusValue: {
-    type: [String, Number],
-    default: ''
-  },
-  vectorStatusValue: {
     type: [String, Number],
     default: ''
   },
@@ -38,7 +30,6 @@ const props = defineProps({
 const emit = defineEmits([
   'update:searchValue',
   'update:parseStatusValue',
-  'update:vectorStatusValue',
   'search',
   'reset'
 ])
@@ -47,7 +38,6 @@ const activeFiltersCount = computed(() => {
   let count = 0
   if (props.searchValue && props.searchValue.trim()) count++
   if (props.parseStatusValue !== '') count++
-  if (props.vectorStatusValue !== '') count++
   return count
 })
 
@@ -66,15 +56,9 @@ const handleParseStatusChange = (value) => {
   emit('search')
 }
 
-const handleVectorStatusChange = (value) => {
-  emit('update:vectorStatusValue', value)
-  emit('search')
-}
-
 const handleReset = () => {
   emit('update:searchValue', '')
   emit('update:parseStatusValue', '')
-  emit('update:vectorStatusValue', '')
   emit('reset')
 }
 </script>
@@ -105,16 +89,6 @@ const handleReset = () => {
           placeholder="全部解析状态"
           :disabled="isLoading"
           @update:model-value="handleParseStatusChange"
-        />
-
-        <div class="filter-separator" />
-
-        <SelectFilter
-          :model-value="vectorStatusValue"
-          :options="vectorStatusOptions"
-          placeholder="全部向量化状态"
-          :disabled="isLoading"
-          @update:model-value="handleVectorStatusChange"
         />
       </div>
 
