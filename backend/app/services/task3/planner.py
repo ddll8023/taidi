@@ -1,5 +1,6 @@
 """任务三问题规划与执行调度服务。"""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import re
 from datetime import datetime
@@ -140,23 +141,35 @@ def execute_plan(
                         failed_step_ids.add(step_id)
             break
 
-        for step in executable_steps:
-            result = services_task3_executor.execute_step(
-                step=step,
-                db=db,
-                plan=plan,
-                context=context,
-                results=results,
-                references=references,
-            )
-
-            if result.status == schemas_task3.StepStatus.COMPLETED:
-                completed_step_ids.add(step.step_id)
-            else:
-                failed_step_ids.add(step.step_id)
-                if stop_on_failure:
-                    logger.warning(f"步骤执行失败，停止执行: step_id={step.step_id}")
-                    break
+        # 并行执行本轮中无依赖关系的步骤
+        with ThreadPoolExecutor(max_workers=len(executable_steps)) as executor:
+            future_to_step = {
+                executor.submit(
+                    services_task3_executor.execute_step,
+                    step=step,
+                    db=db,
+                    plan=plan,
+                    context=context,
+                    results=results,
+                    references=references,
+                ): step
+                for step in executable_steps
+            }
+            for future in as_completed(future_to_step):
+                step = future_to_step[future]
+                try:
+                    result = future.result()
+                    if result.status == schemas_task3.StepStatus.COMPLETED:
+                        completed_step_ids.add(step.step_id)
+                    else:
+                        failed_step_ids.add(step.step_id)
+                        if stop_on_failure:
+                            break
+                except Exception as exc:
+                    failed_step_ids.add(step.step_id)
+                    logger.error(f"步骤执行异常: step_id={step.step_id}, error={exc}")
+                    if stop_on_failure:
+                        break
 
         if stop_on_failure and failed_step_ids:
             break

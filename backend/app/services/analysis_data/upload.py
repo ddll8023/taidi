@@ -28,7 +28,7 @@ class _UploadedPdfArtifact(NamedTuple):
 # ========== 公共入口函数 ==========
 
 
-async def upload_archive_only(db: Session, file_name: str, file_content: bytes):
+def upload_archive_only(db: Session, file_name: str, file_content: bytes):
     """上传单个财报文件并建档"""
     raw_source_file_name = str(file_name or "").strip() or None
     logger.info(f"开始上传财报文件（仅建档）: source_file_name={raw_source_file_name}")
@@ -167,7 +167,7 @@ async def upload_archive_only(db: Session, file_name: str, file_content: bytes):
     )
 
 
-async def upload_archive_batch(db: Session, file_items: list[tuple[str, bytes]]):
+def upload_archive_batch(db: Session, file_items: list[tuple[str, bytes]]):
     """批量上传财报文件并建档"""
     if not file_items:
         raise ServiceException(ErrorCode.PARAM_ERROR, "请选择至少一个文件")
@@ -183,7 +183,7 @@ async def upload_archive_batch(db: Session, file_items: list[tuple[str, bytes]])
     for file_name, file_content in file_items:
         display_name = file_name or "未知文件名"
         try:
-            result = await upload_archive_only(db, file_name, file_content)
+            result = upload_archive_only(db, file_name, file_content)
             success_count += 1
             success_reports.append(
                 {

@@ -1,5 +1,6 @@
 """任务三跨文件共享辅助函数"""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from decimal import Decimal
 import json
@@ -15,6 +16,11 @@ from app.utils.logger_config import setup_logger
 from app.utils.model_factory import get_model
 
 logger = setup_logger(__name__)
+
+# 专用 LLM 线程池，隔离 LLM HTTP 调用，避免耗尽 FastAPI 通用线程池
+_llm_executor = ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="llm_worker"
+)
 
 
 def convert_to_jsonable(value: Any):
@@ -89,7 +95,9 @@ def invoke_llm(
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ]
-        response = model.invoke(messages)
+        # 提交到专用线程池执行，不阻塞当前线程
+        future = _llm_executor.submit(lambda: model.invoke(messages))
+        response = future.result()
     except ServiceException:
         raise
     except Exception as exc:

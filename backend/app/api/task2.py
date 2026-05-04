@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1/task2", tags=["任务二工作台"])
 
 
 @router.get("/workspace", response_model=ApiResponse[schemas_task2.Task2WorkspaceResponse])
-async def get_workspace(
+def get_workspace(
     db: Annotated[Session, Depends(get_db)],
 ):
     """获取当前工作台概览"""
@@ -40,7 +40,7 @@ async def import_fujian4(
 
 
 @router.get("/questions", response_model=ApiResponse[schemas_task2.Task2QuestionListResponse])
-async def get_questions(
+def get_questions(
     db: Annotated[Session, Depends(get_db)],
     status: Annotated[int | None, Query(description="状态筛选：0待处理 1回答中 2已完成 3失败")] = None,
 ):
@@ -53,7 +53,7 @@ async def get_questions(
 
 
 @router.get("/questions/{question_id}", response_model=ApiResponse[schemas_task2.Task2QuestionItemResponse])
-async def get_question_detail(
+def get_question_detail(
     question_id: Annotated[int, Path(description="题目ID")],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -66,7 +66,7 @@ async def get_question_detail(
 
 
 @router.post("/questions/{question_id}/answer", response_model=ApiResponse[schemas_task2.AnswerResultResponse])
-async def answer_question(
+def answer_question(
     question_id: Annotated[int, Path(description="题目ID")],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -79,7 +79,7 @@ async def answer_question(
 
 
 @router.delete("/questions/{question_id}/answer", response_model=ApiResponse[schemas_task2.DeleteAnswerResponse])
-async def delete_answer(
+def delete_answer(
     question_id: Annotated[int, Path(description="题目ID")],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -92,7 +92,7 @@ async def delete_answer(
 
 
 @router.post("/questions/{question_id}/rerun", response_model=ApiResponse[schemas_task2.AnswerResultResponse])
-async def rerun_question(
+def rerun_question(
     question_id: Annotated[int, Path(description="题目ID")],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -105,7 +105,7 @@ async def rerun_question(
 
 
 @router.post("/questions/batch-answer", response_model=ApiResponse[schemas_task2.BatchAnswerResponse])
-async def batch_answer(
+def batch_answer(
     db: Annotated[Session, Depends(get_db)],
     scope: Annotated[str, Query(description="处理范围：all全部/unfinished未完成/failed失败")] = "unfinished",
 ):
@@ -118,7 +118,7 @@ async def batch_answer(
 
 
 @router.post("/export", response_model=ApiResponse[schemas_task2.Task2ExportResultResponse])
-async def export_result(
+def export_result(
     db: Annotated[Session, Depends(get_db)],
 ):
     """导出result_2.xlsx"""
@@ -130,7 +130,7 @@ async def export_result(
 
 
 @router.get("/export/latest", response_model=ApiResponse[schemas_task2.Task2LatestExportInfoResponse])
-async def get_latest_export(
+def get_latest_export(
     db: Annotated[Session, Depends(get_db)],
 ):
     """获取最近一次导出结果信息"""

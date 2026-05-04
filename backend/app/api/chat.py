@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/v1/chat", tags=["智能问数"])
 
 
 @router.post("", response_model=ApiResponse)
-async def chat(
+def chat(
     request: schemas_chat.ChatRequest,
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -33,7 +33,7 @@ async def chat(
 
 
 @router.get("/sessions", response_model=ApiResponse)
-async def get_sessions(
+def get_sessions(
     db: Annotated[Session, Depends(get_db)],
     page: Annotated[int, Query(ge=1, description="页码")] = 1,
     page_size: Annotated[int, Query(ge=1, le=100, description="每页数量")] = 10,
@@ -47,7 +47,7 @@ async def get_sessions(
 
 
 @router.get("/history/{session_id}", response_model=ApiResponse)
-async def get_history(
+def get_history(
     session_id: Annotated[str, Path(description="会话ID")],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -60,7 +60,7 @@ async def get_history(
 
 
 @router.post("/export", response_model=ApiResponse)
-async def export_result(
+def export_result(
     request: schemas_chat.ChatExportRequest,
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -73,7 +73,7 @@ async def export_result(
 
 
 @router.put("/sessions/{session_id}/close", response_model=ApiResponse)
-async def close_session(
+def close_session(
     session_id: Annotated[str, Path(description="会话ID")],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -86,7 +86,7 @@ async def close_session(
 
 
 @router.delete("/sessions/{session_id}", response_model=ApiResponse)
-async def delete_session(
+def delete_session(
     session_id: Annotated[str, Path(description="会话ID")],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -99,7 +99,7 @@ async def delete_session(
 
 
 @router.put("/sessions/{session_id}/rename", response_model=ApiResponse)
-async def rename_session(
+def rename_session(
     session_id: Annotated[str, Path(description="会话ID")],
     request: schemas_chat.ChatRenameRequest,
     db: Annotated[Session, Depends(get_db)],
@@ -115,7 +115,7 @@ async def rename_session(
 
 
 @router.get("/images/{filename}")
-async def get_chart_image(
+def get_chart_image(
     filename: Annotated[str, Path(description="图片文件名")],
 ):
     """获取图表图片"""

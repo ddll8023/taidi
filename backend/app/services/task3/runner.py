@@ -1,11 +1,12 @@
 """任务三工作台执行服务。"""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.database import commit_or_rollback
+from app.db.database import SessionLocal, commit_or_rollback
 from app.models.task3_question_item import Task3QuestionItem
 from app.models.task3_workspace import Task3Workspace
 from app.schemas.common import ErrorCode
@@ -175,29 +176,37 @@ def batch_answer_questions(
     scope: str,
     db: Session,
 ):
-    """按范围批量回答工作台中的题目。"""
+    """按范围批量回答工作台中的题目（并行执行，最大并发 3）。"""
     stmt = select(Task3QuestionItem).where(Task3QuestionItem.workspace_id == workspace_id)
     if scope == "unfinished":
         stmt = stmt.where(Task3QuestionItem.status.in_([0, 3]))
     elif scope == "failed":
         stmt = stmt.where(Task3QuestionItem.status == 3)
-    # scope == "all": no filter
 
     questions = db.execute(stmt).scalars().all()
 
+    def _answer_one(q_id: int) -> int:
+        """在独立 DB 会话中回答单题，返回状态码。"""
+        thread_db = SessionLocal()
+        try:
+            result = answer_single_question(q_id, thread_db)
+            return result.status
+        except Exception as exc:
+            logger.warning(f"批量回答中题目 {q_id} 失败: {exc}")
+            return 3
+        finally:
+            thread_db.close()
+
     success_count = 0
     failed_count = 0
-
-    for q in questions:
-        try:
-            result = answer_single_question(q.id, db)
-            if result.status == 2:
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_to_q = {executor.submit(_answer_one, q.id): q for q in questions}
+        for future in as_completed(future_to_q):
+            status = future.result()
+            if status == 2:
                 success_count += 1
             else:
                 failed_count += 1
-        except Exception as exc:
-            failed_count += 1
-            logger.warning(f"批量回答中题目 {q.question_code} 失败: {exc}")
 
     _sync_workspace_stats(db, workspace_id)
     commit_or_rollback(db)

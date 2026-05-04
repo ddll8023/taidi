@@ -2,11 +2,12 @@
 import json
 import math
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.database import commit_or_rollback
+from app.db.database import SessionLocal, commit_or_rollback
 from app.models import chat_message as models_chat_message
 from app.models import chat_session as models_chat_session
 from app.schemas import chat as schemas_chat
@@ -14,6 +15,7 @@ from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.services.chat.message import process_chat_message
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
+
 logger = setup_logger(__name__)
 
 
@@ -133,16 +135,10 @@ def rename_chat_session(session_id: str, name: str, db: Session):
     return schemas_chat.ChatSessionResponse.model_validate(chat_session)
 
 
-def export_chat_results(questions: list[dict], db: Session):
-    """批量执行问答并导出结果"""
-    from openpyxl import Workbook
-
-    wb = Workbook()
-    wb.remove(wb.active)
-
-    all_results = []
-
-    for idx, item in enumerate(questions):
+def _export_process_one_question(item: dict, idx: int):
+    """在线程池中处理单个问题的所有问答轮次（独立 DB 会话）"""
+    db = SessionLocal()
+    try:
         question_id = item.get("id", f"B{idx + 1:03d}")
         question_json_str = item.get("question", "[]")
 
@@ -244,24 +240,50 @@ def export_chat_results(questions: list[dict], db: Session):
         sql_query = "\n\n".join(all_sqls) if all_sqls else ""
         chart_type = "、".join(all_chart_types) if all_chart_types else "无"
 
-        result_item = {
+        return {
             "id": question_id,
             "question": question_json_str,
             "sql": sql_query,
             "chart_type": chart_type,
             "answer": qa_pairs,
+            "rounds": rounds,
         }
-        all_results.append(result_item)
+    finally:
+        db.close()
 
-        ws = wb.create_sheet(title=question_id)
+
+def export_chat_results(questions: list[dict], db: Session):
+    """批量执行问答并导出结果（各问题并行处理，结果收集后顺序写入 Excel）"""
+    from openpyxl import Workbook
+
+    all_results = []
+
+    # 并行处理每个问题（每个线程独立 DB 会话）
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_map = {
+            executor.submit(_export_process_one_question, item, idx): idx
+            for idx, item in enumerate(questions)
+        }
+        ordered_results = [None] * len(questions)
+        for future in as_completed(future_map):
+            idx = future_map[future]
+            ordered_results[idx] = future.result()
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    for result in ordered_results:
+        all_results.append(result)
+
+        ws = wb.create_sheet(title=result["id"])
         ws.append(["编号", "问题", "SQL查询语句", "图形格式", "回答"])
         ws.append(
             [
-                question_id,
-                json.dumps(rounds, ensure_ascii=False),
-                sql_query,
-                chart_type,
-                json.dumps(qa_pairs, ensure_ascii=False),
+                result["id"],
+                json.dumps(result["rounds"], ensure_ascii=False),
+                result["sql"],
+                result["chart_type"],
+                json.dumps(result["answer"], ensure_ascii=False),
             ]
         )
 

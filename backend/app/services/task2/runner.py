@@ -1,5 +1,6 @@
 """任务二题目回答执行服务"""
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from sqlalchemy import select
@@ -13,7 +14,7 @@ from app.services import chat as chat_service
 from app.services.task2.helpers import _delete_chart_file, _delete_session_and_charts
 from app.services.task2.workspace import get_workspace_or_raise
 from app.utils.exception import ServiceException
-from app.db.database import commit_or_rollback
+from app.db.database import SessionLocal, commit_or_rollback
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -193,6 +194,15 @@ def batch_answer_with_workspace_check(scope: str, db: Session):
 """辅助函数"""
 
 
+def _answer_single_in_thread(question_id: int):
+    """在线程池中执行，每个线程使用独立 DB 会话（Session 非线程安全）"""
+    db = SessionLocal()
+    try:
+        return answer_single_question(question_id, db)
+    finally:
+        db.close()
+
+
 def _reset_question_answer(db: Session, question: Task2QuestionItem):
     """清理题目的旧会话、图表文件和回答字段。"""
     if question.session_id:
@@ -263,25 +273,30 @@ def _batch_answer_questions(workspace_id: int, scope: str, db: Session):
     failed_count = 0
     results = []
 
-    for idx, question in enumerate(questions):
-        logger.info(f"批量处理进度: {idx + 1}/{len(questions)} - {question.question_code}")
-
-        try:
-            result = answer_single_question(question.id, db)
-            success_count += 1
-            results.append(schemas_task2.BatchAnswerResultItem(
-                question_code=question.question_code,
-                status="success",
-                result=result,
-            ))
-        except Exception as exc:
-            failed_count += 1
-            results.append(schemas_task2.BatchAnswerResultItem(
-                question_code=question.question_code,
-                status="failed",
-                error=exc.message if isinstance(exc, ServiceException) else "回答失败",
-            ))
-            logger.error(f"批量回答失败: {question.question_code} - {exc}")
+    # 并行执行（最大并发 3）：每个线程使用独立 DB 会话避免 Session 线程安全问题
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_map = {
+            executor.submit(_answer_single_in_thread, q.id): q
+            for q in questions
+        }
+        for future in as_completed(future_map):
+            q = future_map[future]
+            try:
+                result = future.result()
+                success_count += 1
+                results.append(schemas_task2.BatchAnswerResultItem(
+                    question_code=q.question_code,
+                    status="success",
+                    result=result,
+                ))
+            except Exception as exc:
+                failed_count += 1
+                results.append(schemas_task2.BatchAnswerResultItem(
+                    question_code=q.question_code,
+                    status="failed",
+                    error=exc.message if isinstance(exc, ServiceException) else "回答失败",
+                ))
+                logger.error(f"批量回答失败: {q.question_code} - {exc}")
 
     _update_workspace_stats(db, workspace_id)
     db.flush()

@@ -18,14 +18,14 @@ router = APIRouter(prefix="/api/v1/data", tags=["数据上传处理"])
 
 
 @router.post("/upload", response_model=ApiResponse)
-async def upload_data(
+def upload_data(
     db: Annotated[Session, Depends(get_db)],
     file: Annotated[UploadFile, File(description="PDF文件")],
 ):
     """上传PDF文件，仅执行建档入库（阶段一）"""
     try:
-        file_content = await file.read()
-        result = await services_analysis_data.upload_archive_only(
+        file_content = file.file.read()
+        result = services_analysis_data.upload_archive_only(
             db, file.filename, file_content
         )
         return success(data=result)
@@ -34,21 +34,21 @@ async def upload_data(
 
 
 @router.post("/upload/batch", response_model=ApiResponse)
-async def upload_batch_data(
+def upload_batch_data(
     db: Annotated[Session, Depends(get_db)],
     files: Annotated[list[UploadFile], File(description="PDF文件列表")],
 ):
     """批量上传PDF文件，仅执行建档入库（阶段一）"""
     try:
-        file_items = [(f.filename or "", await f.read()) for f in files]
-        result = await services_analysis_data.upload_archive_batch(db, file_items)
+        file_items = [(f.filename or "", f.file.read()) for f in files]
+        result = services_analysis_data.upload_archive_batch(db, file_items)
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 
 
 @router.post("/parse/batch", response_model=ApiResponse)
-async def parse_batch_reports(
+def parse_batch_reports(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
     request: Annotated[schemas_analysis_data.BatchParseRequest, Body(description="批量解析请求")],
@@ -64,7 +64,7 @@ async def parse_batch_reports(
 
 
 @router.post("/parse/{report_id}", response_model=ApiResponse)
-async def parse_single_report(
+def parse_single_report(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
     report_id: Annotated[int, Path(description="财报ID")],
@@ -81,7 +81,7 @@ async def parse_single_report(
 
 
 @router.post("/parse/all", response_model=ApiResponse)
-async def parse_all_pending_reports(
+def parse_all_pending_reports(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
     limit: Annotated[int, Query(description="最大处理数量")] = 100,
@@ -97,7 +97,7 @@ async def parse_all_pending_reports(
 
 
 @router.post("/parse/status/batch", response_model=ApiResponse)
-async def get_batch_parse_status(
+def get_batch_parse_status(
     db: Annotated[Session, Depends(get_db)],
     request: Annotated[schemas_analysis_data.BatchStatusRequest, Body(description="批量状态查询请求")],
 ):
@@ -110,7 +110,7 @@ async def get_batch_parse_status(
 
 
 @router.get("", response_model=ApiResponse)
-async def get_data_list(
+def get_data_list(
     db: Annotated[Session, Depends(get_db)],
     data_list_request: Annotated[schemas_analysis_data.DataListRequest, Depends()],
 ):
@@ -123,7 +123,7 @@ async def get_data_list(
 
 
 @router.post("/import-companies", response_model=ApiResponse)
-async def import_companies(
+def import_companies(
     db: Annotated[Session, Depends(get_db)],
     file: Annotated[UploadFile, File(description="Excel文件")],
 ):
@@ -133,7 +133,7 @@ async def import_companies(
             raise ServiceException(ErrorCode.PARAM_ERROR, "仅支持 Excel 文件（.xlsx 或 .xls）")
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
-            content = await file.read()
+            content = file.file.read()
             tmp.write(content)
             tmp_path = tmp.name
 
@@ -148,7 +148,7 @@ async def import_companies(
 
 
 @router.delete("/{report_id}", response_model=ApiResponse)
-async def delete_data(
+def delete_data(
     db: Annotated[Session, Depends(get_db)],
     report_id: Annotated[int, Path(description="财报记录ID")],
 ):
@@ -161,7 +161,7 @@ async def delete_data(
 
 
 @router.get("/{report_id}", response_model=ApiResponse)
-async def get_data_detail(
+def get_data_detail(
     db: Annotated[Session, Depends(get_db)],
     report_id: Annotated[int, Path(description="财报记录ID")],
 ):
@@ -174,7 +174,7 @@ async def get_data_detail(
 
 
 @router.get("/{report_id}/json", response_model=ApiResponse)
-async def get_json_content(
+def get_json_content(
     db: Annotated[Session, Depends(get_db)],
     report_id: Annotated[int, Path(description="财报记录ID")],
 ):

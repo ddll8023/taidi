@@ -39,6 +39,21 @@ class ModelFactory:
             ),
         )
 
+    # def build_chat_model(
+    #     self,
+    #     *,
+    #     max_tokens: int | None = None,
+    #     temperature: float | None = None,
+    # ) -> ChatAnthropic:
+    #     return ChatAnthropic(
+    #         model=settings.CHAT_MODEL,
+    #         api_key=settings.CHAT_API_KEY,
+    #         base_url=settings.CHAT_BASE_URL,
+    #         max_tokens=max_tokens or self.default_chat_max_tokens,
+    #         temperature=(
+    #             self.default_chat_temperature if temperature is None else temperature
+    #         ),
+    #     )
 
 @lru_cache
 def get_model_factory():

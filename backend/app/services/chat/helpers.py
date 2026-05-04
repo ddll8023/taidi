@@ -2,6 +2,7 @@
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import yaml
 
@@ -15,6 +16,9 @@ from app.utils.logger_config import setup_logger
 from app.utils.model_factory import get_model
 
 logger = setup_logger(__name__)
+
+# LLM 调用专用线程池：隔离 LLM HTTP 调用，避免耗尽 FastAPI 线程池
+_llm_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm_worker")
 
 
 """辅助函数"""
@@ -77,7 +81,7 @@ def invoke_llm(
     max_tokens: int = 32768,
     temperature: float = 0.1,
 ):
-    """调用 LLM 并返回文本响应"""
+    """调用 LLM 并返回文本响应（在线程池中执行，不阻塞 FastAPI 线程池）"""
     logger.info(f"调用LLM: prompt_chars={len(system_prompt) + len(user_prompt)}")
     try:
         model = get_model.build_chat_model(
@@ -87,7 +91,9 @@ def invoke_llm(
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ]
-        response = model.invoke(messages)
+        # 将同步 LLM 调用提交到专用线程池，释放当前线程
+        future = _llm_executor.submit(lambda: model.invoke(messages))
+        response = future.result()
     except Exception as exc:
         logger.error(f"LLM调用失败: error={exc}", exc_info=True)
         raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "LLM调用失败") from exc
