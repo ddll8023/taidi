@@ -94,7 +94,7 @@ def execute_plan(
     stop_on_failure: bool = False,
 ):
     """执行任务三计划并返回执行轨迹。"""
-    from app.services.task3 import executor as services_task3_executor
+    import app.services.task3.executor as services_task3_executor
 
     is_valid, errors = validate_plan(plan)
     if not is_valid:

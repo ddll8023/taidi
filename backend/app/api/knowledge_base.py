@@ -214,7 +214,7 @@ def search_knowledge(
             query_text=request.query,
             stock_code=request.stock_code,
             doc_type=request.doc_type,
-            top_k=request.top_k,
+            top_k=request.top_k ,
         )
         return success(data={"results": results})
     except ServiceException as e:
