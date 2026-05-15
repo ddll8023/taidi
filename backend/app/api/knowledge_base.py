@@ -78,7 +78,7 @@ async def vectorize_document(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
     document_id: Annotated[int, Path(description="文档ID")],
-    batch_size: Annotated[int, Query(description="每批处理数量")] = 20,
+    batch_size: Annotated[int, Query(ge=1, le=200, description="每批处理数量")] = 20,
     force: Annotated[bool, Query(description="是否强制重试失败/已完成切块")] = False,
 ):
     """向量化单个文档的所有切块（异步）"""
