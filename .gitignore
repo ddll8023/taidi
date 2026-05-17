@@ -4,22 +4,17 @@
 .superpowers
 __pycache__/
 .env
+.venv
 测试数据
 数据及提交说明
-
+uploads
 CLAUDE.md
 start_backend.bat
 start_frontend.bat
+result
 
-backend/.venv
-backend/uploads
-
-backend/result
-
-
-
-frontend/node_modules
-frontend/dist
+node_modules
+dist
  
 financial_report.sql
 knowledge_chunk_embedding_20260425_104240.json
