@@ -3,9 +3,9 @@
 .idea
 .superpowers
 __pycache__/
-
-B题测试数据
-B题数据及提交说明
+.env
+测试数据
+数据及提交说明
 
 CLAUDE.md
 start_backend.bat
@@ -13,7 +13,7 @@ start_frontend.bat
 
 backend/.venv
 backend/uploads
-backend/.env
+
 backend/result
 
 
