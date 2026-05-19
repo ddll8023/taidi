@@ -8,6 +8,7 @@ from sqlalchemy import (
     String,
 )
 from app.db.database import Base
+from app.constants.import_company_base_info import ReportTypeEnum
 
 
 class CorePerformanceIndicatorsSheet(Base):

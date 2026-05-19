@@ -10,5 +10,17 @@ export const navigationGroups = [
         to: '/companies/import'
       }
     ]
+  },
+  {
+    title: '项目模块',
+    items: [
+      {
+        title: '财报记录',
+        shortLabel: '记录',
+        description: '上传财报文件、查看解析状态',
+        icon: 'file-lines',
+        to: '/reports/list'
+      }
+    ]
   }
 ]

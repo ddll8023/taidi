@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/v1/company_base_info", tags=["公司基本信息
 
 
 @router.post(
-    "/import",
+    "/upload",
     response_model=ApiResponse[
         schemas_import_company_base_info.ImportCompanyBaseInfoResponse
     ],
@@ -37,4 +37,4 @@ def import_company_base_info(
             services_import_company_base_info.import_company_base_info(db, file)
         )
     except ServiceException as e:
-        return error(ErrorCode.INTERNAL_ERROR, e.message)
+        return error(e.code, e.message)

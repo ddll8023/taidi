@@ -5,7 +5,17 @@ import {
   faBuilding,
   faChartLine,
   faFileExcel,
-  faFileLines
+  faFileLines,
+  faCloudArrowUp,
+  faRotateRight,
+  faTrash,
+  faCheckCircle,
+  faTimesCircle,
+  faSpinner,
+  faFilePdf,
+  faXmark,
+  faArrowUpRightFromSquare,
+  faPlay
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 
@@ -17,7 +27,17 @@ library.add(
   faBuilding,
   faChartLine,
   faFileExcel,
-  faFileLines
+  faFileLines,
+  faCloudArrowUp,
+  faRotateRight,
+  faTrash,
+  faCheckCircle,
+  faTimesCircle,
+  faSpinner,
+  faFilePdf,
+  faXmark,
+  faArrowUpRightFromSquare,
+  faPlay
 )
 
 const app = createApp(App)

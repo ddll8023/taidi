@@ -8,7 +8,9 @@ import pandas as pd
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
-from app.constants import import_company_base_info as constants_import_company_base_info
+from app.constants import (
+    financial_report_base_info as constants_financial_report_base_info,
+)
 from app.db.database import commit_or_rollback
 from app.models import company_basic_info as models_companysic_info
 from app.schemas import import_company_base_info as schemas_import_company_base_info
@@ -45,8 +47,13 @@ def import_company_base_info(db: Session, file: UploadFile):
             ErrorCode.PARAM_ERROR, "Excel文件解析失败，请检查文件内容"
         ) from exc
     finally:
-        logger.info(f"删除临时文件: file={temp_file_path}")
-        os.unlink(temp_file_path)
+        try:
+            logger.info(f"删除临时文件: file={temp_file_path}")
+            os.unlink(temp_file_path)
+        except Exception as exc:
+            logger.error(
+                f"删除临时文件失败: file={temp_file_path} error={exc}", exc_info=True
+            )
 
     logger.info(f"Excel解析完成: file={file.filename} total_records={len(data)}")
 
@@ -56,12 +63,12 @@ def import_company_base_info(db: Session, file: UploadFile):
 
     for item in data:
         stock_code = item.get(
-            constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+            constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                 "stock_code"
             )
         )
         registered_capital_raw = item.get(
-            constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+            constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                 "registered_capital_raw"
             )
         )
@@ -80,63 +87,61 @@ def import_company_base_info(db: Session, file: UploadFile):
         if company_base_info_entity:
             # 更新现有记录
             company_base_info_entity.stock_abbr = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "stock_abbr"
                 )
             )
             company_base_info_entity.company_name = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "company_name"
                 )
             )
             company_base_info_entity.english_name = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "english_name"
                 )
             )
             company_base_info_entity.csrc_industry = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "csrc_industry"
                 )
             )
             company_base_info_entity.listed_exchange = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "listed_exchange"
                 )
             )
-            company_base_info_entity.exchange = (
-                constants_import_company_base_info.EXCHANGE_ALIAS_MAP.get(
-                    item.get(
-                        constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
-                            "listed_exchange"
-                        )
+            company_base_info_entity.exchange = constants_financial_report_base_info.EXCHANGE_ALIAS_MAP.get(
+                item.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                        "listed_exchange"
                     )
                 )
             )
             company_base_info_entity.security_category = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "security_category"
                 )
             )
             company_base_info_entity.registered_region = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "registered_region"
                 )
             )
             company_base_info_entity.registered_capital_raw = registered_capital_raw
             company_base_info_entity.registered_capital_yuan = registered_capital_yuan
             company_base_info_entity.employee_count = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "employee_count"
                 )
             )
             company_base_info_entity.management_count = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "management_count"
                 )
             )
             company_base_info_entity.source_row_no = item.get(
-                constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                     "source_row_no"
                 )
             )
@@ -147,61 +152,61 @@ def import_company_base_info(db: Session, file: UploadFile):
             db_company_base_info = models_companysic_info.CompanyBasicInfo(
                 stock_code=stock_code,
                 stock_abbr=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "stock_abbr"
                     )
                 ),
                 company_name=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "company_name"
                     )
                 ),
                 english_name=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "english_name"
                     )
                 ),
                 csrc_industry=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "csrc_industry"
                     )
                 ),
                 listed_exchange=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "listed_exchange"
                     )
                 ),
-                exchange=constants_import_company_base_info.EXCHANGE_ALIAS_MAP.get(
+                exchange=constants_financial_report_base_info.EXCHANGE_ALIAS_MAP.get(
                     item.get(
-                        constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                        constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                             "listed_exchange"
                         )
                     )
                 ),
                 security_category=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "security_category"
                     )
                 ),
                 registered_region=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "registered_region"
                     )
                 ),
                 registered_capital_raw=registered_capital_raw,
                 registered_capital_yuan=registered_capital_yuan,
                 employee_count=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "employee_count"
                     )
                 ),
                 management_count=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "management_count"
                     )
                 ),
                 source_row_no=item.get(
-                    constants_import_company_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                         "source_row_no"
                     )
                 ),
