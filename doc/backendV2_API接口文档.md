@@ -150,6 +150,73 @@
 | file_name | str  | 文件名   |
 | error     | str  | 错误描述 |
 
+### 2.2 获取财报记录列表
+
+- **POST** `/api/v1/analyze-data/list`
+- **描述**：分页查询已建档的财报记录列表，支持多条件筛选与排序。
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+| ---- | ---- | ---- | ------ | ---- |
+| page | int | 否 | 1 | 页码（≥1） |
+| page_size | int | 否 | 10 | 每页数量（≥10） |
+| keyword | str | 否 | null | 报告标题关键词模糊搜索 |
+| report_type | str | 否 | null | 报告类型筛选（`REPORT` / `SUMMARY`） |
+| report_year | int | 否 | null | 报告年份筛选 |
+| parse_status | int | 否 | null | 解析状态：0 待处理 / 1 成功 / 2 失败 |
+| import_status | int | 否 | null | 入库状态：0 待入库 / 1 成功 / 2 失败 |
+| sort_by | str | 否 | `updated_at` | 排序字段：`created_at` / `updated_at` |
+| sort_order | str | 否 | `desc` | 排序方式：`desc` / `asc` |
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "lists": [
+      {
+        "id": 1,
+        "file_name": "603127_20230331.pdf",
+        "report_title": "2023 年 年度报告",
+        "stock_code": "603127",
+        "stock_abbr": "昭衍新药",
+        "report_year": 2023,
+        "report_period": "FY",
+        "report_type": "REPORT",
+        "parse_status": 1,
+        "import_status": 1,
+        "created_at": "2025-01-01T12:00:00"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total": 100,
+      "total_pages": 10
+    }
+  }
+}
+```
+
+**列表项字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| id | int | 财报记录 ID |
+| file_name | str | 文件名 |
+| report_title | str | 财报标题 |
+| stock_code | str | 股票代码 |
+| stock_abbr | str | 股票简称 |
+| report_year | int | 报告年份 |
+| report_period | str | 报告期间（Q1/Q2/Q3/Q4/HY/FY） |
+| report_type | str | 报告类型（REPORT/SUMMARY） |
+| parse_status | int | 解析状态：0 待处理 / 1 成功 / 2 失败 |
+| import_status | int | 入库状态：0 待入库 / 1 成功 / 2 失败 |
+| created_at | str | 创建时间 |
+
 ---
 
 ## 三、后端处理流程说明

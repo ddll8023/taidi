@@ -10,7 +10,7 @@ from app.utils.file import save_file
 import uuid
 from app.core.config import settings
 from app.models import financial_report as models_financial_report
-from sqlalchemy import select
+from sqlalchemy import select, func
 import os
 import re
 from langchain_community.document_loaders import PyPDFLoader
@@ -20,6 +20,8 @@ from app.constants import (
 )
 from app.models import company_basic_info as models_company_basic_info
 from datetime import date
+from app.schemas.common import PaginatedResponse, PaginationInfo
+import math
 
 logger = setup_logger(__name__)
 
@@ -44,7 +46,8 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
             if not file.filename.endswith(".pdf"):
                 logger.error(f"文件 {file.filename} 不是PDF文件")
                 raise ServiceException(
-                    ErrorCode.UNSUPPORTED_FILE_FORMAT, f"文件 {file.filename} 不是PDF文件"
+                    ErrorCode.UNSUPPORTED_FILE_FORMAT,
+                    f"文件 {file.filename} 不是PDF文件",
                 )
             # 保存文件
             bytes_content = file.file.read()
@@ -59,14 +62,18 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
 
             # 解析数据
             file_metadata_item = _parse_report_data("\n".join(content_list))
-            logger.info(f"财报元数据解析完成: stock_code={file_metadata_item.stock_code} title={file_metadata_item.report_title}")
+            logger.info(
+                f"财报元数据解析完成: stock_code={file_metadata_item.stock_code} title={file_metadata_item.report_title}"
+            )
 
             company_basic_info_entity = db.get(
                 models_company_basic_info.CompanyBasicInfo,
                 file_metadata_item.stock_code,
             )
             if not company_basic_info_entity:
-                logger.error(f"未找到股票代码 {file_metadata_item.stock_code} 对应的公司信息")
+                logger.error(
+                    f"未找到股票代码 {file_metadata_item.stock_code} 对应的公司信息"
+                )
                 raise ServiceException(
                     ErrorCode.DATA_NOT_FOUND,
                     f"未找到股票代码 {file_metadata_item.stock_code} 对应的公司信息",
@@ -87,11 +94,14 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
                 source_file_name=file.filename,
                 storage_path=file_path,
                 import_status=1,
+                stock_abbr=company_basic_info_entity.stock_abbr,
             )
             db.add(financial_report_entity)
             commit_or_rollback(db)
             db.refresh(financial_report_entity)
-            logger.info(f"财报记录入库成功: report_id={financial_report_entity.id} stock={file_metadata_item.stock_code} title={file_metadata_item.report_title}")
+            logger.info(
+                f"财报记录入库成功: report_id={financial_report_entity.id} stock={file_metadata_item.stock_code} title={file_metadata_item.report_title}"
+            )
 
             # 成功计数
             success_count += 1
@@ -124,13 +134,83 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
                         f"删除临时文件失败: file={file_path} error={exc}", exc_info=True
                     )
 
-    logger.info(f"上传处理完成: total={len(file_list)} success={success_count} failed={failed_count}")
+    logger.info(
+        f"上传处理完成: total={len(file_list)} success={success_count} failed={failed_count}"
+    )
     return schemas_analyze_data.UploadFileResponse(
         total=len(file_list),
         success_count=success_count,
         failed_count=failed_count,
         failed_files=failed_files,
         success_reports=success_reports,
+    )
+
+
+def get_report_list(
+    db: Session, get_report_list_request: schemas_analyze_data.GetReportListRequest
+):
+    """获取财报列表"""
+    logger.info(
+        f"查询财报列表: page={get_report_list_request.page} page_size={get_report_list_request.page_size}"
+    )
+    base_stmt = select(models_financial_report.FinancialReport)
+
+    # 动态添加筛选条件
+    if get_report_list_request.keyword:
+        base_stmt = base_stmt.where(
+            models_financial_report.FinancialReport.report_title.like(
+                f"%{get_report_list_request.keyword}%"
+            )
+        )
+    if get_report_list_request.report_type is not None:
+        base_stmt = base_stmt.where(
+            models_financial_report.FinancialReport.report_type
+            == get_report_list_request.report_type
+        )
+    if get_report_list_request.report_year is not None:
+        base_stmt = base_stmt.where(
+            models_financial_report.FinancialReport.report_year
+            == get_report_list_request.report_year
+        )
+    if get_report_list_request.import_status is not None:
+        base_stmt = base_stmt.where(
+            models_financial_report.FinancialReport.import_status
+            == get_report_list_request.import_status
+        )
+    if get_report_list_request.parse_status is not None:
+        base_stmt = base_stmt.where(
+            models_financial_report.FinancialReport.parse_status
+            == get_report_list_request.parse_status
+        )
+
+    # 计算总数
+    total = db.scalar(select(func.count()).select_from(base_stmt.subquery()))
+
+    # 分页查询
+    report_entity_list = db.scalars(
+        base_stmt.order_by(
+            models_financial_report.FinancialReport.updated_at.desc()
+            if get_report_list_request.sort_order == "desc"
+            else models_financial_report.FinancialReport.updated_at.asc()
+        )
+        .offset((get_report_list_request.page - 1) * get_report_list_request.page_size)
+        .limit(get_report_list_request.page_size)
+    ).all()
+
+    logger.info(f"查询财报列表完成: total={total} page={get_report_list_request.page}")
+    return PaginatedResponse(
+        lists=[
+            schemas_analyze_data.GetReportListResponse.model_validate(item)
+            for item in report_entity_list
+        ],
+        pagination=PaginationInfo(
+            page=get_report_list_request.page,
+            page_size=get_report_list_request.page_size,
+            total=total,
+            total_pages=(
+                math.ceil(total / get_report_list_request.page_size) if total else 0
+            ),
+        ),
     )
 
 
@@ -145,9 +225,7 @@ def _read_report_data(file_path: str, max_page: int = 3):
         documents = loader.load()
     except Exception as e:
         logger.error(f"读取PDF文件 {file_path} 失败: {e}")
-        raise ServiceException(
-            ErrorCode.INTERNAL_ERROR, "财报文件解析失败"
-        ) from e
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "财报文件解析失败") from e
     content_list: list[str] = []
 
     # 遍历文档，提取内容

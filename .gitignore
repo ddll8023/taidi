@@ -5,6 +5,7 @@
 __pycache__/
 .env
 .venv
+.reasonix
 测试数据
 数据及提交说明
 uploads

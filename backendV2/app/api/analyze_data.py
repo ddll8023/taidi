@@ -12,7 +12,7 @@ from typing import Annotated
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.schemas.response import success, error
-from app.schemas.common import ApiResponse, ErrorCode
+from app.schemas.common import ApiResponse, ErrorCode, PaginatedResponse
 from app.utils.exception import ServiceException
 from app.services import analyze_data as services_analyze_data
 from app.schemas import analyze_data as schemas_analyze_data
@@ -35,5 +35,26 @@ def upload_report_file(
     """上传财报PDF文件"""
     try:
         return success(services_analyze_data.upload_report_file(db, file_list))
+    except ServiceException as e:
+        return error(e.code, e.message)
+
+
+@router.post(
+    "/list",
+    response_model=ApiResponse[PaginatedResponse],
+    description="获取财报列表",
+)
+def get_report_list(
+    db: Annotated[Session, Depends(get_db)],
+    get_report_list_request: Annotated[
+        schemas_analyze_data.GetReportListRequest,
+        Body(..., description="获取财报列表请求"),
+    ],
+):
+    """获取财报列表"""
+    try:
+        return success(
+            services_analyze_data.get_report_list(db, get_report_list_request)
+        )
     except ServiceException as e:
         return error(e.code, e.message)
