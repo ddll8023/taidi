@@ -1,6 +1,6 @@
 """财报分析数据服务"""
 
-from fastapi import UploadFile
+from fastapi import UploadFile, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.db.database import commit_or_rollback
 from app.schemas.common import ErrorCode
@@ -10,6 +10,12 @@ from app.utils.file import save_file
 import uuid
 from app.core.config import settings
 from app.models import financial_report as models_financial_report
+from app.models import (
+    balance_sheet as models_balance_sheet,
+    cash_flow_sheet as models_cash_flow_sheet,
+    income_sheet as models_income_sheet,
+    core_performance_indicators_sheet as models_core_performance_indicators_sheet,
+)
 from sqlalchemy import select, func
 import os
 import re
@@ -22,6 +28,15 @@ from app.models import company_basic_info as models_company_basic_info
 from datetime import date
 from app.schemas.common import PaginatedResponse, PaginationInfo
 import math
+import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from app.db.database import get_background_db_session
+from app.utils.model_factory import get_model
+from app.constants import analyze_data as constants_analyze_data
+from concurrent.futures import Future
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import PromptTemplate
 
 logger = setup_logger(__name__)
 
@@ -214,6 +229,52 @@ def get_report_list(
     )
 
 
+def parse_report(
+    db: Session,
+    background_tasks: BackgroundTasks,
+    parse_report_request: schemas_analyze_data.ParseReportRequest,
+):
+    """解析财报"""
+    if len(parse_report_request.report_ids) == 0:
+        raise ServiceException(
+            ErrorCode.INVALID_REQUEST, "请提供要解析的财报记录ID列表"
+        )
+    logger.info(f"收到解析请求: report_count={len(parse_report_request.report_ids)} ids={parse_report_request.report_ids}")
+    start_parse_count = len(parse_report_request.report_ids)
+    skip_report_ids: list[dict[int, str]] = []
+
+    for report_id in parse_report_request.report_ids:
+        report_entity = db.get(models_financial_report.FinancialReport, report_id)
+        # 检查记录是否存在
+        if report_entity is None:
+            logger.warning(f"跳过解析: report_id={report_id} reason=未找到财报记录")
+            skip_report_ids.append({"report_id": report_id, "reason": "未找到财报记录"})
+            start_parse_count -= 1
+            continue
+        if not report_entity.storage_path:
+            logger.error(f"财报缺少存储路径: report_id={report_id}")
+            skip_report_ids.append({"report_id": report_id, "reason": "缺少存储路径"})
+            start_parse_count -= 1
+            continue
+        # 更新解析状态为解析中
+        report_entity.parse_status = (
+            constants_financial_report_base_info.ParseStatusEnum.PARSING.value
+        )
+        logger.info(f"解析状态已更新: report_id={report_id} parse_status=PARSING")
+
+    commit_or_rollback(db)
+
+    # 提交到后台任务队列
+    background_tasks.add_task(_run_parse_in_background, parse_report_request.report_ids)
+    logger.info(f"解析任务已提交后台: total={len(parse_report_request.report_ids)} start={start_parse_count} skip={len(skip_report_ids)}")
+
+    return schemas_analyze_data.ParseReportResponse(
+        total=len(parse_report_request.report_ids),
+        skip_report_ids=skip_report_ids,
+        start_parse_count=start_parse_count,
+    )
+
+
 """辅助函数"""
 
 
@@ -227,6 +288,10 @@ def _read_report_data(file_path: str, max_page: int = 3):
         logger.error(f"读取PDF文件 {file_path} 失败: {e}")
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "财报文件解析失败") from e
     content_list: list[str] = []
+
+    # 防止超出文档范围 / 默认0页则读取全部页面
+    if len(documents) < max_page or max_page == 0:
+        max_page = len(documents)
 
     # 遍历文档，提取内容
     for document in documents[:max_page]:
@@ -310,3 +375,198 @@ def _parse_report_data(content_text: str):
         )
 
     return schemas_analyze_data.FileMetadataItem(**data)
+
+
+def _run_parse_in_background(report_ids: list[int]):
+    """在后台解析财报"""
+    logger.info(f"后台解析任务启动: report_count={len(report_ids)} ids={report_ids}")
+
+    async def _run_batch():
+        sem = asyncio.Semaphore(5)  # 最多 5 个同时跑
+        loop = asyncio.get_event_loop()
+
+        async def _parse_one(report_id: int):
+            async with sem:  # 拿不到信号量就等
+                await loop.run_in_executor(
+                    ThreadPoolExecutor(
+                        max_workers=constants_analyze_data.MAX_PARSE_REPORT_WORKERS,
+                        thread_name_prefix="parse_worker",
+                    ),
+                    _parse_single_report,  # 同步函数，在线程池里跑
+                    report_id,
+                )
+
+        # 启动所有任务，但 Semaphore 会限制实际并发数
+        await asyncio.gather(*[_parse_one(rid) for rid in report_ids])
+
+    # asyncio.run() 启动事件循环（当前线程是 BackgroundTasks 的工作线程）
+    asyncio.run(_run_batch())
+
+
+def _parse_single_report(report_id: int):
+    """在独立线程+独立DB会话中执行单个财报解析"""
+
+    db = get_background_db_session()
+    try:
+        logger.info(f"开始解析财报: report_id={report_id}")
+
+        # ────────── 1. 查询财报记录 ──────────
+        report_entity = db.get(models_financial_report.FinancialReport, report_id)
+
+        # ────────── 2. PDF 全文提取 ──────────
+        logger.info(f"读取PDF: report_id={report_id} path={report_entity.storage_path}")
+        content_text_list = _read_report_data(report_entity.storage_path, 0)
+        content_text = "\n".join(content_text_list)
+
+        # 3. LLM 抽取（四张表并行）
+        table_results = _extract_tables_parallel(content_text)
+
+        # 4. 转换为schemas格式
+        core_performance_indicators_sheet_schemas = schemas_analyze_data.StructCorePerformanceIndicatorsSheetItem.model_validate(
+            table_results["core_performance_indicators_sheet"]
+        )
+        balance_sheet_schemas = (
+            schemas_analyze_data.StructBalanceSheetItem.model_validate(
+                table_results["balance_sheet"]
+            )
+        )
+        cash_flow_sheet_schemas = (
+            schemas_analyze_data.StructCashFlowSheetItem.model_validate(
+                table_results["cash_flow_sheet"]
+            )
+        )
+        income_sheet_schemas = (
+            schemas_analyze_data.StructIncomeSheetItem.model_validate(
+                table_results["income_sheet"]
+            )
+        )
+
+        # ────────── 5. 写入四张事实表 ──────────
+        core_performance_indicators_sheet_entity = (
+            models_core_performance_indicators_sheet.CorePerformanceIndicatorsSheet(
+                report_id=report_entity.id,
+                stock_code=report_entity.stock_code,
+                stock_abbr=report_entity.stock_abbr,
+                report_year=report_entity.report_year,
+                report_period=report_entity.report_period,
+                report_type=report_entity.report_type,
+                **core_performance_indicators_sheet_schemas.model_dump(),
+            )
+        )
+        balance_sheet_entity = models_balance_sheet.BalanceSheet(
+            report_id=report_entity.id,
+            stock_code=report_entity.stock_code,
+            stock_abbr=report_entity.stock_abbr,
+            report_year=report_entity.report_year,
+            report_period=report_entity.report_period,
+            report_type=report_entity.report_type,
+            **balance_sheet_schemas.model_dump(),
+        )
+        cash_flow_sheet_entity = models_cash_flow_sheet.CashFlowSheet(
+            report_id=report_entity.id,
+            stock_code=report_entity.stock_code,
+            stock_abbr=report_entity.stock_abbr,
+            report_year=report_entity.report_year,
+            report_period=report_entity.report_period,
+            report_type=report_entity.report_type,
+            **cash_flow_sheet_schemas.model_dump(),
+        )
+        income_sheet_entity = models_income_sheet.IncomeSheet(
+            report_id=report_entity.id,
+            stock_code=report_entity.stock_code,
+            stock_abbr=report_entity.stock_abbr,
+            report_year=report_entity.report_year,
+            report_period=report_entity.report_period,
+            report_type=report_entity.report_type,
+            **income_sheet_schemas.model_dump(),
+        )
+        db.add(core_performance_indicators_sheet_entity)
+        db.add(balance_sheet_entity)
+        db.add(cash_flow_sheet_entity)
+        db.add(income_sheet_entity)
+        logger.info(f"四张事实表全部入库: report_id={report_entity.id}")
+        commit_or_rollback(db)
+
+        # ────────── 6. 标记成功 ──────────
+        _mark_parse_success(db, report_entity)
+        logger.info(f"财报解析完成: report_id={report_entity.id} parse_status=SUCCESS")
+
+    except Exception as e:
+        logger.error(f"解析系统异常: report_id={report_entity.id} error={e}")
+        _mark_parse_failed(db, report_entity, str(e))
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "解析系统异常") from e
+    finally:
+        db.close()
+
+
+def _mark_parse_success(
+    db: Session, report_entity: models_financial_report.FinancialReport
+):
+    """标记解析成功"""
+    if report_entity:
+        report_entity.parse_status = (
+            constants_financial_report_base_info.ParseStatusEnum.SUCCESS.value
+        )  # = 1
+        commit_or_rollback(db)
+
+
+def _mark_parse_failed(
+    db: Session, report_entity: models_financial_report.FinancialReport, message: str
+):
+    """标记解析失败"""
+    if report_entity:
+        report_entity.parse_status = (
+            constants_financial_report_base_info.ParseStatusEnum.FAIL.value
+        )  # = 2
+        report_entity.parse_error_message = message
+    commit_or_rollback(db)
+
+
+def _extract_single_table(table_name: str, context_text: str):
+    """对单张表调用一次 LLM"""
+    start_time = time.time()
+    logger.info(f"LLM开始抽取: table={table_name}")
+
+    # 1. 构建 Prompt
+    prompt_template = PromptTemplate.from_template(
+        settings.PROMPT_CONFIG.get_struct_config["shared_rules"]
+        + settings.PROMPT_CONFIG.get_struct_config["table_prompts"][table_name]
+    )
+
+    # 2. 调用 LLM
+    try:
+        model = get_model.chat_model
+        if model is None:
+            raise ServiceException(ErrorCode.INTERNAL_ERROR, "LLM 模型未配置")
+        chain = prompt_template | model | JsonOutputParser()
+        result: dict = chain.invoke({"context_text": context_text})
+    except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(f"LLM 调用异常: table={table_name} elapsed={elapsed:.1f}s error={e}")
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "LLM 调用异常") from e
+
+    elapsed = time.time() - start_time
+    logger.info(f"LLM抽取完成: table={table_name} fields={len(result)} elapsed={elapsed:.1f}s")
+    return result
+
+
+def _extract_tables_parallel(context_text: str):
+    """四张表同时调 LLM"""
+    total_start = time.time()
+    logger.info(f"开始LLM并行抽取: tables={constants_analyze_data.TABLE_NAMES}")
+    results: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures: dict[Future, str] = {}
+        for table_name in constants_analyze_data.TABLE_NAMES:
+            futures[
+                executor.submit(_extract_single_table, table_name, context_text)
+            ] = table_name
+        for future in as_completed(futures):
+            table_name = futures[future]
+            result: dict = future.result()
+            results[table_name] = result
+            elapsed = time.time() - total_start
+            logger.info(f"并行抽取单表完成: table={table_name} fields={len(result)} elapsed={elapsed:.1f}s")
+    total_elapsed = time.time() - total_start
+    logger.info(f"LLM并行抽取全部完成: tables={list(results.keys())} total_elapsed={total_elapsed:.1f}s")
+    return results

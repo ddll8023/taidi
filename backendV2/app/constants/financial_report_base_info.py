@@ -28,6 +28,23 @@ class ExchangeEnum(str, Enum):
     DEFAULT = "NONE"
 
 
+class ParseStatusEnum(int, Enum):
+    """解析状态枚举"""
+
+    PENDING = 0
+    SUCCESS = 1
+    FAIL = 2
+    PARSING = 3
+
+
+class ImportStatusEnum(int, Enum):
+    """导入状态枚举"""
+
+    PENDING = 0
+    SUCCESS = 1
+    FAIL = 2
+
+
 FILE_COLUMN_MAPPING_DICT: dict[str, str] = {
     # 序号	股票代码	A股简称	公司名称	英文名称	所属证监会行业	上市交易所	证券类别	注册区域	注册资本	雇员人数	管理人员人数
     "source_row_no": "序号",

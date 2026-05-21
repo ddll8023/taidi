@@ -5,7 +5,7 @@
  * 依赖组件：SurfacePanel, AppEmptyState, UploadReportModal
  */
 import { ref, reactive, computed, onMounted } from 'vue'
-import { getReportList } from '@/api/financialReports'
+import { getReportList, parseReports } from '@/api/financialReports'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import UploadReportModal from '@/components/reports/UploadReportModal.vue'
@@ -23,6 +23,8 @@ const isLoading = ref(false)
 const isRefreshing = ref(false)
 const errorMessage = ref('')
 const showUploadModal = ref(false)
+const parsingIds = ref(new Set())
+const isParsing = ref(false)
 const notice = ref({ type: '', message: '' })
 
 // ── 计算属性 ──
@@ -66,7 +68,8 @@ const formatDateTime = (value) => {
 const parseStatusMap = {
   0: { label: '待处理', tone: 'warning' },
   1: { label: '解析成功', tone: 'success' },
-  2: { label: '解析失败', tone: 'danger' }
+  2: { label: '解析失败', tone: 'danger' },
+  3: { label: '解析中', tone: 'accent' }
 }
 
 const importStatusMap = {
@@ -145,6 +148,39 @@ const clearNotice = () => {
 
 // ── 事件处理 ──
 
+const handleParseReport = async (reportId, force = false) => {
+  parsingIds.value.add(reportId)
+  try {
+    const result = await parseReports([reportId])
+    setNotice('info', `财报 ${reportId} ${force ? '重新' : ''}解析任务已提交`)
+  } catch (error) {
+    setNotice('error', error.message || '提交解析失败')
+  } finally {
+    parsingIds.value.delete(reportId)
+    await fetchReports({ silent: true })
+  }
+}
+
+const handleParseAllPending = async () => {
+  const pendingIds = listState.items
+    .filter((item) => item.parseStatus.tone === 'warning')
+    .map((item) => item.id)
+  if (pendingIds.length === 0) {
+    setNotice('warning', '没有待解析的记录')
+    return
+  }
+  isParsing.value = true
+  try {
+    const result = await parseReports(pendingIds)
+    setNotice('info', `已提交 ${result.start_parse_count || pendingIds.length} 个解析任务`)
+  } catch (error) {
+    setNotice('error', error.message || '批量提交解析失败')
+  } finally {
+    isParsing.value = false
+    await fetchReports({ silent: true })
+  }
+}
+
 const handleUploadComplete = async () => {
   showUploadModal.value = false
   clearNotice()
@@ -180,6 +216,15 @@ onMounted(async () => {
             >
               <FontAwesomeIcon :icon="['fas', 'cloud-arrow-up']" aria-hidden="true" />
               <span>上传文件</span>
+            </button>
+            <button
+              type="button"
+              class="shell-button-secondary"
+              :disabled="isParsing || isRefreshing || isLoading"
+              @click="handleParseAllPending"
+            >
+              <FontAwesomeIcon :icon="['fas', 'microchip']" aria-hidden="true" />
+              <span>{{ isParsing ? '提交中...' : '一键解析' }}</span>
             </button>
             <button
               type="button"
@@ -251,11 +296,12 @@ onMounted(async () => {
             <table class="shell-grid-table min-w-[800px]">
               <thead class="sticky top-0 z-10">
                 <tr>
-                  <th class="w-[28%]">文件信息</th>
-                  <th class="w-[22%]">股票代码</th>
-                  <th class="w-[22%]">报告标题</th>
-                  <th class="w-[16%]">解析状态</th>
-                  <th class="w-[12%]">上传时间</th>
+                  <th class="w-[22%]">文件信息</th>
+                  <th class="w-[16%]">股票代码</th>
+                  <th class="w-[20%]">报告标题</th>
+                  <th class="w-[13%]">解析状态</th>
+                  <th class="w-[11%]">上传时间</th>
+                  <th class="w-[18%]">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -283,6 +329,7 @@ onMounted(async () => {
                           'bg-yellow-50 text-yellow-700': report.parseStatus.tone === 'warning',
                           'bg-green-50 text-green-700': report.parseStatus.tone === 'success',
                           'bg-red-50 text-red-700': report.parseStatus.tone === 'danger',
+                          'bg-blue-50 text-blue-700': report.parseStatus.tone === 'accent',
                           'bg-ink-50 text-ink-600': report.parseStatus.tone === 'neutral'
                         }"
                       >
@@ -292,6 +339,53 @@ onMounted(async () => {
                   </td>
                   <td>
                     <p class="text-sm text-ink-500">{{ report.uploadedAt }}</p>
+                  </td>
+                  <td>
+                    <div class="flex flex-wrap gap-2">
+                      <!-- 解析中：加载动画 -->
+                      <button
+                        v-if="report.parseStatus.tone === 'accent'"
+                        type="button"
+                        class="shell-button"
+                        disabled
+                      >
+                        <FontAwesomeIcon :icon="['fas', 'spinner']" spin aria-hidden="true" />
+                        <span>解析中...</span>
+                      </button>
+                      <!-- 待处理：正常解析 -->
+                      <button
+                        v-else-if="report.parseStatus.tone === 'warning'"
+                        type="button"
+                        class="shell-button"
+                        :disabled="parsingIds.has(report.id)"
+                        @click="handleParseReport(report.id)"
+                      >
+                        <FontAwesomeIcon :icon="['fas', 'play']" aria-hidden="true" />
+                        <span>解析</span>
+                      </button>
+                      <!-- 解析失败：重新解析 -->
+                      <button
+                        v-else-if="report.parseStatus.tone === 'danger'"
+                        type="button"
+                        class="shell-button"
+                        :disabled="parsingIds.has(report.id)"
+                        @click="handleParseReport(report.id)"
+                      >
+                        <FontAwesomeIcon :icon="['fas', 'rotate-right']" aria-hidden="true" />
+                        <span>重新解析</span>
+                      </button>
+                      <!-- 解析成功：强制重新解析 -->
+                      <button
+                        v-else
+                        type="button"
+                        class="shell-button-secondary"
+                        :disabled="parsingIds.has(report.id)"
+                        @click="handleParseReport(report.id, true)"
+                      >
+                        <FontAwesomeIcon :icon="['fas', 'rotate-right']" aria-hidden="true" />
+                        <span>重新解析</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               </tbody>

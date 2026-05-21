@@ -150,6 +150,67 @@
 | file_name | str  | 文件名   |
 | error     | str  | 错误描述 |
 
+### 2.3 提交财报解析任务
+
+- **POST** `/api/v1/analyze-data/parse`
+- **描述**：提交财报 PDF 解析任务（异步后台执行），支持单个或批量提交。后台解析流程：PDF 全文提取 → LLM 结构化抽取 → 规范化校验 → 写入四张事实表。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| report_ids | int[] | 是 | 待解析的财报记录 ID 列表 |
+
+**请求示例**：
+```json
+{
+  "report_ids": [1, 2, 3]
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 3,
+    "start_parse_count": 2,
+    "skip_report_ids": [
+      {"report_id": 3, "reason": "未找到财报记录"}
+    ]
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| total | int | 请求解析的文件总数 |
+| start_parse_count | int | 实际开始解析的文件数量 |
+| skip_report_ids | object[] | 跳过的记录列表（含原因） |
+
+**后台流程说明**：
+
+```
+提交解析请求
+  │
+  ├─ 校验 report_ids，跳过无效/无存储路径的记录
+  ├─ 标记 parse_status = 3（解析中）
+  ├─ 立即返回响应（异步）
+  │
+  └─ 后台线程池（最多5个并发）
+       └─ 对每个 report_id 执行：
+            ├─ 1. PDF 全文提取（PyPDFLoader）
+            ├─ 2. LLM 结构化抽取（四张表并行）
+            ├─ 3. 规范化校验 + 保存 JSON 留痕
+            ├─ 4. 写入四张事实表
+            └─ 5. parse_status → 1（成功）/ 2（失败）
+```
+
 ### 2.2 获取财报记录列表
 
 - **POST** `/api/v1/analyze-data/list`

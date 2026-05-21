@@ -46,11 +46,15 @@ class IncomeSheet(Base):
         nullable=False,
         comment="报告类型：REPORT/SUMMARY，由 financial_report 主表统一回填",
     )
-    net_profit = Column[DECIMAL](20, 2, comment="净利润(万元)")
-    net_profit_yoy_growth = Column[DECIMAL](10, 4, comment="净利润同比(%)")
-    other_income = Column[DECIMAL](20, 2, comment="其他收益（万元）")
-    total_operating_revenue = Column[DECIMAL](20, 2, comment="营业总收入(万元)")
-    operating_revenue_yoy_growth = Column[DECIMAL](10, 4, comment="营业总收入同比(%)")
+    net_profit = Column[DECIMAL](DECIMAL(20, 2), comment="净利润(万元)")
+    net_profit_yoy_growth = Column[DECIMAL](DECIMAL(10, 4), comment="净利润同比(%)")
+    other_income = Column[DECIMAL](DECIMAL(20, 2), comment="其他收益（万元）")
+    total_operating_revenue = Column[DECIMAL](
+        DECIMAL(20, 2), comment="营业总收入(万元)"
+    )
+    operating_revenue_yoy_growth = Column[DECIMAL](
+        DECIMAL(10, 4), comment="营业总收入同比(%)"
+    )
     operating_expense_cost_of_sales = Column[DECIMAL](
         DECIMAL(20, 2), comment="营业总支出-营业支出(万元)"
     )
@@ -69,11 +73,17 @@ class IncomeSheet(Base):
     operating_expense_taxes_and_surcharges = Column[DECIMAL](
         DECIMAL(20, 2), comment="营业总支出-税金及附加（万元）"
     )
-    total_operating_expenses = Column[DECIMAL](20, 2, comment="营业总支出(万元)")
-    operating_profit = Column[DECIMAL](20, 2, comment="营业利润(万元)")
-    total_profit = Column[DECIMAL](20, 2, comment="利润总额(万元)")
-    asset_impairment_loss = Column[DECIMAL](20, 2, comment="资产减值损失（万元）")
-    credit_impairment_loss = Column[DECIMAL](20, 2, comment="信用减值损失（万元）")
+    total_operating_expenses = Column[DECIMAL](
+        DECIMAL(20, 2), comment="营业总支出(万元)"
+    )
+    operating_profit = Column[DECIMAL](DECIMAL(20, 2), comment="营业利润(万元)")
+    total_profit = Column[DECIMAL](DECIMAL(20, 2), comment="利润总额(万元)")
+    asset_impairment_loss = Column[DECIMAL](
+        DECIMAL(20, 2), comment="资产减值损失（万元）"
+    )
+    credit_impairment_loss = Column[DECIMAL](
+        DECIMAL(20, 2), comment="信用减值损失（万元）"
+    )
 
     __table_args__ = (
         Index(

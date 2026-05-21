@@ -16,6 +16,15 @@ export function uploadReportFiles(fileList) {
 }
 
 /**
+ * 提交财报解析任务（异步后台执行）
+ * @param {number[]} reportIds - 待解析的财报ID列表
+ * @returns {Promise} { total, start_parse_count, skip_report_ids }
+ */
+export function parseReports(reportIds) {
+  return request.post('/analyze-data/parse', { report_ids: reportIds })
+}
+
+/**
  * 获取财报记录列表
  * @param {Object} params - 查询参数
  * @param {number} params.page - 页码
