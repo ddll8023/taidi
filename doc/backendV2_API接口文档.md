@@ -211,6 +211,93 @@
             └─ 5. parse_status → 1（成功）/ 2（失败）
 ```
 
+### 2.3 获取财报详情
+
+- **POST** `/api/v1/analyze-data/detail`
+- **描述**：获取单条财报记录的详细信息，包含基础信息和四张结构化事实表数据（核心业绩指标、资产负债表、利润表、现金流量表）。已解析的记录会返回对应的结构化字段值，未解析或字段缺失则返回 `null`。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| report_id | int | 是 | 财报记录 ID |
+
+**请求示例**：
+```json
+{
+  "report_id": 1
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "file_name": "603127_20230331.pdf",
+    "report_title": "2023 年 年度报告",
+    "stock_code": "603127",
+    "stock_abbr": "昭衍新药",
+    "report_year": 2023,
+    "report_period": "FY",
+    "report_type": "REPORT",
+    "report_label": "年度报告",
+    "exchange": "SH",
+    "report_date": "2024-04-20",
+    "parse_status": 1,
+    "import_status": 1,
+    "created_at": "2025-01-01T12:00:00",
+    "updated_at": "2025-01-01T12:00:00",
+    "core_performance_indicators": {
+      "eps": 1.23,
+      "total_operating_revenue": 1000000.00,
+      "roe": 15.5,
+      "...": null
+    },
+    "balance_sheet": {
+      "asset_cash_and_cash_equivalents": 6000000.00,
+      "...": null
+    },
+    "income_sheet": {
+      "net_profit": 500000.00,
+      "...": null
+    },
+    "cash_flow_sheet": {
+      "net_cash_flow": 100000.00,
+      "...": null
+    }
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| id | int | 财报记录 ID |
+| file_name | str | 文件名 |
+| report_title | str | 财报标题 |
+| stock_code | str | 股票代码 |
+| stock_abbr | str | 股票简称 |
+| report_year | int | 报告年份 |
+| report_period | str | 报告期间（Q1/Q2/Q3/Q4/HY/FY） |
+| report_type | str | 报告类型（REPORT/SUMMARY） |
+| report_label | str | 报告中文标签 |
+| exchange | str | 交易所（SH/SZ/BJ） |
+| report_date | str | 报告披露日期 |
+| parse_status | int | 解析状态：0 待处理 / 1 成功 / 2 失败 / 3 解析中 |
+| import_status | int | 入库状态：0 待入库 / 1 成功 / 2 失败 |
+| created_at | str | 创建时间 |
+| updated_at | str | 更新时间 |
+| core_performance_indicators | object | 核心业绩指标（解析成功时有值，否则 null） |
+| balance_sheet | object | 资产负债表（解析成功时有值，否则 null） |
+| income_sheet | object | 利润表（解析成功时有值，否则 null） |
+| cash_flow_sheet | object | 现金流量表（解析成功时有值，否则 null） |
+
 ### 2.2 获取财报记录列表
 
 - **POST** `/api/v1/analyze-data/list`
@@ -225,7 +312,7 @@
 | keyword | str | 否 | null | 报告标题关键词模糊搜索 |
 | report_type | str | 否 | null | 报告类型筛选（`REPORT` / `SUMMARY`） |
 | report_year | int | 否 | null | 报告年份筛选 |
-| parse_status | int | 否 | null | 解析状态：0 待处理 / 1 成功 / 2 失败 |
+| parse_status | int | 否 | null | 解析状态：0 待处理 / 1 成功 / 2 失败 / 3 解析中 |
 | import_status | int | 否 | null | 入库状态：0 待入库 / 1 成功 / 2 失败 |
 | sort_by | str | 否 | `updated_at` | 排序字段：`created_at` / `updated_at` |
 | sort_order | str | 否 | `desc` | 排序方式：`desc` / `asc` |
@@ -274,7 +361,7 @@
 | report_year | int | 报告年份 |
 | report_period | str | 报告期间（Q1/Q2/Q3/Q4/HY/FY） |
 | report_type | str | 报告类型（REPORT/SUMMARY） |
-| parse_status | int | 解析状态：0 待处理 / 1 成功 / 2 失败 |
+| parse_status | int | 解析状态：0 待处理 / 1 成功 / 2 失败 / 3 解析中 |
 | import_status | int | 入库状态：0 待入库 / 1 成功 / 2 失败 |
 | created_at | str | 创建时间 |
 

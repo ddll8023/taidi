@@ -82,3 +82,24 @@ def parse_report(
         )
     except ServiceException as e:
         return error(e.code, e.message)
+
+
+@router.post(
+    "/detail",
+    response_model=ApiResponse[schemas_analyze_data.GetReportDetailResponse],
+    description="获取财报详情",
+)
+def get_report_detail(
+    db: Annotated[Session, Depends(get_db)],
+    get_report_detail_request: Annotated[
+        schemas_analyze_data.GetReportDetailRequest,
+        Body(..., description="获取财报详情请求"),
+    ],
+):
+    """获取财报详情"""
+    try:
+        return success(
+            services_analyze_data.get_report_detail(db, get_report_detail_request)
+        )
+    except ServiceException as e:
+        return error(e.code, e.message)

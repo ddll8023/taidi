@@ -20,6 +20,12 @@ const routes = [
         name: 'ReportsList',
         component: () => import('@/views/reports/ReportsListView.vue'),
         meta: { title: '财报记录', description: '上传财报文件、查看解析状态', eyebrow: '项目 / 记录' }
+      },
+      {
+        path: 'reports/detail/:id',
+        name: 'ReportDetail',
+        component: () => import('@/views/reports/ReportDetailView.vue'),
+        meta: { title: '财报详情', description: '查看财报结构化数据', eyebrow: '项目 / 详情' }
       }
     ]
   }

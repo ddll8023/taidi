@@ -33,6 +33,9 @@ class FinancialReport(Base):
     report_period = Column[str](
         String(2), nullable=False, comment="报告期：Q1/HY/Q3/FY"
     )
+    exchange = Column[str](
+        String(2), nullable=False, comment="标准化交易所代码：SH/SZ/BJ"
+    )
     report_type = Column[str](
         String(10),
         nullable=False,

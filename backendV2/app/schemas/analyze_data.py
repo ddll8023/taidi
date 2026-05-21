@@ -243,6 +243,12 @@ class ParseReportRequest(BaseModel):
     report_ids: list[int] = Field(..., default_factory=list, description="财报记录ID")
 
 
+class GetReportDetailRequest(BaseModel):
+    """获取财报详情请求"""
+
+    report_id: int = Field(..., description="财报记录ID")
+
+
 # ========== 响应类（Response）==========
 
 
@@ -293,6 +299,42 @@ class ParseReportResponse(BaseModel):
     start_parse_count: int = Field(0, description="开始解析的文件数量")
     skip_report_ids: list[dict[int, str]] = Field(
         ..., default_factory=list, description="跳过的财报记录列表以及跳过原因"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GetReportDetailResponse(BaseModel):
+    """获取财报详情响应"""
+
+    id: int = Field(..., description="财报记录ID")
+    file_name: str = Field(
+        ..., validation_alias="source_file_name", description="文件名"
+    )
+    report_title: str = Field(..., description="财报标题")
+    stock_code: str = Field(..., description="股票代码")
+    stock_abbr: str = Field(..., description="股票简称")
+    report_year: int = Field(..., description="报告年份")
+    report_period: ReportPeriodEnum = Field(..., description="报告期间")
+    report_type: ReportTypeEnum = Field(..., description="报告类型")
+    report_label: str = Field(..., description="报告标签")
+    exchange: ExchangeEnum = Field(..., description="交易所")
+    report_date: datetime | None = Field(None, description="报告日期")
+    parse_status: Literal[0, 1, 2, 3] = Field(
+        ..., description="解析状态, 0 待处理 / 1 成功 / 2 失败 / 3 解析中"
+    )
+    import_status: Literal[0, 1, 2] = Field(
+        ..., description="入库状态, 0 待入库 / 1 成功 / 2 失败"
+    )
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")
+    core_performance_indicators: StructCorePerformanceIndicatorsSheetItem | None = (
+        Field(None, description="核心绩效指标")
+    )
+    balance_sheet: StructBalanceSheetItem | None = Field(None, description="资产负债表")
+    income_sheet: StructIncomeSheetItem | None = Field(None, description="利润表")
+    cash_flow_sheet: StructCashFlowSheetItem | None = Field(
+        None, description="现金流量表"
     )
 
     model_config = ConfigDict(from_attributes=True)

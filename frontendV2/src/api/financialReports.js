@@ -25,6 +25,16 @@ export function parseReports(reportIds) {
 }
 
 /**
+ * 获取财报详情（含四张事实表数据）
+ * @param {number} reportId - 财报记录ID
+ * @returns {Promise} { id, file_name, report_title, stock_code, stock_abbr, parse_status, ...,
+ *   core_performance_indicators: {...}, balance_sheet: {...}, income_sheet: {...}, cash_flow_sheet: {...} }
+ */
+export function getReportDetail(reportId) {
+  return request.post('/analyze-data/detail', { report_id: reportId })
+}
+
+/**
  * 获取财报记录列表
  * @param {Object} params - 查询参数
  * @param {number} params.page - 页码

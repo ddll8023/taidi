@@ -385,6 +385,14 @@ onMounted(async () => {
                         <FontAwesomeIcon :icon="['fas', 'rotate-right']" aria-hidden="true" />
                         <span>重新解析</span>
                       </button>
+                      <!-- 查看详情 -->
+                      <RouterLink
+                        :to="`/reports/detail/${report.id}`"
+                        class="inline-flex items-center gap-1 rounded-lg border border-black/10 px-2.5 py-1.5 text-xs font-medium text-ink-600 hover:bg-accent-50 hover:text-accent-700 hover:border-accent-200 transition-colors"
+                      >
+                        <FontAwesomeIcon :icon="['fas', 'arrow-up-right-from-square']" aria-hidden="true" />
+                        <span>详情</span>
+                      </RouterLink>
                     </div>
                   </td>
                 </tr>
