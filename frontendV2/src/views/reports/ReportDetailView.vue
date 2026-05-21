@@ -5,6 +5,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import BaseButton from '@/components/ui/BaseButton.vue'
 import { getReportDetail } from '@/api/financialReports'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 
@@ -171,10 +172,7 @@ onMounted(fetchDetail)
     <!-- 头部 -->
     <SurfacePanel :padded="false">
       <div class="border-b border-black/5 px-5 py-5 sm:px-6">
-        <button type="button" class="shell-kicker flex items-center gap-2 hover:text-accent-600 transition-colors" @click="goBack">
-          <FontAwesomeIcon :icon="['fas', 'arrow-left']" aria-hidden="true" />
-          <span>返回列表</span>
-        </button>
+        <BaseButton variant="ghost" icon="arrow-left" size="sm" @click="goBack">返回列表</BaseButton>
 
         <div v-if="report" class="mt-3 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -204,7 +202,7 @@ onMounted(fetchDetail)
       <!-- 错误 -->
       <div v-else-if="errorMessage" class="flex flex-col items-center justify-center py-20">
         <p class="text-sm text-danger">{{ errorMessage }}</p>
-        <button type="button" class="shell-button-secondary mt-4" @click="fetchDetail">重试</button>
+        <BaseButton variant="secondary" @click="fetchDetail">重试</BaseButton>
       </div>
 
       <!-- 基础信息 -->

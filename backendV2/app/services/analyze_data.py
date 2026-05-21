@@ -94,6 +94,12 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
                     f"未找到股票代码 {file_metadata_item.stock_code} 对应的公司信息",
                 )
 
+            file_metadata_item.report_title = (
+                company_basic_info_entity.stock_abbr
+                + " "
+                + file_metadata_item.report_title
+            )
+
             # 保存到数据库
             financial_report_entity = models_financial_report.FinancialReport(
                 **file_metadata_item.model_dump(),
@@ -335,6 +341,20 @@ def get_report_detail(
             )
         )
     return get_report_detail_response_data
+
+
+def delete_report(
+    db: Session, delete_report_request: schemas_analyze_data.DeleteReportRequest
+):
+    """删除财报"""
+    report_entity = db.get(
+        models_financial_report.FinancialReport, delete_report_request.report_id
+    )
+    if report_entity is None:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "未找到财报记录")
+    db.delete(report_entity)
+    commit_or_rollback(db)
+    return schemas_analyze_data.DeleteReportResponse(id=delete_report_request.report_id)
 
 
 """辅助函数"""

@@ -103,3 +103,22 @@ def get_report_detail(
         )
     except ServiceException as e:
         return error(e.code, e.message)
+
+
+@router.post(
+    "/delete",
+    response_model=ApiResponse[schemas_analyze_data.DeleteReportResponse],
+    description="删除财报",
+)
+def delete_report(
+    db: Annotated[Session, Depends(get_db)],
+    delete_report_request: Annotated[
+        schemas_analyze_data.DeleteReportRequest,
+        Body(..., description="删除财报请求"),
+    ],
+):
+    """删除财报"""
+    try:
+        return success(services_analyze_data.delete_report(db, delete_report_request))
+    except ServiceException as e:
+        return error(e.code, e.message)

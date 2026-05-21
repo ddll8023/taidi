@@ -298,6 +298,43 @@
 | income_sheet | object | 利润表（解析成功时有值，否则 null） |
 | cash_flow_sheet | object | 现金流量表（解析成功时有值，否则 null） |
 
+### 2.4 删除财报记录
+
+- **POST** `/api/v1/analyze-data/delete`
+- **描述**：删除单条财报记录及其关联的四张事实表数据（级联删除）。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| report_id | int | 是 | 财报记录 ID |
+
+**请求示例**：
+```json
+{
+  "report_id": 1
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": 1
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| id | int | 已删除的财报记录 ID |
+
 ### 2.2 获取财报记录列表
 
 - **POST** `/api/v1/analyze-data/list`

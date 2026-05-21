@@ -25,6 +25,15 @@ export function parseReports(reportIds) {
 }
 
 /**
+ * 删除财报记录
+ * @param {number} reportId - 财报记录ID
+ * @returns {Promise} { id }
+ */
+export function deleteReport(reportId) {
+  return request.post('/analyze-data/delete', { report_id: reportId })
+}
+
+/**
  * 获取财报详情（含四张事实表数据）
  * @param {number} reportId - 财报记录ID
  * @returns {Promise} { id, file_name, report_title, stock_code, stock_abbr, parse_status, ...,

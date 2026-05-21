@@ -5,6 +5,7 @@
  * 依赖组件：无
  */
 import { ref, computed, watch } from 'vue'
+import BaseButton from '@/components/ui/BaseButton.vue'
 import { uploadReportFiles } from '@/api/financialReports'
 
 const props = defineProps({
@@ -150,13 +151,7 @@ const formatFileSize = (bytes) => {
               <h3 class="text-lg font-semibold text-ink-900">上传财报文件</h3>
               <p class="mt-1 text-sm text-ink-500">支持批量上传 PDF 文件</p>
             </div>
-            <button
-              type="button"
-              class="rounded-full p-2 text-ink-400 hover:bg-ink-100 hover:text-ink-600"
-              @click="handleClose"
-            >
-              <FontAwesomeIcon :icon="['fas', 'xmark']" class="text-lg" aria-hidden="true" />
-            </button>
+            <BaseButton icon="xmark" icon-only variant="ghost" class="rounded-full text-ink-400 hover:bg-ink-100 hover:text-ink-600" @click="handleClose" />
           </div>
 
           <!-- 弹窗内容 -->
@@ -211,14 +206,15 @@ const formatFileSize = (bytes) => {
                       <FontAwesomeIcon :icon="['fas', 'spinner']" spin class="mr-1" aria-hidden="true" />
                       上传中
                     </span>
-                    <button
+                    <BaseButton
                       v-if="!isUploading"
-                      type="button"
-                      class="rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-600"
+                      icon="xmark"
+                      icon-only
+                      variant="ghost"
+                      size="xs"
+                      class="text-ink-400 hover:bg-ink-100 hover:text-ink-600"
                       @click="removeFile(index)"
-                    >
-                      <FontAwesomeIcon :icon="['fas', 'xmark']" aria-hidden="true" />
-                    </button>
+                    />
                   </div>
                 </div>
               </div>
@@ -271,38 +267,9 @@ const formatFileSize = (bytes) => {
 
           <!-- 底部按钮 -->
           <div class="flex justify-end gap-3 border-t border-black/5 px-6 py-4">
-            <button
-              v-if="!hasFiles || uploadResult"
-              type="button"
-              class="shell-button-secondary"
-              @click="handleClose"
-            >
-              关闭
-            </button>
-            <button
-              v-if="hasFiles && !uploadResult"
-              type="button"
-              class="shell-button-secondary"
-              :disabled="isUploading"
-              @click="resetState"
-            >
-              重新选择
-            </button>
-            <button
-              v-if="hasFiles && !uploadResult"
-              type="button"
-              class="shell-button"
-              :disabled="isUploading"
-              @click="handleUpload"
-            >
-              <FontAwesomeIcon
-                v-if="isUploading"
-                :icon="['fas', 'spinner']"
-                spin
-                aria-hidden="true"
-              />
-              <span>{{ isUploading ? '上传中...' : '开始上传' }}</span>
-            </button>
+            <BaseButton v-if="!hasFiles || uploadResult" variant="secondary" @click="handleClose">关闭</BaseButton>
+            <BaseButton v-if="hasFiles && !uploadResult" variant="secondary" :disabled="isUploading" @click="resetState">重新选择</BaseButton>
+            <BaseButton v-if="hasFiles && !uploadResult" :loading="isUploading" @click="handleUpload">{{ isUploading ? '上传中...' : '开始上传' }}</BaseButton>
           </div>
         </div>
       </div>

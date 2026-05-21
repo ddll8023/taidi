@@ -5,7 +5,10 @@
  * 依赖组件：SurfacePanel, AppEmptyState, UploadReportModal
  */
 import { ref, reactive, computed, onMounted } from 'vue'
-import { getReportList, parseReports } from '@/api/financialReports'
+import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseInput from '@/components/ui/BaseInput.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
+import { getReportList, parseReports, deleteReport } from '@/api/financialReports'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import UploadReportModal from '@/components/reports/UploadReportModal.vue'
@@ -18,6 +21,18 @@ const listState = reactive({
   pageSize: 10,
   total: 0
 })
+
+// 筛选条件
+const keyword = ref('')
+const parseStatusFilter = ref('')
+
+const parseStatusOptions = [
+  { value: '', label: '全部状态' },
+  { value: '0', label: '待处理' },
+  { value: '1', label: '解析成功' },
+  { value: '2', label: '解析失败' },
+  { value: '3', label: '解析中' }
+]
 
 const isLoading = ref(false)
 const isRefreshing = ref(false)
@@ -95,10 +110,14 @@ const fetchReports = async ({ silent = false } = {}) => {
   }
 
   try {
-    const response = await getReportList({
+    const params = {
       page: listState.page,
       page_size: listState.pageSize
-    })
+    }
+    if (keyword.value.trim()) params.keyword = keyword.value.trim()
+    if (parseStatusFilter.value !== '') params.parse_status = Number(parseStatusFilter.value)
+
+    const response = await getReportList(params)
     const payload = response?.data || response
     const items = payload?.lists || payload?.items || payload?.data || []
     const pagination = payload?.pagination || {}
@@ -148,6 +167,22 @@ const clearNotice = () => {
 
 // ── 事件处理 ──
 
+const handleSearch = async () => {
+  listState.page = 1
+  await fetchReports()
+}
+
+const resetFilters = async () => {
+  keyword.value = ''
+  parseStatusFilter.value = ''
+  listState.page = 1
+  await fetchReports()
+}
+
+const handleKeydown = (event) => {
+  if (event.key === 'Enter') handleSearch()
+}
+
 const handleParseReport = async (reportId, force = false) => {
   parsingIds.value.add(reportId)
   try {
@@ -181,6 +216,17 @@ const handleParseAllPending = async () => {
   }
 }
 
+const handleDeleteReport = async (reportId) => {
+  if (!confirm('确定要删除这条财报记录吗？此操作不可撤销。')) return
+  try {
+    await deleteReport(reportId)
+    setNotice('info', `财报 ${reportId} 已删除`)
+    await fetchReports({ silent: true })
+  } catch (error) {
+    setNotice('error', error.message || '删除失败')
+  }
+}
+
 const handleUploadComplete = async () => {
   showUploadModal.value = false
   clearNotice()
@@ -209,32 +255,9 @@ onMounted(async () => {
           </div>
 
           <div class="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              class="shell-button"
-              @click="showUploadModal = true"
-            >
-              <FontAwesomeIcon :icon="['fas', 'cloud-arrow-up']" aria-hidden="true" />
-              <span>上传文件</span>
-            </button>
-            <button
-              type="button"
-              class="shell-button-secondary"
-              :disabled="isParsing || isRefreshing || isLoading"
-              @click="handleParseAllPending"
-            >
-              <FontAwesomeIcon :icon="['fas', 'microchip']" aria-hidden="true" />
-              <span>{{ isParsing ? '提交中...' : '一键解析' }}</span>
-            </button>
-            <button
-              type="button"
-              class="shell-button-secondary"
-              :disabled="isRefreshing || isLoading"
-              @click="refreshReports"
-            >
-              <FontAwesomeIcon :icon="['fas', 'rotate-right']" aria-hidden="true" />
-              <span>{{ isRefreshing ? '刷新中...' : '刷新列表' }}</span>
-            </button>
+            <BaseButton icon="cloud-arrow-up" @click="showUploadModal = true">上传文件</BaseButton>
+            <BaseButton variant="secondary" icon="microchip" :loading="isParsing" :disabled="isRefreshing || isLoading" @click="handleParseAllPending">{{ isParsing ? '提交中...' : '一键解析' }}</BaseButton>
+            <BaseButton variant="secondary" icon="rotate-right" :loading="isRefreshing" :disabled="isLoading" @click="refreshReports">{{ isRefreshing ? '刷新中...' : '刷新列表' }}</BaseButton>
           </div>
         </div>
 
@@ -245,6 +268,28 @@ onMounted(async () => {
           :class="noticeClass"
         >
           {{ notice.message }}
+        </div>
+
+        <!-- 筛选区域 -->
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <!-- 关键词搜索 -->
+          <BaseInput
+            v-model="keyword"
+            icon="search"
+            placeholder="搜索报告标题..."
+            clearable
+            @keydown="handleKeydown"
+          />
+
+          <!-- 解析状态筛选 -->
+          <BaseSelect
+            v-model="parseStatusFilter"
+            :options="parseStatusOptions"
+            placeholder="全部状态"
+          />
+
+          <BaseButton icon="search" size="sm" @click="handleSearch">筛选</BaseButton>
+          <BaseButton variant="ghost" size="sm" @click="resetFilters">重置</BaseButton>
         </div>
       </div>
 
@@ -270,13 +315,7 @@ onMounted(async () => {
           class="flex flex-col items-center justify-center py-16"
         >
           <p class="text-sm text-danger">{{ errorMessage }}</p>
-          <button
-            type="button"
-            class="shell-button-secondary mt-4"
-            @click="fetchReports()"
-          >
-            重试
-          </button>
+          <BaseButton variant="secondary" @click="fetchReports()">重试</BaseButton>
         </div>
 
         <!-- 空状态 -->
@@ -296,12 +335,12 @@ onMounted(async () => {
             <table class="shell-grid-table min-w-[800px]">
               <thead class="sticky top-0 z-10">
                 <tr>
-                  <th class="w-[22%]">文件信息</th>
-                  <th class="w-[16%]">股票代码</th>
-                  <th class="w-[20%]">报告标题</th>
-                  <th class="w-[13%]">解析状态</th>
-                  <th class="w-[11%]">上传时间</th>
-                  <th class="w-[18%]">操作</th>
+                  <th class="w-[20%] text-left">文件信息</th>
+                  <th class="w-[14%] !text-center">股票代码</th>
+                  <th class="w-[16%] text-left">报告标题</th>
+                  <th class="w-[12%] !text-center">解析状态</th>
+                  <th class="w-[14%] !text-center">上传时间</th>
+                  <th class="w-[24%] !text-center">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -314,15 +353,15 @@ onMounted(async () => {
                       <p class="truncate text-sm font-medium text-ink-900">{{ report.fileName }}</p>
                     </div>
                   </td>
-                  <td>
+                  <td class="text-center">
                     <p class="font-mono text-sm text-ink-900">{{ report.stockCode || '-' }}</p>
                     <p v-if="report.stockAbbr" class="mt-0.5 text-xs text-ink-500">{{ report.stockAbbr }}</p>
                   </td>
                   <td>
                     <p class="text-sm leading-6 text-ink-700">{{ report.reportTitle }}</p>
                   </td>
-                  <td>
-                    <div class="space-y-1.5">
+                  <td class="text-center">
+                    <div class="inline-flex items-center space-y-1.5">
                       <span
                         class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
                         :class="{
@@ -337,54 +376,19 @@ onMounted(async () => {
                       </span>
                     </div>
                   </td>
-                  <td>
+                  <td class="text-center">
                     <p class="text-sm text-ink-500">{{ report.uploadedAt }}</p>
                   </td>
-                  <td>
-                    <div class="flex flex-wrap gap-2">
+                  <td class="text-center">
+                    <div class="inline-flex items-center gap-2 flex-nowrap">
                       <!-- 解析中：加载动画 -->
-                      <button
-                        v-if="report.parseStatus.tone === 'accent'"
-                        type="button"
-                        class="shell-button"
-                        disabled
-                      >
-                        <FontAwesomeIcon :icon="['fas', 'spinner']" spin aria-hidden="true" />
-                        <span>解析中...</span>
-                      </button>
+                      <BaseButton v-if="report.parseStatus.tone === 'accent'" :loading="true" disabled>解析中...</BaseButton>
                       <!-- 待处理：正常解析 -->
-                      <button
-                        v-else-if="report.parseStatus.tone === 'warning'"
-                        type="button"
-                        class="shell-button"
-                        :disabled="parsingIds.has(report.id)"
-                        @click="handleParseReport(report.id)"
-                      >
-                        <FontAwesomeIcon :icon="['fas', 'play']" aria-hidden="true" />
-                        <span>解析</span>
-                      </button>
+                      <BaseButton v-else-if="report.parseStatus.tone === 'warning'" icon="play" :disabled="parsingIds.has(report.id)" @click="handleParseReport(report.id)">解析</BaseButton>
                       <!-- 解析失败：重新解析 -->
-                      <button
-                        v-else-if="report.parseStatus.tone === 'danger'"
-                        type="button"
-                        class="shell-button"
-                        :disabled="parsingIds.has(report.id)"
-                        @click="handleParseReport(report.id)"
-                      >
-                        <FontAwesomeIcon :icon="['fas', 'rotate-right']" aria-hidden="true" />
-                        <span>重新解析</span>
-                      </button>
+                      <BaseButton v-else-if="report.parseStatus.tone === 'danger'" icon="rotate-right" :disabled="parsingIds.has(report.id)" @click="handleParseReport(report.id)">重新解析</BaseButton>
                       <!-- 解析成功：强制重新解析 -->
-                      <button
-                        v-else
-                        type="button"
-                        class="shell-button-secondary"
-                        :disabled="parsingIds.has(report.id)"
-                        @click="handleParseReport(report.id, true)"
-                      >
-                        <FontAwesomeIcon :icon="['fas', 'rotate-right']" aria-hidden="true" />
-                        <span>重新解析</span>
-                      </button>
+                      <BaseButton v-else variant="secondary" icon="rotate-right" :disabled="parsingIds.has(report.id)" @click="handleParseReport(report.id, true)">重新解析</BaseButton>
                       <!-- 查看详情 -->
                       <RouterLink
                         :to="`/reports/detail/${report.id}`"
@@ -393,6 +397,8 @@ onMounted(async () => {
                         <FontAwesomeIcon :icon="['fas', 'arrow-up-right-from-square']" aria-hidden="true" />
                         <span>详情</span>
                       </RouterLink>
+                      <!-- 删除 -->
+                      <BaseButton variant="ghost" icon="trash" size="xs" class="rounded-lg border border-black/10 px-2 text-danger hover:bg-red-50 hover:border-red-200" @click="handleDeleteReport(report.id)">删除</BaseButton>
                     </div>
                   </td>
                 </tr>
@@ -406,22 +412,8 @@ onMounted(async () => {
           >
             <p>第 {{ listState.page }} / {{ totalPages }} 页，共 {{ listState.total }} 条</p>
             <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="shell-button-secondary"
-                :disabled="listState.page <= 1"
-                @click="listState.page--; fetchReports()"
-              >
-                上一页
-              </button>
-              <button
-                type="button"
-                class="shell-button-secondary"
-                :disabled="listState.page >= totalPages"
-                @click="listState.page++; fetchReports()"
-              >
-                下一页
-              </button>
+              <BaseButton variant="secondary" size="sm" :disabled="listState.page <= 1" @click="listState.page--; fetchReports()">上一页</BaseButton>
+              <BaseButton variant="secondary" size="sm" :disabled="listState.page >= totalPages" @click="listState.page++; fetchReports()">下一页</BaseButton>
             </div>
           </div>
         </div>

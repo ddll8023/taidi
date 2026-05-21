@@ -15,7 +15,11 @@ import {
   faFilePdf,
   faXmark,
   faArrowUpRightFromSquare,
-  faPlay
+  faPlay,
+  faMicrochip,
+  faArrowLeft,
+  faSearch,
+  faChevronDown
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 
@@ -37,7 +41,11 @@ library.add(
   faFilePdf,
   faXmark,
   faArrowUpRightFromSquare,
-  faPlay
+  faPlay,
+  faMicrochip,
+  faArrowLeft,
+  faSearch,
+  faChevronDown
 )
 
 const app = createApp(App)

@@ -249,6 +249,12 @@ class GetReportDetailRequest(BaseModel):
     report_id: int = Field(..., description="财报记录ID")
 
 
+class DeleteReportRequest(BaseModel):
+    """删除财报请求"""
+
+    report_id: int = Field(..., description="财报记录ID")
+
+
 # ========== 响应类（Response）==========
 
 
@@ -336,5 +342,13 @@ class GetReportDetailResponse(BaseModel):
     cash_flow_sheet: StructCashFlowSheetItem | None = Field(
         None, description="现金流量表"
     )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeleteReportResponse(BaseModel):
+    """删除财报响应"""
+
+    id: int = Field(..., description="财报记录ID")
 
     model_config = ConfigDict(from_attributes=True)

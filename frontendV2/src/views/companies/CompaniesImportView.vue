@@ -5,6 +5,7 @@
  * 依赖组件：SurfacePanel, AppEmptyState
  */
 import { ref } from 'vue'
+import BaseButton from '@/components/ui/BaseButton.vue'
 import { importCompanyBaseInfo } from '@/api/company'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
@@ -63,10 +64,7 @@ const handleFileChange = async (event) => {
             上传附件1的Excel文件（中药上市公司基本信息），系统将自动解析并导入公司基本信息到数据库。导入成功后即可上传财报PDF文件。
           </p>
           <div class="mt-8 flex flex-wrap justify-center gap-3">
-            <button type="button" class="shell-button" :disabled="isUploading" @click="triggerFileInput">
-              <FontAwesomeIcon :icon="['fas', 'file-excel']" aria-hidden="true" />
-              <span>{{ isUploading ? '导入中...' : '选择Excel文件' }}</span>
-            </button>
+            <BaseButton icon="file-excel" :loading="isUploading" @click="triggerFileInput">{{ isUploading ? '导入中...' : '选择Excel文件' }}</BaseButton>
           </div>
           <input type="file" ref="fileInput" accept=".xlsx,.xls" class="hidden" @change="handleFileChange" />
         </div>
