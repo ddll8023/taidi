@@ -26,6 +26,12 @@ const routes = [
         name: 'ReportDetail',
         component: () => import('@/views/reports/ReportDetailView.vue'),
         meta: { title: '财报详情', description: '查看财报结构化数据', eyebrow: '项目 / 详情' }
+      },
+      {
+        path: 'chat',
+        name: 'Chat',
+        component: () => import('@/views/chat/ChatView.vue'),
+        meta: { title: '智能问数', description: '自然语言查询财务数据', eyebrow: '项目 / 问数' }
       }
     ]
   }

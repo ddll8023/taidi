@@ -25,6 +25,7 @@ const listState = reactive({
 // 筛选条件
 const keyword = ref('')
 const parseStatusFilter = ref('')
+const importStatusFilter = ref('')
 
 const parseStatusOptions = [
   { value: '', label: '全部状态' },
@@ -32,6 +33,13 @@ const parseStatusOptions = [
   { value: '1', label: '解析成功' },
   { value: '2', label: '解析失败' },
   { value: '3', label: '解析中' }
+]
+
+const importStatusOptions = [
+  { value: '', label: '全部入库状态' },
+  { value: '0', label: '待入库' },
+  { value: '1', label: '已入库' },
+  { value: '2', label: '入库失败' }
 ]
 
 const isLoading = ref(false)
@@ -116,6 +124,7 @@ const fetchReports = async ({ silent = false } = {}) => {
     }
     if (keyword.value.trim()) params.keyword = keyword.value.trim()
     if (parseStatusFilter.value !== '') params.parse_status = Number(parseStatusFilter.value)
+    if (importStatusFilter.value !== '') params.import_status = Number(importStatusFilter.value)
 
     const response = await getReportList(params)
     const payload = response?.data || response
@@ -175,6 +184,7 @@ const handleSearch = async () => {
 const resetFilters = async () => {
   keyword.value = ''
   parseStatusFilter.value = ''
+  importStatusFilter.value = ''
   listState.page = 1
   await fetchReports()
 }
@@ -288,6 +298,13 @@ onMounted(async () => {
             placeholder="全部状态"
           />
 
+          <!-- 入库状态筛选 -->
+          <BaseSelect
+            v-model="importStatusFilter"
+            :options="importStatusOptions"
+            placeholder="全部入库状态"
+          />
+
           <BaseButton icon="search" size="sm" @click="handleSearch">筛选</BaseButton>
           <BaseButton variant="ghost" size="sm" @click="resetFilters">重置</BaseButton>
         </div>
@@ -335,11 +352,12 @@ onMounted(async () => {
             <table class="shell-grid-table min-w-[800px]">
               <thead class="sticky top-0 z-10">
                 <tr>
-                  <th class="w-[20%] text-left">文件信息</th>
-                  <th class="w-[14%] !text-center">股票代码</th>
-                  <th class="w-[16%] text-left">报告标题</th>
-                  <th class="w-[12%] !text-center">解析状态</th>
-                  <th class="w-[14%] !text-center">上传时间</th>
+                  <th class="w-[18%] text-left">文件信息</th>
+                  <th class="w-[12%] !text-center">股票代码</th>
+                  <th class="w-[14%] text-left">报告标题</th>
+                  <th class="w-[10%] !text-center">解析状态</th>
+                  <th class="w-[10%] !text-center">入库状态</th>
+                  <th class="w-[12%] !text-center">上传时间</th>
                   <th class="w-[24%] !text-center">操作</th>
                 </tr>
               </thead>
@@ -373,6 +391,21 @@ onMounted(async () => {
                         }"
                       >
                         {{ report.parseStatus.label }}
+                      </span>
+                    </div>
+                  </td>
+                  <td class="text-center">
+                    <div class="inline-flex items-center space-y-1.5">
+                      <span
+                        class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                        :class="{
+                          'bg-yellow-50 text-yellow-700': report.importStatus.tone === 'warning',
+                          'bg-green-50 text-green-700': report.importStatus.tone === 'success',
+                          'bg-red-50 text-red-700': report.importStatus.tone === 'danger',
+                          'bg-ink-50 text-ink-600': report.importStatus.tone === 'neutral'
+                        }"
+                      >
+                        {{ report.importStatus.label }}
                       </span>
                     </div>
                   </td>

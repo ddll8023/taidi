@@ -71,10 +71,6 @@ class FinancialReport(Base):
         server_default=text("0"),
         comment="解析状态：0待处理，1成功，2失败，3解析中",
     )
-    parse_error_message = Column[str](
-        String(1024),
-        comment="解析错误信息",
-    )
     import_status = Column[int](
         SmallInteger,
         nullable=False,

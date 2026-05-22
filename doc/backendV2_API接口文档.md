@@ -404,7 +404,67 @@
 
 ---
 
-## 三、后端处理流程说明
+## 三、智能问数（/api/v1/chat）✅ 已完成
+
+自然语言对话式财务数据查询，支持多轮问答、SQL 生成、图表展示。
+
+### 3.1 发送对话消息
+
+- **POST** `/api/v1/chat`
+- **描述**：发送对话消息，AI 自动完成意图识别 → SQL 生成 → 数据查询 → 回答构建
+- **Content-Type**：`application/json`
+
+**请求体（JSON）：**
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| session_id | str | 否 | 会话 ID（新对话不传，由服务端生成） |
+| question | str | 是 | 用户问题，1~500 字符 |
+
+**请求示例：**
+```json
+{
+  "session_id": "uuid-string",
+  "question": "贵州茅台2023年净利润是多少？"
+}
+```
+
+**响应格式：**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "answer": {
+      "content": "贵州茅台2023年净利润为**747.34亿元**。",
+      "image": null
+    },
+    "sql": "SELECT net_profit FROM income_sheet WHERE stock_code='600519' AND report_year=2023 AND report_period='FY'",
+    "chart_type": null
+  }
+}
+```
+
+**响应字段说明：**
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| session_id | str | 会话 ID（UUID） |
+| answer | object | 回答内容 |
+| answer.content | str | 回答文本（Markdown 格式） |
+| answer.image | list[str] | 图表图片 URL 列表 |
+| sql | str | 生成的 SQL 语句 |
+| chart_type | str | 图表类型 |
+
+**多轮对话说明：**
+
+首次请求不传 `session_id`，服务端自动生成并返回。之后的请求带上返回的 `session_id`，服务端会自动关联上下文。
+
+---
+
+## 四、后端处理流程说明
 
 ### 3.1 上传建档流程
 

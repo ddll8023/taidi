@@ -10,6 +10,7 @@ from app.utils.file import save_file
 import uuid
 from app.core.config import settings
 from app.models import financial_report as models_financial_report
+from app.models import operation_log as models_operation_log
 from app.models import (
     balance_sheet as models_balance_sheet,
     cash_flow_sheet as models_cash_flow_sheet,
@@ -20,6 +21,7 @@ from sqlalchemy import select, func
 import os
 import re
 from langchain_community.document_loaders import PyPDFLoader
+from pypdf import PdfReader
 from app.schemas import analyze_data as schemas_analyze_data
 from app.constants import (
     financial_report_base_info as constants_financial_report_base_info,
@@ -72,8 +74,18 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
             save_file(bytes_content, file_path)
             logger.info(f"文件 {file.filename} 已保存到 {file_path}")
 
+            # 写入操作日志：处理中
+            log_entity = models_operation_log.OperationLog(
+                operation_type=models_operation_log.OPERATION_UPLOAD,
+                operation_status=models_operation_log.STATUS_PROCESSING,
+                source_file_name=file.filename,
+                storage_path=file_path,
+            )
+            db.add(log_entity)
+            db.flush()
+
             # 读取数据
-            content_list = _read_report_data(file_path, 1)
+            content_list = _read_report_data(file_path, 10)
 
             # 解析数据
             file_metadata_item = _parse_report_data("\n".join(content_list))
@@ -102,9 +114,17 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
             )
 
             # 校验报告ID是否已存在，如果存在则删除旧记录，更新新记录
-            financial_report_entity = db.get(
-                models_financial_report.FinancialReport,
-                file_metadata_item.report_id,
+            financial_report_entity = db.scalar(
+                select(models_financial_report.FinancialReport).where(
+                    models_financial_report.FinancialReport.stock_code
+                    == file_metadata_item.stock_code,
+                    models_financial_report.FinancialReport.report_period
+                    == file_metadata_item.report_period,
+                    models_financial_report.FinancialReport.report_type
+                    == file_metadata_item.report_type,
+                    models_financial_report.FinancialReport.report_year
+                    == file_metadata_item.report_year,
+                )
             )
             if financial_report_entity:
                 # 删除旧记录
@@ -122,35 +142,47 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
                 )
 
             # 新增到数据库
-            financial_report_entity = models_financial_report.FinancialReport(
-                **file_metadata_item.model_dump(),
+            financial_report_new_entity = models_financial_report.FinancialReport(
+                stock_code=file_metadata_item.stock_code,
+                report_title=company_basic_info_entity.stock_abbr
+                + " "
+                + file_metadata_item.report_title,
+                stock_abbr=company_basic_info_entity.stock_abbr,
+                report_year=file_metadata_item.report_year,
+                report_period=file_metadata_item.report_period,
+                report_type=file_metadata_item.report_type,
+                report_label=file_metadata_item.report_label,
+                source_file_name=file.filename,
+                storage_path=file_path,
+                import_status=1,
                 period_sort_key=constants_financial_report_base_info.PERIOD_SORT_KEY_MAP[
                     file_metadata_item.report_period
                 ],
+                exchange=company_basic_info_entity.exchange,
                 source_priority=(
                     0
                     if file_metadata_item.report_type
                     == constants_financial_report_base_info.ReportTypeEnum.REPORT
                     else 1
                 ),
-                source_file_name=file.filename,
-                storage_path=file_path,
-                import_status=1,
-                stock_abbr=company_basic_info_entity.stock_abbr,
-                exchange=company_basic_info_entity.exchange,
             )
-            db.add(financial_report_entity)
-            commit_or_rollback(db)
-            db.refresh(financial_report_entity)
+            db.add(financial_report_new_entity)
+            db.flush()
+
             logger.info(
-                f"财报记录入库成功: report_id={financial_report_entity.id} stock={file_metadata_item.stock_code} title={file_metadata_item.report_title}"
+                f"财报记录入库成功: report_id={financial_report_new_entity.id} stock={file_metadata_item.stock_code} title={file_metadata_item.report_title}"
             )
+
+            # 更新操作日志：成功
+            log_entity.operation_status = models_operation_log.STATUS_SUCCESS
+            log_entity.stock_code = file_metadata_item.stock_code
+            log_entity.report_id = financial_report_new_entity.id
 
             # 成功计数
             success_count += 1
             success_reports.append(
                 schemas_analyze_data.SuccessReportItem(
-                    report_id=financial_report_entity.id,
+                    report_id=financial_report_new_entity.id,
                     stock_code=file_metadata_item.stock_code,
                     stock_abbr=company_basic_info_entity.stock_abbr,
                     report_title=file_metadata_item.report_title,
@@ -166,17 +198,20 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
                     file_name=file.filename, error=str(e)
                 )
             )
+            try:
+                os.remove(file_path)
+                logger.info(f"文件 {file_path} 删除成功")
+            except FileNotFoundError:
+                logger.warning(f"文件 {file_path} 不存在，无需删除")
+            # 更新操作日志：失败
+            if log_entity:
+                log_entity.operation_status = models_operation_log.STATUS_FAILED
+                log_entity.error_message = str(e)
+                db.flush()
 
-            # 删除文件（仅当文件已保存时）
-            if file_path:
-                try:
-                    logger.info(f"删除临时文件: file={file_path}")
-                    os.remove(file_path)
-                except Exception as exc:
-                    logger.error(
-                        f"删除临时文件失败: file={file_path} error={exc}", exc_info=True
-                    )
+            logger.error(f"文件 {file.filename} 入库失败: {e}，错误信息已记录")
 
+    commit_or_rollback(db)
     logger.info(
         f"上传处理完成: total={len(file_list)} success={success_count} failed={failed_count}"
     )
@@ -311,27 +346,34 @@ def get_report_detail(
     db: Session, get_report_detail_request: schemas_analyze_data.GetReportDetailRequest
 ):
     """获取财报详情"""
-    report_entity = db.get(
-        models_financial_report.FinancialReport, get_report_detail_request.report_id
-    )
+    report_id = get_report_detail_request.report_id
+    logger.info(f"查询财报详情: report_id={report_id}")
+
+    report_entity = db.get(models_financial_report.FinancialReport, report_id)
     if report_entity is None:
+        logger.warning(f"财报记录不存在: report_id={report_id}")
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "未找到财报记录")
+    logger.info(
+        f"财报基础信息查询完成: report_id={report_id} title={report_entity.report_title}"
+    )
+
     get_report_detail_response_data = (
         schemas_analyze_data.GetReportDetailResponse.model_validate(report_entity)
     )
 
     core_performance_indicators_entity = db.get(
         models_core_performance_indicators_sheet.CorePerformanceIndicatorsSheet,
-        get_report_detail_request.report_id,
+        report_id,
     )
     if core_performance_indicators_entity:
         get_report_detail_response_data.core_performance_indicators = schemas_analyze_data.StructCorePerformanceIndicatorsSheetItem.model_validate(
             core_performance_indicators_entity
         )
+        logger.info(f"核心业绩指标查询完成: report_id={report_id}")
 
     balance_sheet_entity = db.get(
         models_balance_sheet.BalanceSheet,
-        get_report_detail_request.report_id,
+        report_id,
     )
     if balance_sheet_entity:
         get_report_detail_response_data.balance_sheet = (
@@ -339,10 +381,11 @@ def get_report_detail(
                 balance_sheet_entity
             )
         )
+        logger.info(f"资产负债表查询完成: report_id={report_id}")
 
     income_sheet_entity = db.get(
         models_income_sheet.IncomeSheet,
-        get_report_detail_request.report_id,
+        report_id,
     )
     if income_sheet_entity:
         get_report_detail_response_data.income_sheet = (
@@ -350,10 +393,11 @@ def get_report_detail(
                 income_sheet_entity
             )
         )
+        logger.info(f"利润表查询完成: report_id={report_id}")
 
     cash_flow_sheet_entity = db.get(
         models_cash_flow_sheet.CashFlowSheet,
-        get_report_detail_request.report_id,
+        report_id,
     )
     if cash_flow_sheet_entity:
         get_report_detail_response_data.cash_flow_sheet = (
@@ -361,6 +405,9 @@ def get_report_detail(
                 cash_flow_sheet_entity
             )
         )
+        logger.info(f"现金流量表查询完成: report_id={report_id}")
+
+    logger.info(f"财报详情查询完成: report_id={report_id}")
     return get_report_detail_response_data
 
 
@@ -368,14 +415,19 @@ def delete_report(
     db: Session, delete_report_request: schemas_analyze_data.DeleteReportRequest
 ):
     """删除财报"""
-    report_entity = db.get(
-        models_financial_report.FinancialReport, delete_report_request.report_id
-    )
+    report_id = delete_report_request.report_id
+    logger.info(f"删除财报: report_id={report_id}")
+
+    report_entity = db.get(models_financial_report.FinancialReport, report_id)
     if report_entity is None:
+        logger.warning(f"待删除财报记录不存在: report_id={report_id}")
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "未找到财报记录")
     db.delete(report_entity)
     commit_or_rollback(db)
-    return schemas_analyze_data.DeleteReportResponse(id=delete_report_request.report_id)
+    logger.info(
+        f"财报删除成功: report_id={report_id} title={report_entity.report_title}"
+    )
+    return schemas_analyze_data.DeleteReportResponse(id=report_id)
 
 
 """辅助函数"""
@@ -385,8 +437,8 @@ def _read_report_data(file_path: str, max_page: int = 3):
     """读取PDF文件内容"""
     # 加载PDF文件
     try:
-        loader = PyPDFLoader(file_path)
-        documents = loader.load()
+        reader = PdfReader(file_path)
+        documents = reader.pages
     except Exception as e:
         logger.error(f"读取PDF文件 {file_path} 失败: {e}")
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "财报文件解析失败") from e
@@ -398,7 +450,7 @@ def _read_report_data(file_path: str, max_page: int = 3):
 
     # 遍历文档，提取内容
     for document in documents[:max_page]:
-        document_text = document.page_content.strip()
+        document_text = document.extract_text()
         # 合并并规范化空白
         document_text = document_text.replace("\r", "\n")
         document_text = re.sub(r"[ \t]+", " ", document_text)  # 多个空格 → 一个空格
@@ -621,7 +673,15 @@ def _mark_parse_failed(
         report_entity.parse_status = (
             constants_financial_report_base_info.ParseStatusEnum.FAIL.value
         )  # = 2
-        report_entity.parse_error_message = message
+        log_entity = models_operation_log.OperationLog(
+            operation_type=models_operation_log.OPERATION_PARSE,
+            operation_status=models_operation_log.STATUS_FAILED,
+            source_file_name=report_entity.source_file_name,
+            stock_code=report_entity.stock_code,
+            report_id=report_entity.id,
+            error_message=message,
+        )
+        db.add(log_entity)
     commit_or_rollback(db)
 
 

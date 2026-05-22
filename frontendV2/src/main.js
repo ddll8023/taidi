@@ -19,7 +19,13 @@ import {
   faMicrochip,
   faArrowLeft,
   faSearch,
-  faChevronDown
+  faChevronDown,
+  faRobot,
+  faUser,
+  faPaperPlane,
+  faStop,
+  faCopy,
+  faCheck
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 
@@ -45,7 +51,13 @@ library.add(
   faMicrochip,
   faArrowLeft,
   faSearch,
-  faChevronDown
+  faChevronDown,
+  faRobot,
+  faUser,
+  faPaperPlane,
+  faStop,
+  faCopy,
+  faCheck
 )
 
 const app = createApp(App)

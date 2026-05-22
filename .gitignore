@@ -24,3 +24,6 @@ start_backend.sh
 start_frontend.sh
 
 nul
+
+test.py
+doc/2.1-发送对话消息-开发指导.md
