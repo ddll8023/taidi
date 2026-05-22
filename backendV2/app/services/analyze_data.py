@@ -85,6 +85,7 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
                 models_company_basic_info.CompanyBasicInfo,
                 file_metadata_item.stock_code,
             )
+
             if not company_basic_info_entity:
                 logger.error(
                     f"未找到股票代码 {file_metadata_item.stock_code} 对应的公司信息"
@@ -100,7 +101,27 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
                 + file_metadata_item.report_title
             )
 
-            # 保存到数据库
+            # 校验报告ID是否已存在，如果存在则删除旧记录，更新新记录
+            financial_report_entity = db.get(
+                models_financial_report.FinancialReport,
+                file_metadata_item.report_id,
+            )
+            if financial_report_entity:
+                # 删除旧记录
+                try:
+                    os.remove(financial_report_entity.storage_path)
+                except FileNotFoundError:
+                    logger.warning(
+                        f"文件 {financial_report_entity.storage_path} 不存在，无需删除"
+                    )
+                db.delete(financial_report_entity)
+                commit_or_rollback(db)
+                db.refresh(financial_report_entity)
+                logger.info(
+                    f"财报记录删除成功: report_id={financial_report_entity.id} stock={file_metadata_item.stock_code} title={file_metadata_item.report_title}"
+                )
+
+            # 新增到数据库
             financial_report_entity = models_financial_report.FinancialReport(
                 **file_metadata_item.model_dump(),
                 period_sort_key=constants_financial_report_base_info.PERIOD_SORT_KEY_MAP[
