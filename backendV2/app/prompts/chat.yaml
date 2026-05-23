@@ -332,3 +332,10 @@ clarification:
     metric: "请问您想查询哪个财务指标？（如：利润总额、营业收入、净利润、总资产等）"
     time_range_for_trend: "请问您想查看哪个时间范围的趋势？（如：近三年、2023-2025年）"
     last_result_companies: "我没有识别到上一轮筛选出的公司列表，请先重新查询上一轮结果，或直接给出这些公司的名单。"
+
+summarize:
+  system_prompt: |
+    你是一个对话摘要助手。请将以下对话历史压缩为一段简洁的摘要。要求保留关键数值和对比关系，不超过200字。
+  user_prompt_template: |
+    对话历史：
+    {conversation_text}

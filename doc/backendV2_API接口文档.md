@@ -406,13 +406,14 @@
 
 ## 三、智能问数（/api/v1/chat）✅ 已完成
 
-自然语言对话式财务数据查询，支持多轮问答、SQL 生成、图表展示。
+自然语言对话式财务数据查询，支持多轮问答、SQL 生成、SSE 流式推送进度与回答。
 
-### 3.1 发送对话消息
+### 3.1 发送对话消息（SSE 流式）
 
 - **POST** `/api/v1/chat`
-- **描述**：发送对话消息，AI 自动完成意图识别 → SQL 生成 → 数据查询 → 回答构建
+- **描述**：发送对话消息，返回 `text/event-stream` 流式响应。服务端按顺序推送事件：**步骤进度 → 回答 token → 最终结果**。
 - **Content-Type**：`application/json`
+- **响应类型**：`text/event-stream`
 
 **请求体（JSON）：**
 
@@ -424,47 +425,114 @@
 **请求示例：**
 ```json
 {
-  "session_id": "uuid-string",
   "question": "贵州茅台2023年净利润是多少？"
 }
 ```
 
-**响应格式：**
+### 3.2 SSE 事件流
 
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "answer": {
-      "content": "贵州茅台2023年净利润为**747.34亿元**。",
-      "image": null
-    },
-    "sql": "SELECT net_profit FROM income_sheet WHERE stock_code='600519' AND report_year=2023 AND report_period='FY'",
-    "chart_type": null
-  }
-}
+服务端按顺序推送以下事件，客户端通过 `EventSource` 或 `fetch + ReadableStream` 读取：
+
+#### event: step — 进度事件
+
+```text
+event: step
+data: {"step": "intent", "message": "正在识别意图..."}
+
+event: step
+data: {"step": "intent_done", "message": "意图识别完成"}
+
+event: step
+data: {"step": "sql", "message": "正在生成查询语句..."}
+
+event: step
+data: {"step": "sql_done", "message": "查询语句生成完成"}
+
+event: step
+data: {"step": "query", "message": "正在查询数据..."}
+
+event: step
+data: {"step": "query_done", "message": "数据查询完成"}
+
+event: step
+data: {"step": "answer", "message": "正在综合分析生成回答..."}
+
+event: step
+data: {"step": "answer_done", "message": "回答生成完成"}
 ```
-
-**响应字段说明：**
 
 | 字段 | 类型 | 说明 |
 | ---- | ---- | ---- |
-| session_id | str | 会话 ID（UUID） |
-| answer | object | 回答内容 |
-| answer.content | str | 回答文本（Markdown 格式） |
-| answer.image | list[str] | 图表图片 URL 列表 |
+| step | str | 步骤标识：intent / intent_done / sql / sql_done / query / query_done / answer / answer_done |
+| message | str | 可读的进度描述 |
+
+#### event: token — 回答 token 事件
+
+```text
+event: token
+data: {"content": "贵州茅台2023年净利润为"}
+
+event: token
+data: {"content": "**747.34亿元**。"}
+```
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| content | str | 回答文本片段（Markdown 格式），客户端逐段拼接 |
+
+#### event: result — 最终结果事件
+
+```text
+event: result
+data: {"session_id": "550e8400-e29b-41d4-a716-446655440000", "answer": {"content": "贵州茅台2023年净利润为**747.34亿元**。"}, "sql": "SELECT net_profit FROM income_sheet WHERE stock_code='600519' AND report_year=2023 AND report_period='FY'"}
+```
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| session_id | str | 会话 ID（UUID），多轮对话后续请求需携带 |
+| answer.content | str | 完整回答文本（Markdown 格式） |
 | sql | str | 生成的 SQL 语句 |
-| chart_type | str | 图表类型 |
 
-**多轮对话说明：**
+#### event: error — 错误事件
 
-首次请求不传 `session_id`，服务端自动生成并返回。之后的请求带上返回的 `session_id`，服务端会自动关联上下文。
+```text
+event: error
+data: {"code": 4001, "message": "生成SQL语句失败"}
+```
 
----
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| code | int | 错误码 |
+| message | str | 错误描述 |
 
-## 四、后端处理流程说明
+### 3.3 多轮对话说明
+
+1. **首次请求**不传 `session_id`，服务端自动生成新的会话 ID，通过 `result` 事件返回。
+2. **后续请求**携带返回的 `session_id`，服务端自动加载会话历史上下文。
+3. 服务端内置滑动窗口机制：当消息数超过阈值时，自动将最早的两轮对话压缩为 LLM 摘要，保持上下文长度可控。
+
+### 3.4 通信流程
+
+```
+客户端                         服务端
+  │                              │
+  ├─ POST /api/v1/chat ──────────┤
+  │   {question: "..."}          │
+  │                              ├─ 创建/加载会话
+  │  ← event: step(intent) ─────┤
+  │  ← event: step(intent_done) ─┤  意图识别（LLM）
+  │  ← event: step(sql) ────────┤
+  │  ← event: step(sql_done) ───┤  生成 SQL（LLM）
+  │  ← event: step(query) ──────┤
+  │  ← event: step(query_done) ──┤  执行查询
+  │  ← event: step(answer) ─────┤
+  │  ← event: token (逐段) ─────┤  流式生成回答（LLM stream）
+  │  ← event: step(answer_done) ─┤
+  │  ← event: result ───────────┤  返回最终结果
+  │                              │
+```
+
+---## 四、后端处理流程说明
 
 ### 3.1 上传建档流程
 
