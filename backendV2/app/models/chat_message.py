@@ -26,8 +26,18 @@ class ChatMessage(Base):
         ForeignKey("chat_session.id", ondelete="CASCADE"),
         description="会话 ID",
     )
-    role = Column[str](String(10), description="消息角色,user/assistant")
-    content = Column[str](Text, description="消息内容")
+    message_type = Column[str](
+        String(10), nullable=False, description="消息类型, conversation / summary"
+    )
+    summary_content = Column[str](Text, description="摘要内容")
+    query = Column[str](Text, description="用户查询")
     intent_result = Column[dict](JSON, description="意图解析结果")
     sql_query = Column[str](Text, description="生成的 SQL")
-    chart_paths = Column[list[str]](JSON, description="图表路径列表")
+    sql_result = Column[list](JSON, description="SQL 执行结果")
+    answer = Column[str](Text, description="回答")
+    created_at = Column[datetime](
+        DateTime, server_default=func.now(), description="创建时间"
+    )
+    answer_at = Column[datetime](
+        DateTime, server_default=func.now(), description="回答时间"
+    )
