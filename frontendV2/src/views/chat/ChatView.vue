@@ -29,6 +29,7 @@ const currentInput = ref('')
 const isLoading = ref(false)
 const sessionId = ref(null)
 const copiedId = ref(null)
+const streamingContent = ref('')
 const progressSteps = reactive({
   intent: { status: 'pending' },
   sql: { status: 'pending' },
@@ -90,6 +91,7 @@ const resetProgress = () => {
   STEP_ORDER.forEach((key) => {
     progressSteps[key].status = 'pending'
   })
+  streamingContent.value = ''
 }
 
 // ── SSE 回调 ──
@@ -106,6 +108,12 @@ const handleStep = (data) => {
     progressSteps[stepKey].status = 'done'
   } else {
     progressSteps[stepKey].status = 'active'
+  }
+}
+
+const handleToken = (data) => {
+  if (data.content) {
+    streamingContent.value += data.content
   }
 }
 
@@ -153,7 +161,7 @@ const sendMessage = async () => {
     payload.session_id = sessionId.value
   }
 
-  sendChatMessageStream(payload, handleStep, handleResult, handleError)
+  sendChatMessageStream(payload, handleStep, handleToken, handleResult, handleError)
 }
 
 const handleKeydown = (event) => {
@@ -343,6 +351,23 @@ const clearConversation = () => {
             </div>
           </div>
         </div>
+
+        <!-- 流式回答内容 -->
+        <div v-if="isLoading && streamingContent" class="mb-4 flex gap-3 animate-fade-in">
+          <div class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-ink-100">
+            <FontAwesomeIcon
+              :icon="['fas', 'robot']"
+              class="text-sm text-ink-600"
+              aria-hidden="true"
+            />
+          </div>
+          <div class="max-w-[75%] rounded-2xl border border-black/5 bg-white px-4 py-3">
+            <div
+              class="streaming-cursor prose prose-sm max-w-none prose-headings:text-ink-900 prose-p:text-ink-700 prose-a:text-accent-600 prose-code:text-accent-700 prose-code:bg-ink-50 prose-code:px-1 prose-code:rounded prose-strong:text-ink-900"
+              v-html="renderMarkdown(streamingContent)"
+            ></div>
+          </div>
+        </div>
       </div>
 
       <!-- 输入区域 -->
@@ -371,3 +396,16 @@ const clearConversation = () => {
     </SurfacePanel>
   </div>
 </template>
+
+<style scoped>
+.streaming-cursor > :last-child::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background-color: #3b82f6;
+  animation: blink 0.8s ease-in-out infinite;
+  vertical-align: baseline;
+}
+</style>

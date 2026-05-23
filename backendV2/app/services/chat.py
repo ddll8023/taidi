@@ -95,9 +95,13 @@ def start_chat(
         yield f"event: step\ndata: {json.dumps({'step': 'answer', 'message': '正在综合分析生成回答...'}, ensure_ascii=False)}\n\n"
         logger.info(f"生成回答开始: session_id={start_chat_request.session_id}")
         try:
-            answer: str = _generate_answer(
+            answer_parts = []
+            for token in _generate_answer_stream(
                 start_chat_request, intent_result_item, list(db_result)
-            )
+            ):
+                answer_parts.append(token)
+                yield f"event: token\ndata: {json.dumps({'content': token}, ensure_ascii=False)}\n\n"
+            answer = "".join(answer_parts)
             logger.info(f"聊天完成: session_id={start_chat_request.session_id}")
             yield f"event: step\ndata: {json.dumps({'step': 'answer_done', 'message': '回答生成完成'}, ensure_ascii=False)}\n\n"
         except ServiceException as e:
@@ -107,9 +111,7 @@ def start_chat(
             yield f"event: error\ndata: {json.dumps({'code': e.code, 'message': e.message}, ensure_ascii=False)}\n\n"
             return
 
-        # TODO 生成图表
-
-        yield f"event: result\ndata: {json.dumps({'session_id': start_chat_request.session_id, 'answer': {'content': answer, 'image': None}, 'sql': sql_statement}, ensure_ascii=False)}\n\n"
+        yield f"event: result\ndata: {json.dumps({'session_id': start_chat_request.session_id, 'answer': {'content': answer}, 'sql': sql_statement}, ensure_ascii=False)}\n\n"
 
 
 """辅助函数"""
@@ -205,12 +207,12 @@ def _generate_sql_statement(
         raise ServiceException(ErrorCode.DB_ERROR, str(e)) from e
 
 
-def _generate_answer(
+def _generate_answer_stream(
     start_chat_request: schemas_chat.StartChatRequest,
     intent_result_item: schemas_chat.IdentifyIntentResultItem,
     query_result: list,
 ):
-    """生成回答"""
+    """流式生成回答，逐 token 返回"""
     logger.info(
         f"生成回答入口: intent={intent_result_item.model_dump_json()} "
         f"query_result={query_result}"
@@ -233,10 +235,9 @@ def _generate_answer(
             HumanMessage(content=user_prompt),
         ]
         model = get_model.chat_model
-        chain = model | JsonOutputParser()
-        result: dict = chain.invoke(prompt)
-
-        return result.get("answer", "")
+        for chunk in model.stream(prompt):
+            if chunk.content:
+                yield chunk.content
     except Exception as e:
         logger.error(f"生成回答失败: {e}")
         raise ServiceException(ErrorCode.AI_SERVICE_ERROR, str(e)) from e

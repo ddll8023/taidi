@@ -64,7 +64,6 @@ class FinancialReport(Base):
     source_file_name = Column[str](String(512), nullable=False, comment="上传源文件名")
     stock_abbr = Column[str](String(50), nullable=False, comment="A股简称")
     storage_path = Column[str](String(512), nullable=False, comment="PDF本地存储路径")
-    structured_json_path = Column[str](String(512), comment="结构化JSON文件路径")
     parse_status = Column[int](
         SmallInteger,
         nullable=False,

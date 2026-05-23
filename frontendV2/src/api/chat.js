@@ -24,11 +24,12 @@ export function sendChatMessage(params) {
  * @param {string} [params.session_id] - 会话ID（新对话不传）
  * @param {string} params.question - 用户问题
  * @param {Function} onStep - 步骤回调(data: {step, message})
+ * @param {Function} onToken - 流式 token 回调(data: {content})
  * @param {Function} onResult - 结果回调(data: {session_id, answer, sql})
  * @param {Function} onError - 错误回调(data: {code?, message})
  * @returns {Promise<void>}
  */
-export function sendChatMessageStream(params, onStep, onResult, onError) {
+export function sendChatMessageStream(params, onStep, onToken, onResult, onError) {
   const token = window.localStorage.getItem('financial_reports_token')
 
   return fetch(`${BASE_URL}/chat`, {
@@ -75,6 +76,8 @@ export function sendChatMessageStream(params, onStep, onResult, onError) {
 
           if (eventType === 'step' && onStep) {
             onStep(data)
+          } else if (eventType === 'token' && onToken) {
+            onToken(data)
           } else if (eventType === 'result' && onResult) {
             onResult(data)
           } else if (eventType === 'error' && onError) {
