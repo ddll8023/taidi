@@ -4,7 +4,7 @@ echo ========================================
 echo   HR Assistant Backend Starting...
 echo ========================================
 
-set BACKEND_DIR=%~dp0backend
+set BACKEND_DIR=%~dp0backendV2
 echo [DEBUG] Backend dir: %BACKEND_DIR%
 
 if not exist "%BACKEND_DIR%" (
@@ -21,19 +21,11 @@ if errorlevel 1 (
 )
 
 echo [INFO] Current dir: %CD%
-echo [INFO] Activating virtual environment...
+echo [INFO] Installing dependencies via uv...
 
-if not exist ".venv\Scripts\activate.bat" (
-    echo [ERROR] Virtual environment not found: .venv\Scripts\activate.bat
-    echo [INFO] Please run: cd backend && python -m venv .venv
-    pause
-    exit /b 1
-)
-
-call .venv\Scripts\activate
+uv sync
 
 echo [INFO] Starting FastAPI server...
-.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 7389
-@REM uvicorn app.main:app --host 0.0.0.0 --port 7389
+uv run python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 7389
 popd
 pause

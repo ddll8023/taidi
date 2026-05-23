@@ -4,7 +4,7 @@ echo ========================================
 echo   HR Assistant Frontend Starting...
 echo ========================================
 
-set FRONTEND_DIR=%~dp0frontend
+set FRONTEND_DIR=%~dp0frontendV2
 echo [DEBUG] Frontend dir: %FRONTEND_DIR%
 
 if not exist "%FRONTEND_DIR%" (

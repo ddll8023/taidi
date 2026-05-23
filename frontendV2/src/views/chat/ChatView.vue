@@ -1,15 +1,26 @@
 <script setup>
 /**
  * 智能问数页面
- * 功能描述：对话式财务数据查询，支持多轮问答、Markdown 渲染、SQL 展示
+ * 功能描述：对话式财务数据查询，支持多轮问答、Markdown 渲染、SQL 展示、SSE 流式进度
  * 依赖组件：SurfacePanel, BaseInput, BaseButton
  */
-import { ref, reactive, computed, nextTick, onMounted } from 'vue'
+import { ref, reactive, computed, nextTick } from 'vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
-import { sendChatMessage } from '@/api/chat'
+import { sendChatMessageStream } from '@/api/chat'
 import { renderMarkdown } from '@/utils/markdown'
+
+// ── 步骤配置 ──
+
+const STEP_CONFIG = {
+  intent: { label: '意图识别', icon: 'brain' },
+  sql: { label: '生成查询语句', icon: 'database' },
+  query: { label: '查询数据', icon: 'magnifying-glass' },
+  answer: { label: '综合分析', icon: 'wand-magic-sparkles' },
+}
+
+const STEP_ORDER = ['intent', 'sql', 'query', 'answer']
 
 // ── 状态 ──
 
@@ -18,12 +29,26 @@ const currentInput = ref('')
 const isLoading = ref(false)
 const sessionId = ref(null)
 const copiedId = ref(null)
+const progressSteps = reactive({
+  intent: { status: 'pending' },
+  sql: { status: 'pending' },
+  query: { status: 'pending' },
+  answer: { status: 'pending' },
+})
 
 // ── 计算属性 ──
 
 const hasMessages = computed(() => messages.length > 0)
 
 const canSend = computed(() => currentInput.value.trim().length > 0 && !isLoading.value)
+
+const progressMessage = computed(() => {
+  const active = STEP_ORDER.find((key) => progressSteps[key].status === 'active')
+  if (active) {
+    return STEP_CONFIG[active].label
+  }
+  return '正在分析...'
+})
 
 // ── 消息操作 ──
 
@@ -35,7 +60,7 @@ const addMessage = (role, content, extra = {}) => {
     renderedHtml: role === 'assistant' ? renderMarkdown(content) : '',
     sql: extra.sql || null,
     chartType: extra.chartType || null,
-    showSql: false
+    showSql: false,
   })
 }
 
@@ -61,6 +86,56 @@ const copyText = async (text, msgId) => {
   }
 }
 
+const resetProgress = () => {
+  STEP_ORDER.forEach((key) => {
+    progressSteps[key].status = 'pending'
+  })
+}
+
+// ── SSE 回调 ──
+
+const handleStep = (data) => {
+  const step = data.step
+  if (!step) return
+
+  // 去除 _done 后缀得到步骤 key
+  const stepKey = step.replace('_done', '')
+  if (!STEP_ORDER.includes(stepKey)) return
+
+  if (step.endsWith('_done')) {
+    progressSteps[stepKey].status = 'done'
+  } else {
+    progressSteps[stepKey].status = 'active'
+  }
+}
+
+const handleResult = (data) => {
+  sessionId.value = data.session_id
+
+  const answerContent = data.answer?.content || '暂无回答'
+  const sql = data.sql || null
+
+  if (data.answer?.image && data.answer.image.length > 0) {
+    const imageHtml = data.answer.image
+      .map((img) => `\n\n![图表](${img})`)
+      .join('')
+    addMessage('assistant', answerContent + imageHtml, { sql })
+  } else {
+    addMessage('assistant', answerContent, { sql })
+  }
+
+  isLoading.value = false
+  resetProgress()
+  scrollToBottom()
+}
+
+const handleError = (data) => {
+  addMessage('assistant', `**出错了**\n\n${data.message || '请求失败，请稍后重试'}`)
+  isLoading.value = false
+  resetProgress()
+  scrollToBottom()
+}
+
 // ── 对话逻辑 ──
 
 const sendMessage = async () => {
@@ -70,39 +145,15 @@ const sendMessage = async () => {
   addMessage('user', question)
   currentInput.value = ''
   isLoading.value = true
+  resetProgress()
   await scrollToBottom()
 
-  try {
-    const payload = {
-      question
-    }
-    if (sessionId.value) {
-      payload.session_id = sessionId.value
-    }
-
-    const response = await sendChatMessage(payload)
-    const data = response?.data || response
-
-    sessionId.value = data.session_id
-
-    const answerContent = data.answer?.content || '暂无回答'
-    const sql = data.sql || null
-    const chartType = data.chart_type || null
-
-    if (data.answer?.image && data.answer.image.length > 0) {
-      const imageHtml = data.answer.image
-        .map((img) => `\n\n![图表](${img})`)
-        .join('')
-      addMessage('assistant', answerContent + imageHtml, { sql, chartType })
-    } else {
-      addMessage('assistant', answerContent, { sql, chartType })
-    }
-  } catch (error) {
-    addMessage('assistant', `**出错了**\n\n${error.message || '请求失败，请稍后重试'}`)
-  } finally {
-    isLoading.value = false
-    await scrollToBottom()
+  const payload = { question }
+  if (sessionId.value) {
+    payload.session_id = sessionId.value
   }
+
+  sendChatMessageStream(payload, handleStep, handleResult, handleError)
 }
 
 const handleKeydown = (event) => {
@@ -249,7 +300,7 @@ const clearConversation = () => {
           </div>
         </div>
 
-        <!-- 加载中 -->
+        <!-- 加载中 - 步骤进度 -->
         <div v-if="isLoading" class="mb-4 flex gap-3">
           <div class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-ink-100">
             <FontAwesomeIcon
@@ -258,14 +309,38 @@ const clearConversation = () => {
               aria-hidden="true"
             />
           </div>
-          <div class="flex items-center gap-2 rounded-2xl border border-black/5 bg-white px-4 py-3">
-            <FontAwesomeIcon
-              :icon="['fas', 'spinner']"
-              spin
-              class="text-sm text-accent-500"
-              aria-hidden="true"
-            />
-            <span class="text-sm text-ink-500">正在分析...</span>
+          <div class="min-w-[200px] rounded-2xl border border-black/5 bg-white px-4 py-3">
+            <div class="flex flex-col gap-2.5">
+              <div
+                v-for="(stepKey, idx) in STEP_ORDER"
+                :key="stepKey"
+                class="flex items-center gap-2"
+                :class="progressSteps[stepKey].status === 'active' ? 'text-accent-600' : progressSteps[stepKey].status === 'done' ? 'text-green-600' : 'text-ink-300'"
+              >
+                <!-- 状态图标 -->
+                <FontAwesomeIcon
+                  v-if="progressSteps[stepKey].status === 'done'"
+                  :icon="['fas', 'circle-check']"
+                  class="w-4 text-xs"
+                  aria-hidden="true"
+                />
+                <FontAwesomeIcon
+                  v-else-if="progressSteps[stepKey].status === 'active'"
+                  :icon="['fas', 'spinner']"
+                  spin
+                  class="w-4 text-xs"
+                  aria-hidden="true"
+                />
+                <div
+                  v-else
+                  class="flex w-4 items-center justify-center"
+                >
+                  <span class="block h-2 w-2 rounded-full border border-current"></span>
+                </div>
+                <!-- 步骤名称 -->
+                <span class="text-xs font-medium">{{ STEP_CONFIG[stepKey].label }}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>

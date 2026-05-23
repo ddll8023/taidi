@@ -1,19 +1,15 @@
 from fastapi import (
     APIRouter,
     Depends,
-    Query,
-    File,
-    Path,
     Body,
-    UploadFile,
     BackgroundTasks,
 )
+from fastapi.responses import StreamingResponse
 from typing import Annotated
 from sqlalchemy.orm import Session
-from app.db.database import get_db
-from app.schemas.response import success, error
-from app.schemas.common import ApiResponse, ErrorCode, PaginatedResponse
 from app.utils.exception import ServiceException
+from app.schemas.response import success, error
+from app.db.database import get_db
 from app.services import chat as services_chat
 from app.schemas import chat as schemas_chat
 
@@ -23,8 +19,7 @@ router = APIRouter(prefix="/api/v1/chat", tags=["聊天功能接口"])
 
 @router.post(
     "",
-    response_model=ApiResponse[schemas_chat.ChatResponse],
-    description="聊天对话接口",
+    description="聊天对话接口（SSE 流式推送进度）",
 )
 def start_chat(
     db: Annotated[Session, Depends(get_db)],
@@ -33,17 +28,20 @@ def start_chat(
         schemas_chat.StartChatRequest, Body(..., description="聊天请求参数")
     ],
 ):
-    """开始聊天"""
+    """开始聊天（SSE 流式推送：意图识别 → SQL生成 → 数据查询 → 回答生成）
+
+    SSE 流式接口返回 StreamingResponse（原始 HTTP 响应），不走 FastAPI 序列化管道，
+    因此不设 response_model（区别于返回 ApiResponse 的常规 JSON 接口）。
+    """
     try:
-        return success(
-            services_chat.start_chat(
-                db,
-                background_tasks,
-                start_chat_request,
-            )
+        return StreamingResponse(
+            services_chat.start_chat(db, background_tasks, start_chat_request),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
     except ServiceException as e:
-        return error(
-            code=e.code,
-            message=e.message,
-        )
+        return error(code=e.code, message=e.message)
