@@ -20,10 +20,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [INFO] Current dir: %CD%
-echo [INFO] Installing dependencies via uv...
 
-uv sync
 
 echo [INFO] Starting FastAPI server...
 uv run python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 7389

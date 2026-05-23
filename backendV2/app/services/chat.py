@@ -96,7 +96,7 @@ def start_chat(
         logger.info(f"生成回答开始: session_id={start_chat_request.session_id}")
         try:
             answer: str = _generate_answer(
-                db, start_chat_request, intent_result_item, list(db_result)
+                start_chat_request, intent_result_item, list(db_result)
             )
             logger.info(f"聊天完成: session_id={start_chat_request.session_id}")
             yield f"event: step\ndata: {json.dumps({'step': 'answer_done', 'message': '回答生成完成'}, ensure_ascii=False)}\n\n"
@@ -206,7 +206,6 @@ def _generate_sql_statement(
 
 
 def _generate_answer(
-    db: Session,
     start_chat_request: schemas_chat.StartChatRequest,
     intent_result_item: schemas_chat.IdentifyIntentResultItem,
     query_result: list,

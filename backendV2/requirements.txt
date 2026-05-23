@@ -21,7 +21,7 @@ oss2
 langchain_openai
 anthropic
 langchain_anthropic
-matplotlib
 openpyxl
 tenacity
 pandas
+matplotlib

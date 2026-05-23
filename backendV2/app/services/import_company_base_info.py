@@ -62,11 +62,13 @@ def import_company_base_info(db: Session, file: UploadFile):
     updated_count = 0
 
     for item in data:
-        stock_code = item.get(
-            constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
-                "stock_code"
+        stock_code = str(
+            item.get(
+                constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
+                    "stock_code"
+                )
             )
-        )
+        ).zfill(6)
         registered_capital_raw = item.get(
             constants_financial_report_base_info.FILE_COLUMN_MAPPING_DICT.get(
                 "registered_capital_raw"

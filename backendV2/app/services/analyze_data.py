@@ -88,7 +88,15 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
             content_list = _read_report_data(file_path, 10)
 
             # 解析数据
-            file_metadata_item = _parse_report_data("\n".join(content_list))
+            file_metadata_dict: dict = _parse_report_data("\n".join(content_list))
+            if file_metadata_dict.get("stock_code") is None:
+                file_metadata_dict = {
+                    **file_metadata_dict,
+                    **_extract_report_data_from_filename(db, file.filename),
+                }
+            file_metadata_item = schemas_analyze_data.FileMetadataItem(
+                **file_metadata_dict
+            )
             logger.info(
                 f"财报元数据解析完成: stock_code={file_metadata_item.stock_code} title={file_metadata_item.report_title}"
             )
@@ -136,7 +144,6 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
                     )
                 db.delete(financial_report_entity)
                 commit_or_rollback(db)
-                db.refresh(financial_report_entity)
                 logger.info(
                     f"财报记录删除成功: report_id={financial_report_entity.id} stock={file_metadata_item.stock_code} title={file_metadata_item.report_title}"
                 )
@@ -474,10 +481,11 @@ def _parse_report_data(content_text: str):
         ),
         content_text,
     )
-    if match is None:
-        logger.error("未找到股票代码")
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "未找到股票代码")
-    data["stock_code"] = str(match.group("stock_code")).zfill(6)
+
+    if match:
+        data["stock_code"] = str(match.group("stock_code")).zfill(6)
+    else:
+        logger.error(f"文件文本中未找到股票代码,需要查找文件名")
 
     # 从文本中解析报告标题
     match = re.search(
@@ -529,7 +537,55 @@ def _parse_report_data(content_text: str):
             int(match.group("year")), int(match.group("month")), int(match.group("day"))
         )
 
-    return schemas_analyze_data.FileMetadataItem(**data)
+    return data
+
+
+def _extract_report_data_from_filename(
+    db: Session,
+    filename: str,
+):
+    """从文件名中提取元数据"""
+    data = {}
+
+    # 格式1：{6位股票代码}_{日期}_{随机码}.pdf — 上交所文件名格式
+    match = re.match(
+        r"^(?P<stock_code>\d{6})[_\s]" r"(?P<report_date>\d{8})[_\s]",
+        filename,
+    )
+    if match:
+        data["stock_code"] = str(match.group("stock_code")).zfill(6)
+        data["report_date"] = date(
+            int(match.group("report_date")[:4]),
+            int(match.group("report_date")[4:6]),
+            int(match.group("report_date")[6:]),
+        )
+        return data
+
+    # 格式2：{公司简称}：{报告年份}年{报告期}报告.pdf — 深交所文件名格式
+    match = re.match(
+        r"^(?P<company_abbr>[^：:]+)\s*[：:]\s*",
+        filename,
+    )
+    if not match:
+        raise ServiceException(
+            ErrorCode.DATA_NOT_FOUND, f"无法从文件名中解析元数据: {filename}"
+        )
+
+    # 根据公司简称查询股票代码
+    company_abbr = match.group("company_abbr")
+    company = db.scalar(
+        select(models_company_basic_info.CompanyBasicInfo).where(
+            models_company_basic_info.CompanyBasicInfo.stock_abbr == company_abbr
+        )
+    )
+    if company is None:
+        raise ServiceException(
+            ErrorCode.DATA_NOT_FOUND,
+            f"未找到公司简称 [{company_abbr}] 对应的股票代码",
+        )
+    data["stock_code"] = company.stock_code
+
+    return data
 
 
 def _run_parse_in_background(report_ids: list[int]):
