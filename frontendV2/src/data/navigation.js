@@ -17,7 +17,7 @@ export const navigationGroups = [
       {
         title: '智能问数',
         shortLabel: '问数',
-        description: '自然语言查询财务数据',
+        description: '自然语言查询财务数据，左右分栏布局',
         icon: 'robot',
         to: '/chat'
       },

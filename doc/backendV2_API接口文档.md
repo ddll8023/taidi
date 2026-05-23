@@ -532,9 +532,69 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
   │                              │
 ```
 
----## 四、后端处理流程说明
+### 3.5 获取对话列表
 
-### 3.1 上传建档流程
+- **POST** `/api/v1/chat/list`
+- **描述**：分页获取历史对话会话列表。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）：**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+| ---- | ---- | ---- | ------ | ---- |
+| page | int | 否 | 1 | 页码 |
+| page_size | int | 否 | 10 | 每页数量 |
+
+**请求示例：**
+```json
+{
+  "page": 1,
+  "page_size": 10
+}
+```
+
+**响应格式：**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "lists": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "session_name": "贵州茅台2023年净利润",
+        "status": 0,
+        "created_at": "2025-01-01T10:00:00",
+        "updated_at": "2025-01-01T10:05:00"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total": 5,
+      "total_pages": 1
+    }
+  }
+}
+```
+
+**响应字段说明：**
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| lists[].id | str | 会话 ID（UUID） |
+| lists[].session_name | str | 会话名称 |
+| lists[].status | int | 状态：0 活跃 / 1 已关闭 |
+| lists[].created_at | str | 创建时间 |
+| lists[].updated_at | str | 更新时间 |
+| pagination | object | 分页信息 |
+
+---
+
+## 四、后端处理流程说明
+
+### 4.1 上传建档流程
 
 ```
 客户端上传 PDF

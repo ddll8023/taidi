@@ -30,7 +30,7 @@ const routes = [
       {
         path: 'chat',
         name: 'Chat',
-        component: () => import('@/views/chat/ChatView.vue'),
+        component: () => import('@/views/chat/ChatPage.vue'),
         meta: { title: '智能问数', description: '自然语言查询财务数据', eyebrow: '项目 / 问数' }
       }
     ]

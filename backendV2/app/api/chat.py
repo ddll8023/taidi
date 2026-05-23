@@ -9,6 +9,7 @@ from typing import Annotated
 from sqlalchemy.orm import Session
 from app.utils.exception import ServiceException
 from app.schemas.response import success, error
+from app.schemas.common import ApiResponse, PaginatedResponse
 from app.db.database import get_db
 from app.services import chat as services_chat
 from app.schemas import chat as schemas_chat
@@ -43,5 +44,24 @@ def start_chat(
                 "X-Accel-Buffering": "no",
             },
         )
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/list",
+    response_model=ApiResponse[PaginatedResponse],
+    description="获取聊天列表",
+)
+def get_chat_list(
+    db: Annotated[Session, Depends(get_db)],
+    get_chat_list_request: Annotated[
+        schemas_chat.GetChatListRequest,
+        Body(..., description="获取聊天列表请求"),
+    ],
+):
+    """获取聊天列表"""
+    try:
+        return success(services_chat.get_chat_list(db, get_chat_list_request))
     except ServiceException as e:
         return error(code=e.code, message=e.message)

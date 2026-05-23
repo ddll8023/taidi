@@ -1,21 +1,10 @@
 /**
  * 智能问数 API
- * 功能描述：对话消息接口
+ * 功能描述：对话消息接口、会话列表查询
  */
 import request from './request'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
-
-/**
- * 发送对话消息
- * @param {Object} params - 请求参数
- * @param {string} [params.session_id] - 会话ID（新对话不传）
- * @param {string} params.question - 用户问题（1~500字符）
- * @returns {Promise} { session_id, answer: { content, image }, sql, chart_type }
- */
-export function sendChatMessage(params) {
-  return request.post('/chat', params)
-}
 
 /**
  * 发送对话消息（SSE 流式）
@@ -93,4 +82,15 @@ export function sendChatMessageStream(params, onStep, onToken, onResult, onError
       onError({ code: -1, message: error.message || '请求失败，请稍后重试' })
     }
   })
+}
+
+/**
+ * 获取聊天会话列表
+ * @param {Object} params - 查询参数
+ * @param {number} params.page - 页码
+ * @param {number} params.page_size - 每页数量
+ * @returns {Promise} { lists: [...], pagination: {...} }
+ */
+export function getChatList(params) {
+  return request.post('/chat/list', params)
 }

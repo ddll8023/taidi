@@ -1,18 +1,18 @@
 <script setup>
 /**
- * 智能问数页面
- * 功能描述：对话式财务数据查询，支持多轮问答、Markdown 渲染、SQL 展示、SSE 流式进度
- * 依赖组件：SurfacePanel, BaseInput, BaseButton
+ * 智能问数主页
+ * 功能描述：左右分栏布局，左侧会话列表 + 右侧对话区域
+ * 依赖组件：BaseButton, BaseInput, SurfacePanel, AppEmptyState
  */
-import { ref, reactive, computed, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
-import BaseInput from '@/components/ui/BaseInput.vue'
+import {
+  ref, reactive, computed, nextTick, watch, onMounted
+} from 'vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseInput from '@/components/ui/BaseInput.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
-import { sendChatMessageStream } from '@/api/chat'
+import AppEmptyState from '@/components/ui/AppEmptyState.vue'
+import { sendChatMessageStream, getChatList } from '@/api/chat'
 import { renderMarkdown } from '@/utils/markdown'
-
-const route = useRoute()
 
 // ── 步骤配置 ──
 
@@ -25,12 +25,43 @@ const STEP_CONFIG = {
 
 const STEP_ORDER = ['intent', 'sql', 'query', 'answer']
 
-// ── 状态 ──
+// ── 左侧：会话列表状态 ──
+
+const sessions = reactive({
+  items: [],
+  page: 1,
+  pageSize: 50,
+  total: 0,
+})
+const isListLoading = ref(false)
+const listError = ref('')
+const activeSessionId = ref(null)
+
+const fetchSessions = async () => {
+  isListLoading.value = true
+  listError.value = ''
+  try {
+    const response = await getChatList({ page: sessions.page, page_size: sessions.pageSize })
+    const payload = response?.data || response
+    const items = payload?.lists || payload?.items || []
+    const pagination = payload?.pagination || {}
+    sessions.items = items
+    sessions.total = pagination?.total || items.length
+  } catch (error) {
+    listError.value = error.message || '加载失败'
+  } finally {
+    isListLoading.value = false
+  }
+}
+
+const hasSessions = computed(() => sessions.items.length > 0)
+
+// ── 右侧：对话状态 ──
 
 const messages = reactive([])
 const currentInput = ref('')
 const isLoading = ref(false)
-const sessionId = ref(route.query.session_id || null)
+const sessionId = ref(null)
 const copiedId = ref(null)
 const streamingContent = ref('')
 const progressSteps = reactive({
@@ -40,18 +71,12 @@ const progressSteps = reactive({
   answer: { status: 'pending' },
 })
 
-// ── 计算属性 ──
-
 const hasMessages = computed(() => messages.length > 0)
-
 const canSend = computed(() => currentInput.value.trim().length > 0 && !isLoading.value)
 
 const progressMessage = computed(() => {
   const active = STEP_ORDER.find((key) => progressSteps[key].status === 'active')
-  if (active) {
-    return STEP_CONFIG[active].label
-  }
-  return '正在分析...'
+  return active ? STEP_CONFIG[active].label : '正在分析...'
 })
 
 // ── 消息操作 ──
@@ -63,7 +88,6 @@ const addMessage = (role, content, extra = {}) => {
     content,
     renderedHtml: role === 'assistant' ? renderMarkdown(content) : '',
     sql: extra.sql || null,
-    chartType: extra.chartType || null,
     showSql: false,
   })
 }
@@ -71,29 +95,21 @@ const addMessage = (role, content, extra = {}) => {
 const scrollToBottom = async () => {
   await nextTick()
   const container = document.querySelector('.chat-messages')
-  if (container) {
-    container.scrollTop = container.scrollHeight
-  }
+  if (container) container.scrollTop = container.scrollHeight
 }
 
-const toggleSql = (msg) => {
-  msg.showSql = !msg.showSql
-}
+const toggleSql = (msg) => { msg.showSql = !msg.showSql }
 
 const copyText = async (text, msgId) => {
   try {
     await navigator.clipboard.writeText(text)
     copiedId.value = msgId
     setTimeout(() => { copiedId.value = null }, 2000)
-  } catch {
-    // fallback
-  }
+  } catch { /* fallback */ }
 }
 
 const resetProgress = () => {
-  STEP_ORDER.forEach((key) => {
-    progressSteps[key].status = 'pending'
-  })
+  STEP_ORDER.forEach((key) => { progressSteps[key].status = 'pending' })
   streamingContent.value = ''
 }
 
@@ -102,42 +118,29 @@ const resetProgress = () => {
 const handleStep = (data) => {
   const step = data.step
   if (!step) return
-
-  // 去除 _done 后缀得到步骤 key
   const stepKey = step.replace('_done', '')
   if (!STEP_ORDER.includes(stepKey)) return
-
-  if (step.endsWith('_done')) {
-    progressSteps[stepKey].status = 'done'
-  } else {
-    progressSteps[stepKey].status = 'active'
-  }
+  progressSteps[stepKey].status = step.endsWith('_done') ? 'done' : 'active'
 }
 
 const handleToken = (data) => {
-  if (data.content) {
-    streamingContent.value += data.content
-  }
+  if (data.content) streamingContent.value += data.content
 }
 
 const handleResult = (data) => {
   sessionId.value = data.session_id
-
   const answerContent = data.answer?.content || '暂无回答'
   const sql = data.sql || null
-
   if (data.answer?.image && data.answer.image.length > 0) {
-    const imageHtml = data.answer.image
-      .map((img) => `\n\n![图表](${img})`)
-      .join('')
+    const imageHtml = data.answer.image.map((img) => `\n\n![图表](${img})`).join('')
     addMessage('assistant', answerContent + imageHtml, { sql })
   } else {
     addMessage('assistant', answerContent, { sql })
   }
-
   isLoading.value = false
   resetProgress()
   scrollToBottom()
+  fetchSessions()
 }
 
 const handleError = (data) => {
@@ -152,18 +155,13 @@ const handleError = (data) => {
 const sendMessage = async () => {
   const question = currentInput.value.trim()
   if (!question || isLoading.value) return
-
   addMessage('user', question)
   currentInput.value = ''
   isLoading.value = true
   resetProgress()
   await scrollToBottom()
-
   const payload = { question }
-  if (sessionId.value) {
-    payload.session_id = sessionId.value
-  }
-
+  if (sessionId.value) payload.session_id = sessionId.value
   sendChatMessageStream(payload, handleStep, handleToken, handleResult, handleError)
 }
 
@@ -174,46 +172,116 @@ const handleKeydown = (event) => {
   }
 }
 
-const clearConversation = () => {
+const newConversation = () => {
   messages.splice(0, messages.length)
   sessionId.value = null
+  activeSessionId.value = null
 }
+
+// ── 选择会话 ──
+
+const selectSession = (session) => {
+  activeSessionId.value = session.id
+  sessionId.value = session.id
+  // 清空消息 —— 后续可以扩展为加载历史消息
+  messages.splice(0, messages.length)
+  addMessage('system', `继续对话：${session.session_name || '未命名对话'}`)
+  messages.splice(0, 1) // 先占位再删除，实际应加载历史
+}
+
+// ── 格式化 ──
+
+const formatDateTime = (value) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+onMounted(() => {
+  fetchSessions()
+})
 </script>
 
 <template>
-  <div class="flex h-full flex-col">
-    <!-- 页头 -->
-    <div class="mb-5 flex items-center justify-between">
-      <div>
-        <p class="shell-kicker">Chat</p>
-        <h2 class="mt-2 text-xl font-semibold text-ink-900">智能问数</h2>
-        <p class="mt-2 max-w-3xl text-sm leading-6 text-ink-600">
-          输入自然语言问题，AI 自动查询财务数据并生成分析回答。
-        </p>
+  <div class="flex h-full gap-4">
+    <!-- 左侧：会话列表 -->
+    <div class="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-black/5 bg-white shadow-soft">
+      <!-- 列表头部 -->
+      <div class="flex items-center justify-between border-b border-black/5 px-4 py-3">
+        <h3 class="text-sm font-semibold text-ink-900">历史对话</h3>
+        <BaseButton icon="plus" size="xs" @click="newConversation">新对话</BaseButton>
       </div>
-      <div class="flex items-center gap-2">
-        <BaseButton
-          variant="ghost"
-          icon="clock-rotate-left"
-          size="sm"
-          @click="$router.push({ name: 'ChatHistory' })"
-        >
-          历史记录
-        </BaseButton>
-        <BaseButton
-          v-if="hasMessages"
-          variant="ghost"
-          icon="rotate-right"
-          size="sm"
-          @click="clearConversation"
-        >
-          新对话
-        </BaseButton>
+
+      <!-- 列表内容 -->
+      <div class="min-h-0 flex-1 overflow-y-auto">
+        <!-- 加载中 -->
+        <div v-if="isListLoading && !hasSessions" class="flex items-center justify-center py-12">
+          <FontAwesomeIcon :icon="['fas', 'spinner']" spin class="text-lg text-accent-500" aria-hidden="true" />
+        </div>
+
+        <!-- 空状态 -->
+        <div v-else-if="!hasSessions" class="flex flex-col items-center justify-center px-4 py-12 text-center">
+          <FontAwesomeIcon :icon="['fas', 'comments']" class="mb-3 text-2xl text-ink-300" aria-hidden="true" />
+          <p class="text-sm text-ink-500">暂无对话记录</p>
+          <p class="mt-1 text-xs text-ink-400">开始新对话后，记录会出现在这里</p>
+        </div>
+
+        <!-- 会话条目 -->
+        <div v-for="session in sessions.items" :key="session.id">
+          <button
+            class="flex w-full items-center gap-3 border-b border-black/5 px-4 py-3.5 text-left transition-all duration-150 hover:bg-accent-50/50"
+            :class="activeSessionId === session.id ? 'bg-accent-50 border-l-2 border-l-accent-500' : 'border-l-2 border-l-transparent'"
+            @click="selectSession(session)"
+          >
+            <div
+              class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+              :class="activeSessionId === session.id ? 'bg-accent-500 text-white' : 'bg-ink-100 text-ink-500'"
+            >
+              <FontAwesomeIcon :icon="['fas', 'message']" class="text-xs" aria-hidden="true" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm font-medium" :class="activeSessionId === session.id ? 'text-accent-700' : 'text-ink-900'">
+                {{ session.session_name || '未命名对话' }}
+              </p>
+              <p class="mt-0.5 text-xs text-ink-400">{{ formatDateTime(session.created_at) }}</p>
+            </div>
+            <span
+              v-if="session.status === 0"
+              class="inline-block h-2 w-2 shrink-0 rounded-full bg-green-500"
+              title="活跃"
+            ></span>
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- 聊天区域 -->
-    <SurfacePanel :padded="false" class="flex flex-1 flex-col overflow-hidden">
+    <!-- 右侧：对话区域 -->
+    <SurfacePanel :padded="false" class="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <!-- 对话头部 -->
+      <div class="flex items-center justify-between border-b border-black/5 px-5 py-3 sm:px-6">
+        <div>
+          <p class="shell-kicker">Chat</p>
+          <h2 class="text-base font-semibold text-ink-900">智能问数</h2>
+        </div>
+        <div class="flex items-center gap-2">
+          <BaseButton
+            v-if="hasMessages"
+            variant="ghost"
+            icon="rotate-right"
+            size="xs"
+            @click="newConversation"
+          >
+            新对话
+          </BaseButton>
+        </div>
+      </div>
+
       <!-- 消息列表 -->
       <div class="chat-messages flex-1 overflow-y-auto px-5 py-5 sm:px-6">
         <!-- 空状态 -->
@@ -222,11 +290,7 @@ const clearConversation = () => {
           class="flex flex-col items-center justify-center py-20 text-center"
         >
           <div class="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-accent-50">
-            <FontAwesomeIcon
-              :icon="['fas', 'robot']"
-              class="text-2xl text-accent-500"
-              aria-hidden="true"
-            />
+            <FontAwesomeIcon :icon="['fas', 'robot']" class="text-2xl text-accent-500" aria-hidden="true" />
           </div>
           <h3 class="text-base font-semibold text-ink-900">开始提问</h3>
           <p class="mt-1 max-w-md text-sm text-ink-500">
@@ -247,11 +311,7 @@ const clearConversation = () => {
 
         <!-- 消息气泡 -->
         <div v-for="msg in messages" :key="msg.id" class="mb-4 last:mb-0">
-          <div
-            class="flex gap-3"
-            :class="msg.role === 'user' ? 'flex-row-reverse' : ''"
-          >
-            <!-- 头像 -->
+          <div class="flex gap-3" :class="msg.role === 'user' ? 'flex-row-reverse' : ''">
             <div
               class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl"
               :class="msg.role === 'user' ? 'bg-accent-500' : 'bg-ink-100'"
@@ -263,59 +323,36 @@ const clearConversation = () => {
                 aria-hidden="true"
               />
             </div>
-
-            <!-- 内容 -->
             <div
               class="max-w-[75%] rounded-2xl px-4 py-3"
               :class="msg.role === 'user'
                 ? 'bg-accent-500 text-white'
                 : 'border border-black/5 bg-white text-ink-900'"
             >
-              <!-- 助手回答（Markdown） -->
               <div
                 v-if="msg.role === 'assistant'"
                 class="prose prose-sm max-w-none prose-headings:text-ink-900 prose-p:text-ink-700 prose-a:text-accent-600 prose-code:text-accent-700 prose-code:bg-ink-50 prose-code:px-1 prose-code:rounded prose-strong:text-ink-900"
                 v-html="msg.renderedHtml"
               ></div>
-
-              <!-- 用户消息 -->
               <p v-else class="text-sm leading-6">{{ msg.content }}</p>
-
-              <!-- SQL 区块 -->
               <div v-if="msg.sql" class="mt-3 border-t border-black/10 pt-2">
                 <button
                   class="inline-flex items-center gap-1.5 text-xs font-medium text-accent-600 hover:text-accent-700"
                   @click="toggleSql(msg)"
                 >
-                  <FontAwesomeIcon
-                    :icon="['fas', msg.showSql ? 'chevron-down' : 'chevron-right']"
-                    class="text-[0.6em]"
-                    aria-hidden="true"
-                  />
+                  <FontAwesomeIcon :icon="['fas', msg.showSql ? 'chevron-down' : 'chevron-right']" class="text-[0.6em]" aria-hidden="true" />
                   {{ msg.showSql ? '隐藏 SQL' : '查看 SQL' }}
                 </button>
-                <pre
-                  v-if="msg.showSql"
-                  class="mt-2 overflow-x-auto rounded-lg bg-ink-50 p-3 text-xs text-ink-600"
-                ><code>{{ msg.sql }}</code></pre>
+                <pre v-if="msg.showSql" class="mt-2 overflow-x-auto rounded-lg bg-ink-50 p-3 text-xs text-ink-600"><code>{{ msg.sql }}</code></pre>
               </div>
             </div>
           </div>
-
-          <!-- 操作按钮（仅助手消息） -->
-          <div
-            v-if="msg.role === 'assistant'"
-            class="flex gap-2 pl-11 pt-1"
-          >
+          <div v-if="msg.role === 'assistant'" class="flex gap-2 pl-11 pt-1">
             <button
               class="inline-flex items-center gap-1 text-xs text-ink-400 hover:text-ink-600 transition-colors"
               @click="copyText(msg.content, msg.id)"
             >
-              <FontAwesomeIcon
-                :icon="['fas', copiedId === msg.id ? 'check' : 'copy']"
-                class="text-[0.65em]"
-                aria-hidden="true"
-              />
+              <FontAwesomeIcon :icon="['fas', copiedId === msg.id ? 'check' : 'copy']" class="text-[0.65em]" aria-hidden="true" />
               {{ copiedId === msg.id ? '已复制' : '复制' }}
             </button>
           </div>
@@ -324,21 +361,16 @@ const clearConversation = () => {
         <!-- 加载中 - 步骤进度 -->
         <div v-if="isLoading" class="mb-4 flex gap-3">
           <div class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-ink-100">
-            <FontAwesomeIcon
-              :icon="['fas', 'robot']"
-              class="text-sm text-ink-600"
-              aria-hidden="true"
-            />
+            <FontAwesomeIcon :icon="['fas', 'robot']" class="text-sm text-ink-600" aria-hidden="true" />
           </div>
           <div class="min-w-[200px] rounded-2xl border border-black/5 bg-white px-4 py-3">
             <div class="flex flex-col gap-2.5">
               <div
-                v-for="(stepKey, idx) in STEP_ORDER"
+                v-for="(stepKey) in STEP_ORDER"
                 :key="stepKey"
                 class="flex items-center gap-2"
                 :class="progressSteps[stepKey].status === 'active' ? 'text-accent-600' : progressSteps[stepKey].status === 'done' ? 'text-green-600' : 'text-ink-300'"
               >
-                <!-- 状态图标 -->
                 <FontAwesomeIcon
                   v-if="progressSteps[stepKey].status === 'done'"
                   :icon="['fas', 'circle-check']"
@@ -352,27 +384,19 @@ const clearConversation = () => {
                   class="w-4 text-xs"
                   aria-hidden="true"
                 />
-                <div
-                  v-else
-                  class="flex w-4 items-center justify-center"
-                >
+                <div v-else class="flex w-4 items-center justify-center">
                   <span class="block h-2 w-2 rounded-full border border-current"></span>
                 </div>
-                <!-- 步骤名称 -->
                 <span class="text-xs font-medium">{{ STEP_CONFIG[stepKey].label }}</span>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- 流式回答内容 -->
-        <div v-if="isLoading && streamingContent" class="mb-4 flex gap-3 animate-fade-in">
+        <!-- 流式回答 -->
+        <div v-if="isLoading && streamingContent" class="mb-4 flex gap-3">
           <div class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-ink-100">
-            <FontAwesomeIcon
-              :icon="['fas', 'robot']"
-              class="text-sm text-ink-600"
-              aria-hidden="true"
-            />
+            <FontAwesomeIcon :icon="['fas', 'robot']" class="text-sm text-ink-600" aria-hidden="true" />
           </div>
           <div class="max-w-[75%] rounded-2xl border border-black/5 bg-white px-4 py-3">
             <div

@@ -1,6 +1,7 @@
 """聊天对话服务"""
 
 import json
+import math
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -9,16 +10,17 @@ from fastapi import BackgroundTasks
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
-from sqlalchemy import select, text
+from sqlalchemy import select, func, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.database import get_background_db_session
+from app.constants import chat as constants_chat
 from app.models import company_basic_info as models_company_basic_info
-from app.models.chat_message import ChatMessage
-from app.models.chat_session import ChatSession
+from app.models import chat_message as models_chat_message
+from app.models import chat_session as models_chat_session
 from app.schemas import chat as schemas_chat
-from app.schemas.common import ErrorCode
+from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 from app.utils.model_factory import get_model
@@ -41,7 +43,9 @@ def start_chat(
     # === 会话加载/创建 ===
     if start_chat_request.session_id:
         chat_session = db.execute(
-            select(ChatSession).where(ChatSession.id == start_chat_request.session_id)
+            select(models_chat_session.ChatSession).where(
+                models_chat_session.ChatSession.id == start_chat_request.session_id
+            )
         ).scalar_one_or_none()
         if not chat_session:
             logger.error(f"会话不存在: session_id={start_chat_request.session_id}")
@@ -50,7 +54,7 @@ def start_chat(
         logger.info(f"加载已有会话: session_id={start_chat_request.session_id}")
     else:
         start_chat_request.session_id = str(uuid.uuid4())
-        chat_session = ChatSession(
+        chat_session = models_chat_session.ChatSession(
             id=start_chat_request.session_id,
             session_name=start_chat_request.question[:100],
             status=0,
@@ -146,7 +150,7 @@ def start_chat(
 
     # === 持久化本轮消息 ===
     sql_result_for_storage = _truncate_sql_result(db_result)
-    chat_message = ChatMessage(
+    chat_message = models_chat_message.ChatMessage(
         session_id=start_chat_request.session_id,
         message_type="conversation",
         query=start_chat_request.question,
@@ -173,6 +177,42 @@ def start_chat(
 
     # === 推送最终结果 ===
     yield f"event: result\ndata: {json.dumps({'session_id': start_chat_request.session_id, 'answer': {'content': answer}, 'sql': sql_statement}, ensure_ascii=False)}\n\n"
+
+
+def get_chat_list(
+    db: Session,
+    get_chat_list_request: schemas_chat.GetChatListRequest,
+):
+    """获取聊天列表"""
+    logger.info(
+        f"查询聊天列表: page={get_chat_list_request.page} "
+        f"page_size={get_chat_list_request.page_size}"
+    )
+
+    base_stmt = select(models_chat_session.ChatSession)
+
+    total = db.scalar(select(func.count()).select_from(base_stmt.subquery()))
+
+    session_entity_list = db.scalars(
+        base_stmt.order_by(models_chat_session.ChatSession.updated_at.desc())
+        .offset((get_chat_list_request.page - 1) * get_chat_list_request.page_size)
+        .limit(get_chat_list_request.page_size)
+    ).all()
+
+    return PaginatedResponse[schemas_chat.GetChatListResponse](
+        lists=[
+            schemas_chat.GetChatListResponse.model_validate(item)
+            for item in session_entity_list
+        ],
+        pagination=PaginationInfo(
+            page=get_chat_list_request.page,
+            page_size=get_chat_list_request.page_size,
+            total=total,
+            total_pages=(
+                math.ceil(total / get_chat_list_request.page_size) if total else 0
+            ),
+        ),
+    )
 
 
 """辅助函数"""
@@ -321,9 +361,9 @@ def _build_history_context(db, chat_session):
 
     messages = (
         db.execute(
-            select(ChatMessage)
-            .where(ChatMessage.id.in_(chat_session.messages))
-            .order_by(ChatMessage.id)
+            select(models_chat_message.ChatMessage)
+            .where(models_chat_message.ChatMessage.id.in_(chat_session.messages))
+            .order_by(models_chat_message.ChatMessage.id)
         )
         .scalars()
         .all()
@@ -367,23 +407,25 @@ def _summarize_overflow(session_id: str):
     db = get_background_db_session()
     try:
         chat_session = db.execute(
-            select(ChatSession).where(ChatSession.id == session_id).with_for_update()
+            select(models_chat_session.ChatSession)
+            .where(models_chat_session.ChatSession.id == session_id)
+            .with_for_update()
         ).scalar_one_or_none()
         if not chat_session:
             return
 
         messages = chat_session.messages or []
-        if len(messages) < 5:
+        if len(messages) < constants_chat.MAX_HISTORY_MESSAGES:
             return
 
         conv_msgs = (
             db.execute(
-                select(ChatMessage)
+                select(models_chat_message.ChatMessage)
                 .where(
-                    ChatMessage.id.in_(messages),
-                    ChatMessage.message_type == "conversation",
+                    models_chat_message.ChatMessage.id.in_(messages),
+                    models_chat_message.ChatMessage.message_type == "conversation",
                 )
-                .order_by(ChatMessage.id)
+                .order_by(models_chat_message.ChatMessage.id)
                 .limit(2)
             )
             .scalars()
@@ -395,7 +437,7 @@ def _summarize_overflow(session_id: str):
         summary_text = _generate_summary(conv_msgs)
         logger.info(f"摘要生成完成: session_id={session_id}")
 
-        summary_msg = ChatMessage(
+        summary_msg = models_chat_message.ChatMessage(
             session_id=session_id,
             message_type="summary",
             summary_content=summary_text,

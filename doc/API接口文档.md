@@ -25,19 +25,19 @@
 
 - **错误码表**：
 
-| 错误码 | 说明 |
-|--------|------|
-| 0 | 成功 |
-| 1001 | 参数错误 |
-| 1002 | 数据未找到 |
-| 2001 | 未登录 |
-| 2002 | Token 已过期 |
-| 2003 | 权限不足 |
-| 3001 | 不支持的文件格式 |
-| 3002 | 文件过大 |
-| 4001 | AI 服务错误 |
-| 5001 | 内部错误 |
-| 6001 | 密码错误 |
+| 错误码 | 说明             |
+| ------ | ---------------- |
+| 0      | 成功             |
+| 1001   | 参数错误         |
+| 1002   | 数据未找到       |
+| 2001   | 未登录           |
+| 2002   | Token 已过期     |
+| 2003   | 权限不足         |
+| 3001   | 不支持的文件格式 |
+| 3002   | 文件过大         |
+| 4001   | AI 服务错误      |
+| 5001   | 内部错误         |
+| 6001   | 密码错误         |
 
 - **Swagger 文档**：`http://localhost:8000/docs`
 
@@ -53,9 +53,9 @@
 - **描述**：上传单个 PDF 文件，仅执行建档入库（阶段一）
 - **Content-Type**：`multipart/form-data`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| file | File | body | 是 | PDF 文件 |
+| 参数 | 类型 | 位置 | 必填 | 说明     |
+| ---- | ---- | ---- | ---- | -------- |
+| file | File | body | 是   | PDF 文件 |
 
 **响应格式**：
 
@@ -73,13 +73,13 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| report_id | int | 财报记录 ID |
-| stock_code | string | 股票代码 |
-| stock_abbr | string | 股票简称 |
-| report_title | string | 报告标题 |
-| parse_status | int | 解析状态：0 待处理 |
+| 字段         | 类型   | 说明               |
+| ------------ | ------ | ------------------ |
+| report_id    | int    | 财报记录 ID        |
+| stock_code   | string | 股票代码           |
+| stock_abbr   | string | 股票简称           |
+| report_title | string | 报告标题           |
+| parse_status | int    | 解析状态：0 待处理 |
 
 ---
 
@@ -89,9 +89,9 @@
 - **描述**：批量上传 PDF 文件，仅执行建档入库（阶段一）
 - **Content-Type**：`multipart/form-data`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| files | File[] | body | 是 | PDF 文件列表 |
+| 参数  | 类型   | 位置 | 必填 | 说明         |
+| ----- | ------ | ---- | ---- | ------------ |
+| files | File[] | body | 是   | PDF 文件列表 |
 
 **响应格式**：
 
@@ -113,13 +113,13 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| total | int | 上传文件总数 |
-| success_count | int | 成功建档数量 |
-| failed_count | int | 失败数量 |
-| success_reports | list[dict] | 成功建档的财报记录列表 |
-| failed_files | list[dict] | 失败文件列表（含 file_name、error） |
+| 字段            | 类型       | 说明                                |
+| --------------- | ---------- | ----------------------------------- |
+| total           | int        | 上传文件总数                        |
+| success_count   | int        | 成功建档数量                        |
+| failed_count    | int        | 失败数量                            |
+| success_reports | list[dict] | 成功建档的财报记录列表              |
+| failed_files    | list[dict] | 失败文件列表（含 file_name、error） |
 
 ---
 
@@ -128,10 +128,10 @@
 - **POST** `/api/v1/data/parse/{report_id}`
 - **描述**：提交单个财报解析任务（异步后台执行）
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| report_id | int | path | 是 | 财报 ID |
-| force | bool | query | 否 | 强制重新解析（包括已解析成功的），默认 `false` |
+| 参数      | 类型 | 位置  | 必填 | 说明                                             |
+| --------- | ---- | ----- | ---- | ------------------------------------------------ |
+| report_id | int  | path  | 是   | 财报 ID                                          |
+| force     | bool | query | 否   | 强制重新解析（包括已解析成功的），默认 `false` |
 
 **响应格式**：
 
@@ -146,10 +146,10 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| report_id | int | 财报 ID |
-| status | string | 提交状态：`submitted` |
+| 字段      | 类型   | 说明                    |
+| --------- | ------ | ----------------------- |
+| report_id | int    | 财报 ID                 |
+| status    | string | 提交状态：`submitted` |
 
 ---
 
@@ -159,9 +159,9 @@
 - **描述**：提交批量解析任务（异步后台执行）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| report_ids | int[] | body | 是 | 财报 ID 列表 |
+| 参数       | 类型  | 位置 | 必填 | 说明         |
+| ---------- | ----- | ---- | ---- | ------------ |
+| report_ids | int[] | body | 是   | 财报 ID 列表 |
 
 **请求体示例**：
 
@@ -186,12 +186,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| submitted_count | int | 已提交数量 |
-| skipped_count | int | 跳过数量（已解析成功且未强制重解析） |
-| submitted_report_ids | list[int] | 已提交的财报 ID 列表 |
-| skipped_report_ids | list[int] | 跳过的财报 ID 列表 |
+| 字段                 | 类型      | 说明                                 |
+| -------------------- | --------- | ------------------------------------ |
+| submitted_count      | int       | 已提交数量                           |
+| skipped_count        | int       | 跳过数量（已解析成功且未强制重解析） |
+| submitted_report_ids | list[int] | 已提交的财报 ID 列表                 |
+| skipped_report_ids   | list[int] | 跳过的财报 ID 列表                   |
 
 ---
 
@@ -200,9 +200,9 @@
 - **POST** `/api/v1/data/parse/all`
 - **描述**：提交所有待处理财报的解析任务（异步后台执行）
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| limit | int | query | 否 | 最大处理数量，默认 `100` |
+| 参数  | 类型 | 位置  | 必填 | 说明                       |
+| ----- | ---- | ----- | ---- | -------------------------- |
+| limit | int  | query | 否   | 最大处理数量，默认 `100` |
 
 **响应格式**：同 [1.4 批量解析](#14-提交批量解析任务)
 
@@ -214,9 +214,9 @@
 - **描述**：根据财报 ID 列表批量查询解析状态
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| report_ids | int[] | body | 是 | 财报 ID 列表 |
+| 参数       | 类型  | 位置 | 必填 | 说明         |
+| ---------- | ----- | ---- | ---- | ------------ |
+| report_ids | int[] | body | 是   | 财报 ID 列表 |
 
 **请求体示例**：
 
@@ -244,16 +244,16 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| results | list | 各报告解析状态列表 |
-| results[].report_id | int | 报告 ID |
-| results[].parse_status | int | 解析状态：0 待处理 / 1 成功 / 2 失败 |
-| results[].parse_status_text | string | 解析状态文本 |
-| results[].validate_message | string\|null | 校验结果说明 |
-| processing_count | int | 处理中数量 |
-| completed_count | int | 已完成数量 |
-| total_count | int | 总数 |
+| 字段                        | 类型         | 说明                                 |
+| --------------------------- | ------------ | ------------------------------------ |
+| results                     | list         | 各报告解析状态列表                   |
+| results[].report_id         | int          | 报告 ID                              |
+| results[].parse_status      | int          | 解析状态：0 待处理 / 1 成功 / 2 失败 |
+| results[].parse_status_text | string       | 解析状态文本                         |
+| results[].validate_message  | string\|null | 校验结果说明                         |
+| processing_count            | int          | 处理中数量                           |
+| completed_count             | int          | 已完成数量                           |
+| total_count                 | int          | 总数                                 |
 
 ---
 
@@ -262,21 +262,21 @@
 - **GET** `/api/v1/data`
 - **描述**：分页查询财报数据列表
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| page | int | query | 否 | 页码，从 1 开始，默认 `1` |
-| page_size | int | query | 否 | 每页数量，最小 10，默认 `10` |
-| keyword | string | query | 否 | 文件名关键词搜索 |
-| parse_status | int | query | 否 | 解析状态筛选：0 待处理 / 1 成功 / 2 失败 |
-| report_type | string | query | 否 | 报告类型筛选 |
-| stock_code | string | query | 否 | 股票代码筛选，最长 6 字符 |
-| stock_abbr | string | query | 否 | 股票简称筛选 |
-| report_year | int | query | 否 | 报告年份筛选，范围 2000~2100 |
-| report_period | string | query | 否 | 报告期筛选 |
-| import_status | int | query | 否 | 入库状态筛选：0 待入库 / 1 成功 / 2 失败 |
-| vector_status | int | query | 否 | 向量化状态筛选：0 待向量化 / 1 向量化中 / 2 成功 / 3 失败 / 4 跳过 |
-| sort_by | string | query | 否 | 排序字段：`created_at` / `updated_at` |
-| sort_order | string | query | 否 | 排序方式：`desc` / `asc` |
+| 参数          | 类型   | 位置  | 必填 | 说明                                                               |
+| ------------- | ------ | ----- | ---- | ------------------------------------------------------------------ |
+| page          | int    | query | 否   | 页码，从 1 开始，默认 `1`                                        |
+| page_size     | int    | query | 否   | 每页数量，最小 10，默认 `10`                                     |
+| keyword       | string | query | 否   | 文件名关键词搜索                                                   |
+| parse_status  | int    | query | 否   | 解析状态筛选：0 待处理 / 1 成功 / 2 失败                           |
+| report_type   | string | query | 否   | 报告类型筛选                                                       |
+| stock_code    | string | query | 否   | 股票代码筛选，最长 6 字符                                          |
+| stock_abbr    | string | query | 否   | 股票简称筛选                                                       |
+| report_year   | int    | query | 否   | 报告年份筛选，范围 2000~2100                                       |
+| report_period | string | query | 否   | 报告期筛选                                                         |
+| import_status | int    | query | 否   | 入库状态筛选：0 待入库 / 1 成功 / 2 失败                           |
+| vector_status | int    | query | 否   | 向量化状态筛选：0 待向量化 / 1 向量化中 / 2 成功 / 3 失败 / 4 跳过 |
+| sort_by       | string | query | 否   | 排序字段：`created_at` / `updated_at`                          |
+| sort_order    | string | query | 否   | 排序方式：`desc` / `asc`                                       |
 
 **响应格式**：
 
@@ -311,26 +311,26 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| lists | list | 财报记录列表 |
-| lists[].id | int | 财报 ID |
-| lists[].file_name | string | 源文件名 |
-| lists[].report_title | string | 报告标题 |
-| lists[].stock_code | string | 股票代码 |
-| lists[].stock_abbr | string | 股票简称 |
-| lists[].report_year | int | 报告年份 |
-| lists[].report_period | string | 报告期：Q1/HY/Q3/FY |
-| lists[].report_type | string | 报告类型：REPORT/SUMMARY |
-| lists[].parse_status | int | 解析状态：0 待处理 / 1 成功 / 2 失败 |
-| lists[].import_status | int | 入库状态：0 待入库 / 1 成功 / 2 失败 |
-| lists[].vector_status | int | 向量化状态：0 待向量化 / 1 向量化中 / 2 成功 / 3 失败 / 4 跳过 |
-| lists[].created_at | datetime | 创建时间 |
-| pagination | object | 分页信息 |
-| pagination.page | int | 当前页码 |
-| pagination.page_size | int | 每页数量 |
-| pagination.total | int | 总记录数 |
-| pagination.total_pages | int | 总页数 |
+| 字段                   | 类型     | 说明                                                           |
+| ---------------------- | -------- | -------------------------------------------------------------- |
+| lists                  | list     | 财报记录列表                                                   |
+| lists[].id             | int      | 财报 ID                                                        |
+| lists[].file_name      | string   | 源文件名                                                       |
+| lists[].report_title   | string   | 报告标题                                                       |
+| lists[].stock_code     | string   | 股票代码                                                       |
+| lists[].stock_abbr     | string   | 股票简称                                                       |
+| lists[].report_year    | int      | 报告年份                                                       |
+| lists[].report_period  | string   | 报告期：Q1/HY/Q3/FY                                            |
+| lists[].report_type    | string   | 报告类型：REPORT/SUMMARY                                       |
+| lists[].parse_status   | int      | 解析状态：0 待处理 / 1 成功 / 2 失败                           |
+| lists[].import_status  | int      | 入库状态：0 待入库 / 1 成功 / 2 失败                           |
+| lists[].vector_status  | int      | 向量化状态：0 待向量化 / 1 向量化中 / 2 成功 / 3 失败 / 4 跳过 |
+| lists[].created_at     | datetime | 创建时间                                                       |
+| pagination             | object   | 分页信息                                                       |
+| pagination.page        | int      | 当前页码                                                       |
+| pagination.page_size   | int      | 每页数量                                                       |
+| pagination.total       | int      | 总记录数                                                       |
+| pagination.total_pages | int      | 总页数                                                         |
 
 ---
 
@@ -339,9 +339,9 @@
 - **GET** `/api/v1/data/{report_id}`
 - **描述**：获取单个财报记录的详情
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| report_id | int | path | 是 | 财报记录 ID |
+| 参数      | 类型 | 位置 | 必填 | 说明        |
+| --------- | ---- | ---- | ---- | ----------- |
+| report_id | int  | path | 是   | 财报记录 ID |
 
 **响应格式**：
 
@@ -406,36 +406,36 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | int | 财报 ID |
-| file_name | string | 源文件名 |
-| report_title | string | 报告标题 |
-| stock_code | string | 股票代码 |
-| stock_abbr | string | 股票简称 |
-| report_year | int | 报告年份 |
-| report_period | string | 报告期：Q1/HY/Q3/FY |
-| report_type | string | 报告类型：REPORT/SUMMARY |
-| report_label | string | 报告标签 |
-| exchange | string | 交易所标识 |
-| report_date | datetime\|null | 报告披露日期 |
-| parse_status | int | 解析状态：0 待处理 / 1 成功 / 2 失败 |
-| review_status | int | 审核状态：0 待审核 / 1 已通过 / 2 已驳回 |
-| validate_status | int | 校验状态：0 待校验 / 1 已通过 / 2 已失败 |
-| validate_message | string\|null | 校验结果说明 |
-| import_status | int | 入库状态：0 待入库 / 1 成功 / 2 失败 |
-| vector_status | int | 向量化状态：0 待向量化 / 1 向量化中 / 2 成功 / 3 失败 / 4 跳过 |
-| vector_model | string\|null | 向量模型 |
-| vector_dim | int\|null | 向量维度 |
-| vector_version | string\|null | 向量版本 |
-| vector_error_message | string\|null | 向量化失败原因 |
-| vectorized_at | datetime\|null | 向量化完成时间 |
-| created_at | datetime | 创建时间 |
-| updated_at | datetime | 更新时间 |
-| core_performance_indicators | object\|null | 核心业绩指标表（eps、roe、毛利率等） |
-| balance_sheet | object\|null | 资产负债表（总资产、总负债、权益等） |
-| cash_flow_sheet | object\|null | 现金流量表（经营/投资/融资现金流等） |
-| income_sheet | object\|null | 利润表（净利润、营收、各项费用等） |
+| 字段                        | 类型           | 说明                                                           |
+| --------------------------- | -------------- | -------------------------------------------------------------- |
+| id                          | int            | 财报 ID                                                        |
+| file_name                   | string         | 源文件名                                                       |
+| report_title                | string         | 报告标题                                                       |
+| stock_code                  | string         | 股票代码                                                       |
+| stock_abbr                  | string         | 股票简称                                                       |
+| report_year                 | int            | 报告年份                                                       |
+| report_period               | string         | 报告期：Q1/HY/Q3/FY                                            |
+| report_type                 | string         | 报告类型：REPORT/SUMMARY                                       |
+| report_label                | string         | 报告标签                                                       |
+| exchange                    | string         | 交易所标识                                                     |
+| report_date                 | datetime\|null | 报告披露日期                                                   |
+| parse_status                | int            | 解析状态：0 待处理 / 1 成功 / 2 失败                           |
+| review_status               | int            | 审核状态：0 待审核 / 1 已通过 / 2 已驳回                       |
+| validate_status             | int            | 校验状态：0 待校验 / 1 已通过 / 2 已失败                       |
+| validate_message            | string\|null   | 校验结果说明                                                   |
+| import_status               | int            | 入库状态：0 待入库 / 1 成功 / 2 失败                           |
+| vector_status               | int            | 向量化状态：0 待向量化 / 1 向量化中 / 2 成功 / 3 失败 / 4 跳过 |
+| vector_model                | string\|null   | 向量模型                                                       |
+| vector_dim                  | int\|null      | 向量维度                                                       |
+| vector_version              | string\|null   | 向量版本                                                       |
+| vector_error_message        | string\|null   | 向量化失败原因                                                 |
+| vectorized_at               | datetime\|null | 向量化完成时间                                                 |
+| created_at                  | datetime       | 创建时间                                                       |
+| updated_at                  | datetime       | 更新时间                                                       |
+| core_performance_indicators | object\|null   | 核心业绩指标表（eps、roe、毛利率等）                           |
+| balance_sheet               | object\|null   | 资产负债表（总资产、总负债、权益等）                           |
+| cash_flow_sheet             | object\|null   | 现金流量表（经营/投资/融资现金流等）                           |
+| income_sheet                | object\|null   | 利润表（净利润、营收、各项费用等）                             |
 
 ---
 
@@ -444,9 +444,9 @@
 - **GET** `/api/v1/data/{report_id}/json`
 - **描述**：获取财报的结构化 JSON 文件内容
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| report_id | int | path | 是 | 财报记录 ID |
+| 参数      | 类型 | 位置 | 必填 | 说明        |
+| --------- | ---- | ---- | ---- | ----------- |
+| report_id | int  | path | 是   | 财报记录 ID |
 
 **响应格式**：
 
@@ -462,11 +462,11 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| file_name | string | JSON 文件名 |
-| file_size | int | 文件大小（字节） |
-| content | any | JSON 解析后的结构化内容 |
+| 字段      | 类型   | 说明                    |
+| --------- | ------ | ----------------------- |
+| file_name | string | JSON 文件名             |
+| file_size | int    | 文件大小（字节）        |
+| content   | any    | JSON 解析后的结构化内容 |
 
 ---
 
@@ -475,9 +475,9 @@
 - **DELETE** `/api/v1/data/{report_id}`
 - **描述**：删除财报记录及其关联数据（事实表数据、磁盘文件）
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| report_id | int | path | 是 | 财报记录 ID |
+| 参数      | 类型 | 位置 | 必填 | 说明        |
+| --------- | ---- | ---- | ---- | ----------- |
+| report_id | int  | path | 是   | 财报记录 ID |
 
 **响应格式**：
 
@@ -491,9 +491,9 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | int | 已删除的财报 ID |
+| 字段 | 类型 | 说明            |
+| ---- | ---- | --------------- |
+| id   | int  | 已删除的财报 ID |
 
 ---
 
@@ -503,9 +503,9 @@
 - **描述**：上传附件1 Excel 文件，导入公司基础信息
 - **Content-Type**：`multipart/form-data`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| file | File | body | 是 | Excel 文件（.xlsx 或 .xls） |
+| 参数 | 类型 | 位置 | 必填 | 说明                        |
+| ---- | ---- | ---- | ---- | --------------------------- |
+| file | File | body | 是   | Excel 文件（.xlsx 或 .xls） |
 
 **响应格式**：
 
@@ -521,11 +521,11 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| total | int | 处理的总记录数 |
-| inserted | int | 新增记录数 |
-| updated | int | 更新记录数 |
+| 字段     | 类型 | 说明           |
+| -------- | ---- | -------------- |
+| total    | int  | 处理的总记录数 |
+| inserted | int  | 新增记录数     |
+| updated  | int  | 更新记录数     |
 
 ---
 
@@ -539,10 +539,10 @@
 - **描述**：发送对话消息，返回 AI 回答（含 SQL、图表等）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| session_id | string | body | 否 | 会话 ID（新会话不传） |
-| question | string | body | 是 | 用户提问内容，长度 1~500 字符 |
+| 参数       | 类型   | 位置 | 必填 | 说明                          |
+| ---------- | ------ | ---- | ---- | ----------------------------- |
+| session_id | string | body | 否   | 会话 ID（新会话不传）         |
+| question   | string | body | 是   | 用户提问内容，长度 1~500 字符 |
 
 **请求体示例**：
 
@@ -572,15 +572,15 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| session_id | string | 会话 ID（UUID） |
-| answer | object | 回答内容 |
-| answer.content | string | 回答文本（Markdown 格式） |
-| answer.image | list[string] | 图表图片文件名列表 |
-| need_clarification | bool | 是否需要用户澄清 |
-| sql | string\|null | 生成的 SQL 语句 |
-| chart_type | string\|null | 图表类型：line/bar/pie/horizontal_bar/grouped_bar/radar/histogram/scatter/box |
+| 字段               | 类型         | 说明                                                                          |
+| ------------------ | ------------ | ----------------------------------------------------------------------------- |
+| session_id         | string       | 会话 ID（UUID）                                                               |
+| answer             | object       | 回答内容                                                                      |
+| answer.content     | string       | 回答文本（Markdown 格式）                                                     |
+| answer.image       | list[string] | 图表图片文件名列表                                                            |
+| need_clarification | bool         | 是否需要用户澄清                                                              |
+| sql                | string\|null | 生成的 SQL 语句                                                               |
+| chart_type         | string\|null | 图表类型：line/bar/pie/horizontal_bar/grouped_bar/radar/histogram/scatter/box |
 
 ---
 
@@ -589,10 +589,10 @@
 - **GET** `/api/v1/chat/sessions`
 - **描述**：分页获取会话列表
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| page | int | query | 否 | 页码，从 1 开始，默认 `1` |
-| page_size | int | query | 否 | 每页数量，最大 100，默认 `10` |
+| 参数      | 类型 | 位置  | 必填 | 说明                            |
+| --------- | ---- | ----- | ---- | ------------------------------- |
+| page      | int  | query | 否   | 页码，从 1 开始，默认 `1`     |
+| page_size | int  | query | 否   | 每页数量，最大 100，默认 `10` |
 
 **响应格式**：
 
@@ -620,15 +620,15 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| lists | list | 会话列表 |
-| lists[].id | string | 会话 UUID |
-| lists[].name | string\|null | 会话名称 |
-| lists[].status | int | 状态：0 活跃 / 1 已关闭 |
-| lists[].created_at | datetime | 创建时间 |
-| lists[].updated_at | datetime | 更新时间 |
-| pagination | object | 分页信息 |
+| 字段               | 类型         | 说明                    |
+| ------------------ | ------------ | ----------------------- |
+| lists              | list         | 会话列表                |
+| lists[].id         | string       | 会话 UUID               |
+| lists[].name       | string\|null | 会话名称                |
+| lists[].status     | int          | 状态：0 活跃 / 1 已关闭 |
+| lists[].created_at | datetime     | 创建时间                |
+| lists[].updated_at | datetime     | 更新时间                |
+| pagination         | object       | 分页信息                |
 
 ---
 
@@ -637,9 +637,9 @@
 - **GET** `/api/v1/chat/history/{session_id}`
 - **描述**：获取指定会话的消息历史记录
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| session_id | string | path | 是 | 会话 ID |
+| 参数       | 类型   | 位置 | 必填 | 说明    |
+| ---------- | ------ | ---- | ---- | ------- |
+| session_id | string | path | 是   | 会话 ID |
 
 **响应格式**：
 
@@ -668,14 +668,14 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| [].id | int | 消息 ID |
-| [].role | string | 角色：user / assistant |
-| [].content | string | 消息内容 |
-| [].sql | string\|null | 生成的 SQL |
-| [].image | list[string] | 图表图片文件名列表 |
-| [].created_at | datetime | 创建时间 |
+| 字段          | 类型         | 说明                   |
+| ------------- | ------------ | ---------------------- |
+| [].id         | int          | 消息 ID                |
+| [].role       | string       | 角色：user / assistant |
+| [].content    | string       | 消息内容               |
+| [].sql        | string\|null | 生成的 SQL             |
+| [].image      | list[string] | 图表图片文件名列表     |
+| [].created_at | datetime     | 创建时间               |
 
 ---
 
@@ -685,9 +685,9 @@
 - **描述**：导出对话结果为 Excel（result_2.xlsx）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| questions | list[dict] | body | 是 | 问题列表 |
+| 参数      | 类型       | 位置 | 必填 | 说明     |
+| --------- | ---------- | ---- | ---- | -------- |
+| questions | list[dict] | body | 是   | 问题列表 |
 
 **响应格式**：
 
@@ -701,8 +701,8 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
+| 字段      | 类型   | 说明         |
+| --------- | ------ | ------------ |
 | file_path | string | 导出文件路径 |
 
 ---
@@ -712,9 +712,9 @@
 - **PUT** `/api/v1/chat/sessions/{session_id}/close`
 - **描述**：关闭指定会话
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| session_id | string | path | 是 | 会话 ID |
+| 参数       | 类型   | 位置 | 必填 | 说明    |
+| ---------- | ------ | ---- | ---- | ------- |
+| session_id | string | path | 是   | 会话 ID |
 
 **响应格式**：
 
@@ -729,10 +729,10 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | string | 会话 ID |
-| status | int | 状态：1 已关闭 |
+| 字段   | 类型   | 说明           |
+| ------ | ------ | -------------- |
+| id     | string | 会话 ID        |
+| status | int    | 状态：1 已关闭 |
 
 ---
 
@@ -741,9 +741,9 @@
 - **DELETE** `/api/v1/chat/sessions/{session_id}`
 - **描述**：删除会话及其所有消息
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| session_id | string | path | 是 | 会话 ID |
+| 参数       | 类型   | 位置 | 必填 | 说明    |
+| ---------- | ------ | ---- | ---- | ------- |
+| session_id | string | path | 是   | 会话 ID |
 
 **响应格式**：
 
@@ -758,10 +758,10 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | string | 已删除的会话 ID |
-| deleted | bool | 是否删除成功 |
+| 字段    | 类型   | 说明            |
+| ------- | ------ | --------------- |
+| id      | string | 已删除的会话 ID |
+| deleted | bool   | 是否删除成功    |
 
 ---
 
@@ -771,10 +771,10 @@
 - **描述**：重命名指定会话
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| session_id | string | path | 是 | 会话 ID |
-| name | string | body | 是 | 新名称，长度 1~100 字符 |
+| 参数       | 类型   | 位置 | 必填 | 说明                    |
+| ---------- | ------ | ---- | ---- | ----------------------- |
+| session_id | string | path | 是   | 会话 ID                 |
+| name       | string | body | 是   | 新名称，长度 1~100 字符 |
 
 **请求体示例**：
 
@@ -797,10 +797,10 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | string | 会话 ID |
-| name | string | 新名称 |
+| 字段 | 类型   | 说明    |
+| ---- | ------ | ------- |
+| id   | string | 会话 ID |
+| name | string | 新名称  |
 
 ---
 
@@ -809,9 +809,9 @@
 - **GET** `/api/v1/chat/images/{filename}`
 - **描述**：获取图表图片文件，返回图片二进制流（`image/jpeg`）
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| filename | string | path | 是 | 图片文件名 |
+| 参数     | 类型   | 位置 | 必填 | 说明       |
+| -------- | ------ | ---- | ---- | ---------- |
+| filename | string | path | 是   | 图片文件名 |
 
 **响应格式**：图片二进制流（`Content-Type: image/jpeg`），失败时返回 JSON 错误响应。
 
@@ -827,11 +827,11 @@
 - **描述**：加载 Excel 元数据到 knowledge_document 表（系统初始化）
 - **Content-Type**：`multipart/form-data`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| stock_excel | File | body | 是 | 个股研报 Excel 文件 |
-| industry_excel | File | body | 是 | 行业研报 Excel 文件 |
-| force_reload | bool | query | 否 | 是否强制重新加载，默认 `false` |
+| 参数           | 类型 | 位置  | 必填 | 说明                             |
+| -------------- | ---- | ----- | ---- | -------------------------------- |
+| stock_excel    | File | body  | 是   | 个股研报 Excel 文件              |
+| industry_excel | File | body  | 是   | 行业研报 Excel 文件              |
+| force_reload   | bool | query | 否   | 是否强制重新加载，默认 `false` |
 
 **响应格式**：
 
@@ -851,15 +851,15 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| success | bool | 是否成功 |
-| message | string | 结果消息 |
-| stock_metadata_count | int | 个股研报元数据数量 |
-| industry_metadata_count | int | 行业研报元数据数量 |
-| total_count | int | 总数量 |
-| duplicates | int | 重复数量 |
-| errors | list[dict] | 错误列表 |
+| 字段                    | 类型       | 说明               |
+| ----------------------- | ---------- | ------------------ |
+| success                 | bool       | 是否成功           |
+| message                 | string     | 结果消息           |
+| stock_metadata_count    | int        | 个股研报元数据数量 |
+| industry_metadata_count | int        | 行业研报元数据数量 |
+| total_count             | int        | 总数量             |
+| duplicates              | int        | 重复数量           |
+| errors                  | list[dict] | 错误列表           |
 
 ---
 
@@ -883,12 +883,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| initialized | bool | 是否已初始化 |
-| stock_metadata_count | int | 个股研报元数据数量 |
-| industry_metadata_count | int | 行业研报元数据数量 |
-| total_metadata_count | int | 总元数据数量 |
+| 字段                    | 类型 | 说明               |
+| ----------------------- | ---- | ------------------ |
+| initialized             | bool | 是否已初始化       |
+| stock_metadata_count    | int  | 个股研报元数据数量 |
+| industry_metadata_count | int  | 行业研报元数据数量 |
+| total_metadata_count    | int  | 总元数据数量       |
 
 ---
 
@@ -918,16 +918,16 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| documents | object | 文档统计 |
-| documents.total | int | 文档总数 |
-| documents.by_chunk_status | dict | 按切块状态分组统计 |
-| documents.by_vector_status | dict | 按向量状态分组统计 |
-| documents.by_doc_type | dict | 按文档类型分组统计 |
-| chunks | object | 切块统计 |
-| chunks.total | int | 切块总数 |
-| chunks.by_vector_status | dict | 按向量状态分组统计 |
+| 字段                       | 类型   | 说明               |
+| -------------------------- | ------ | ------------------ |
+| documents                  | object | 文档统计           |
+| documents.total            | int    | 文档总数           |
+| documents.by_chunk_status  | dict   | 按切块状态分组统计 |
+| documents.by_vector_status | dict   | 按向量状态分组统计 |
+| documents.by_doc_type      | dict   | 按文档类型分组统计 |
+| chunks                     | object | 切块统计           |
+| chunks.total               | int    | 切块总数           |
+| chunks.by_vector_status    | dict   | 按向量状态分组统计 |
 
 ---
 
@@ -936,15 +936,15 @@
 - **GET** `/api/v1/knowledge-base/documents`
 - **描述**：分页查询知识库文档列表
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| doc_type | string | query | 否 | 按文档类型筛选 |
-| stock_code | string | query | 否 | 按股票代码筛选 |
-| metadata_status | int | query | 否 | 按元数据状态筛选 |
-| chunk_status | int | query | 否 | 按切块状态筛选 |
-| vector_status | int | query | 否 | 按向量状态筛选 |
-| page | int | query | 否 | 页码，从 1 开始，默认 `1` |
-| page_size | int | query | 否 | 每页数量，最大 100，默认 `20` |
+| 参数            | 类型   | 位置  | 必填 | 说明                            |
+| --------------- | ------ | ----- | ---- | ------------------------------- |
+| doc_type        | string | query | 否   | 按文档类型筛选                  |
+| stock_code      | string | query | 否   | 按股票代码筛选                  |
+| metadata_status | int    | query | 否   | 按元数据状态筛选                |
+| chunk_status    | int    | query | 否   | 按切块状态筛选                  |
+| vector_status   | int    | query | 否   | 按向量状态筛选                  |
+| page            | int    | query | 否   | 页码，从 1 开始，默认 `1`     |
+| page_size       | int    | query | 否   | 每页数量，最大 100，默认 `20` |
 
 **响应格式**：
 
@@ -992,35 +992,35 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| lists | list | 文档列表 |
-| lists[].id | int | 文档 ID |
-| lists[].doc_type | string | 文档类型：RESEARCH_REPORT / FINANCIAL_REPORT / INDUSTRY_REPORT |
-| lists[].title | string | 文档标题 |
-| lists[].source_path | string | PDF 源文件路径 |
-| lists[].stock_code | string\|null | 股票代码 |
-| lists[].stock_abbr | string\|null | 股票简称 |
-| lists[].publish_date | date\|null | 发布日期 |
-| lists[].org_name | string\|null | 研究机构名称 |
-| lists[].industry_name | string\|null | 行业名称 |
-| lists[].researcher | string\|null | 研究员 |
-| lists[].em_rating_name | string\|null | 评级 |
-| lists[].predict_this_year_eps | string\|null | 预测当年 EPS |
-| lists[].predict_this_year_pe | string\|null | 预测当年 PE |
-| lists[].financial_report_id | int\|null | 关联的财报记录 ID |
-| lists[].page_count | int\|null | PDF 总页数 |
-| lists[].chunk_count | int | 切块数量 |
-| lists[].chunk_status | int | 切块状态：0 待处理 / 1 处理中 / 2 已完成 / 3 失败 |
-| lists[].metadata_status | int | 元数据状态：0 未加载 / 1 已加载 / 2 PDF 已上传 |
-| lists[].error_message | string\|null | 错误信息 |
-| lists[].vector_status | int | 向量化状态：0 待处理 / 1 处理中 / 2 成功 / 3 失败 / 4 跳过 |
-| lists[].vector_model | string\|null | 向量模型 |
-| lists[].vector_dim | int\|null | 向量维度 |
-| lists[].vector_version | string\|null | 向量版本 |
-| lists[].created_at | datetime\|null | 创建时间 |
-| lists[].updated_at | datetime\|null | 更新时间 |
-| pagination | object | 分页信息 |
+| 字段                          | 类型           | 说明                                                           |
+| ----------------------------- | -------------- | -------------------------------------------------------------- |
+| lists                         | list           | 文档列表                                                       |
+| lists[].id                    | int            | 文档 ID                                                        |
+| lists[].doc_type              | string         | 文档类型：RESEARCH_REPORT / FINANCIAL_REPORT / INDUSTRY_REPORT |
+| lists[].title                 | string         | 文档标题                                                       |
+| lists[].source_path           | string         | PDF 源文件路径                                                 |
+| lists[].stock_code            | string\|null   | 股票代码                                                       |
+| lists[].stock_abbr            | string\|null   | 股票简称                                                       |
+| lists[].publish_date          | date\|null     | 发布日期                                                       |
+| lists[].org_name              | string\|null   | 研究机构名称                                                   |
+| lists[].industry_name         | string\|null   | 行业名称                                                       |
+| lists[].researcher            | string\|null   | 研究员                                                         |
+| lists[].em_rating_name        | string\|null   | 评级                                                           |
+| lists[].predict_this_year_eps | string\|null   | 预测当年 EPS                                                   |
+| lists[].predict_this_year_pe  | string\|null   | 预测当年 PE                                                    |
+| lists[].financial_report_id   | int\|null      | 关联的财报记录 ID                                              |
+| lists[].page_count            | int\|null      | PDF 总页数                                                     |
+| lists[].chunk_count           | int            | 切块数量                                                       |
+| lists[].chunk_status          | int            | 切块状态：0 待处理 / 1 处理中 / 2 已完成 / 3 失败              |
+| lists[].metadata_status       | int            | 元数据状态：0 未加载 / 1 已加载 / 2 PDF 已上传                 |
+| lists[].error_message         | string\|null   | 错误信息                                                       |
+| lists[].vector_status         | int            | 向量化状态：0 待处理 / 1 处理中 / 2 成功 / 3 失败 / 4 跳过     |
+| lists[].vector_model          | string\|null   | 向量模型                                                       |
+| lists[].vector_dim            | int\|null      | 向量维度                                                       |
+| lists[].vector_version        | string\|null   | 向量版本                                                       |
+| lists[].created_at            | datetime\|null | 创建时间                                                       |
+| lists[].updated_at            | datetime\|null | 更新时间                                                       |
+| pagination                    | object         | 分页信息                                                       |
 
 ---
 
@@ -1030,9 +1030,9 @@
 - **描述**：根据文档 ID 列表批量查询文档状态
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| document_ids | int[] | body | 是 | 文档 ID 列表 |
+| 参数         | 类型  | 位置 | 必填 | 说明         |
+| ------------ | ----- | ---- | ---- | ------------ |
+| document_ids | int[] | body | 是   | 文档 ID 列表 |
 
 **响应格式**：
 
@@ -1047,12 +1047,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| [].id | int | 文档 ID |
-| [].chunk_status | int | 切块状态 |
-| [].vector_status | int | 向量化状态 |
-| [].chunk_count | int | 切块数量 |
+| 字段             | 类型 | 说明       |
+| ---------------- | ---- | ---------- |
+| [].id            | int  | 文档 ID    |
+| [].chunk_status  | int  | 切块状态   |
+| [].vector_status | int  | 向量化状态 |
+| [].chunk_count   | int  | 切块数量   |
 
 ---
 
@@ -1061,12 +1061,12 @@
 - **GET** `/api/v1/knowledge-base/chunks`
 - **描述**：分页查询知识库切块列表
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| document_id | int | query | 否 | 按文档 ID 筛选 |
-| vector_status | int | query | 否 | 按向量状态筛选 |
-| page | int | query | 否 | 页码，从 1 开始，默认 `1` |
-| page_size | int | query | 否 | 每页数量，最大 100，默认 `20` |
+| 参数          | 类型 | 位置  | 必填 | 说明                            |
+| ------------- | ---- | ----- | ---- | ------------------------------- |
+| document_id   | int  | query | 否   | 按文档 ID 筛选                  |
+| vector_status | int  | query | 否   | 按向量状态筛选                  |
+| page          | int  | query | 否   | 页码，从 1 开始，默认 `1`     |
+| page_size     | int  | query | 否   | 每页数量，最大 100，默认 `20` |
 
 **响应格式**：
 
@@ -1100,21 +1100,21 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| lists | list | 切块列表 |
-| lists[].id | int | 切块 ID |
-| lists[].document_id | int | 所属文档 ID |
-| lists[].page_no | int\|null | 页码 |
-| lists[].chunk_index | int | 切块序号 |
-| lists[].chunk_text | string | 切块文本内容 |
-| lists[].chunk_hash | string | 文本哈希 |
-| lists[].char_count | int | 字符数 |
-| lists[].vector_status | int | 向量化状态：0 待处理 / 1 处理中 / 2 已完成 / 3 失败 |
-| lists[].milvus_id | int\|null | Milvus 中的 ID |
-| lists[].created_at | datetime\|null | 创建时间 |
-| lists[].updated_at | datetime\|null | 更新时间 |
-| pagination | object | 分页信息 |
+| 字段                  | 类型           | 说明                                                |
+| --------------------- | -------------- | --------------------------------------------------- |
+| lists                 | list           | 切块列表                                            |
+| lists[].id            | int            | 切块 ID                                             |
+| lists[].document_id   | int            | 所属文档 ID                                         |
+| lists[].page_no       | int\|null      | 页码                                                |
+| lists[].chunk_index   | int            | 切块序号                                            |
+| lists[].chunk_text    | string         | 切块文本内容                                        |
+| lists[].chunk_hash    | string         | 文本哈希                                            |
+| lists[].char_count    | int            | 字符数                                              |
+| lists[].vector_status | int            | 向量化状态：0 待处理 / 1 处理中 / 2 已完成 / 3 失败 |
+| lists[].milvus_id     | int\|null      | Milvus 中的 ID                                      |
+| lists[].created_at    | datetime\|null | 创建时间                                            |
+| lists[].updated_at    | datetime\|null | 更新时间                                            |
+| pagination            | object         | 分页信息                                            |
 
 ---
 
@@ -1123,10 +1123,10 @@
 - **POST** `/api/v1/knowledge-base/chunk/{document_id}`
 - **描述**：提交单个文档的切块任务（异步后台执行）
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| document_id | int | path | 是 | 文档 ID |
-| force | bool | query | 否 | 强制重新切块，默认 `false` |
+| 参数        | 类型 | 位置  | 必填 | 说明                         |
+| ----------- | ---- | ----- | ---- | ---------------------------- |
+| document_id | int  | path  | 是   | 文档 ID                      |
+| force       | bool | query | 否   | 强制重新切块，默认 `false` |
 
 **响应格式**：
 
@@ -1142,11 +1142,11 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| document_id | int | 文档 ID |
-| status | string | 提交状态 |
-| message | string | 结果消息 |
+| 字段        | 类型   | 说明     |
+| ----------- | ------ | -------- |
+| document_id | int    | 文档 ID  |
+| status      | string | 提交状态 |
+| message     | string | 结果消息 |
 
 ---
 
@@ -1156,9 +1156,9 @@
 - **描述**：提交批量切块任务（异步后台执行）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| document_ids | int[] | body | 是 | 文档 ID 列表 |
+| 参数         | 类型  | 位置 | 必填 | 说明         |
+| ------------ | ----- | ---- | ---- | ------------ |
+| document_ids | int[] | body | 是   | 文档 ID 列表 |
 
 **响应格式**：
 
@@ -1175,12 +1175,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| submitted | int | 已提交数量 |
-| skipped | int | 跳过数量 |
+| 字段          | 类型      | 说明                 |
+| ------------- | --------- | -------------------- |
+| submitted     | int       | 已提交数量           |
+| skipped       | int       | 跳过数量             |
 | submitted_ids | list[int] | 已提交的文档 ID 列表 |
-| message | string | 结果消息 |
+| message       | string    | 结果消息             |
 
 ---
 
@@ -1190,10 +1190,10 @@
 - **描述**：提交所有待处理文档的切块任务（异步后台执行）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| limit | int | body | 否 | 最大处理数量，默认 `100` |
-| doc_type | string | body | 否 | 文档类型筛选 |
+| 参数     | 类型   | 位置 | 必填 | 说明                       |
+| -------- | ------ | ---- | ---- | -------------------------- |
+| limit    | int    | body | 否   | 最大处理数量，默认 `100` |
+| doc_type | string | body | 否   | 文档类型筛选               |
 
 **响应格式**：同 [3.8 批量切块](#38-批量切块)
 
@@ -1204,11 +1204,11 @@
 - **POST** `/api/v1/knowledge-base/vectorize/{document_id}`
 - **描述**：向量化单个文档的所有切块（异步后台执行）
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| document_id | int | path | 是 | 文档 ID |
-| batch_size | int | query | 否 | 每批处理数量，默认 `20`，范围 1-200 |
-| force | bool | query | 否 | 是否强制重试失败/已完成切块，默认 `false` |
+| 参数        | 类型 | 位置  | 必填 | 说明                                        |
+| ----------- | ---- | ----- | ---- | ------------------------------------------- |
+| document_id | int  | path  | 是   | 文档 ID                                     |
+| batch_size  | int  | query | 否   | 每批处理数量，默认 `20`，范围 1-200       |
+| force       | bool | query | 否   | 是否强制重试失败/已完成切块，默认 `false` |
 
 **响应格式**：
 
@@ -1225,12 +1225,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| document_id | int | 文档 ID |
-| status | string | 提交状态 |
-| message | string | 结果消息 |
-| total_chunks | int | 待向量化的切块总数 |
+| 字段         | 类型   | 说明               |
+| ------------ | ------ | ------------------ |
+| document_id  | int    | 文档 ID            |
+| status       | string | 提交状态           |
+| message      | string | 结果消息           |
+| total_chunks | int    | 待向量化的切块总数 |
 
 ---
 
@@ -1240,10 +1240,10 @@
 - **描述**：批量向量化待处理的文档切块（异步后台执行）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| batch_size | int | body | 否 | 每批处理数量，默认 `20`，范围 1-200 |
-| force | bool | body | 否 | 是否强制重试，默认 `false` |
+| 参数       | 类型 | 位置 | 必填 | 说明                                  |
+| ---------- | ---- | ---- | ---- | ------------------------------------- |
+| batch_size | int  | body | 否   | 每批处理数量，默认 `20`，范围 1-200 |
+| force      | bool | body | 否   | 是否强制重试，默认 `false`          |
 
 **响应格式**：
 
@@ -1258,10 +1258,10 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| submitted | int | 已提交的文档数量 |
-| message | string | 结果消息 |
+| 字段      | 类型   | 说明             |
+| --------- | ------ | ---------------- |
+| submitted | int    | 已提交的文档数量 |
+| message   | string | 结果消息         |
 
 ---
 
@@ -1270,10 +1270,10 @@
 - **POST** `/api/v1/knowledge-base/reset-vector-status/{document_id}`
 - **描述**：重置文档的向量状态（用于取消处理中任务或重新向量化）
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| document_id | int | path | 是 | 文档 ID |
-| target_status | int | query | 否 | 目标状态，默认 `0`（PENDING） |
+| 参数          | 类型 | 位置  | 必填 | 说明                            |
+| ------------- | ---- | ----- | ---- | ------------------------------- |
+| document_id   | int  | path  | 是   | 文档 ID                         |
+| target_status | int  | query | 否   | 目标状态，默认 `0`（PENDING） |
 
 **响应格式**：
 
@@ -1291,13 +1291,13 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| document_id | int | 文档 ID |
-| old_status | int | 原状态 |
-| new_status | int | 新状态 |
-| chunk_reset_count | int | 重置的切块数量 |
-| message | string | 结果消息 |
+| 字段              | 类型   | 说明           |
+| ----------------- | ------ | -------------- |
+| document_id       | int    | 文档 ID        |
+| old_status        | int    | 原状态         |
+| new_status        | int    | 新状态         |
+| chunk_reset_count | int    | 重置的切块数量 |
+| message           | string | 结果消息       |
 
 ---
 
@@ -1307,12 +1307,12 @@
 - **描述**：知识库语义检索（调试用）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| query | string | body | 是 | 查询文本 |
-| stock_code | string | body | 否 | 股票代码筛选 |
-| doc_type | string | body | 否 | 文档类型筛选 |
-| top_k | int | body | 否 | 返回结果数量，默认 `5`，范围 1-100 |
+| 参数       | 类型   | 位置 | 必填 | 说明                                 |
+| ---------- | ------ | ---- | ---- | ------------------------------------ |
+| query      | string | body | 是   | 查询文本                             |
+| stock_code | string | body | 否   | 股票代码筛选                         |
+| doc_type   | string | body | 否   | 文档类型筛选                         |
+| top_k      | int    | body | 否   | 返回结果数量，默认 `5`，范围 1-100 |
 
 **响应格式**：
 
@@ -1337,17 +1337,17 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| results | list | 检索结果列表 |
-| results[].chunk_id | int | 切块 ID |
-| results[].document_id | int | 文档 ID |
-| results[].text | string | 匹配文本 |
-| results[].score | float | 相似度分数 |
-| results[].page_no | int\|null | 页码 |
-| results[].doc_title | string | 文档标题 |
-| results[].stock_code | string\|null | 股票代码 |
-| results[].doc_type | string | 文档类型 |
+| 字段                  | 类型         | 说明         |
+| --------------------- | ------------ | ------------ |
+| results               | list         | 检索结果列表 |
+| results[].chunk_id    | int          | 切块 ID      |
+| results[].document_id | int          | 文档 ID      |
+| results[].text        | string       | 匹配文本     |
+| results[].score       | float        | 相似度分数   |
+| results[].page_no     | int\|null    | 页码         |
+| results[].doc_title   | string       | 文档标题     |
+| results[].stock_code  | string\|null | 股票代码     |
+| results[].doc_type    | string       | 文档类型     |
 
 ---
 
@@ -1357,10 +1357,10 @@
 - **描述**：增量上传 PDF 文件，立即处理（匹配元数据 + 切块）
 - **Content-Type**：`multipart/form-data`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| pdfs | File[] | body | 是 | PDF 文件列表 |
-| doc_type | string | query | 否 | 文档类型：`RESEARCH_REPORT` 或 `INDUSTRY_REPORT`，默认 `RESEARCH_REPORT` |
+| 参数     | 类型   | 位置  | 必填 | 说明                                                                           |
+| -------- | ------ | ----- | ---- | ------------------------------------------------------------------------------ |
+| pdfs     | File[] | body  | 是   | PDF 文件列表                                                                   |
+| doc_type | string | query | 否   | 文档类型：`RESEARCH_REPORT` 或 `INDUSTRY_REPORT`，默认 `RESEARCH_REPORT` |
 
 **响应格式**：
 
@@ -1383,16 +1383,16 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| success | bool | 是否成功 |
-| message | string | 结果消息 |
-| processed_count | int | 本次处理成功数量 |
-| failed_count | int | 本次处理失败数量 |
-| total_processed | int | 累计已处理数量 |
-| total_pending | int | 剩余待处理数量 |
-| failed_documents | list | 失败文档列表（含 pdf_name、reason、suggestion） |
-| errors | list[dict] | 错误列表 |
+| 字段             | 类型       | 说明                                            |
+| ---------------- | ---------- | ----------------------------------------------- |
+| success          | bool       | 是否成功                                        |
+| message          | string     | 结果消息                                        |
+| processed_count  | int        | 本次处理成功数量                                |
+| failed_count     | int        | 本次处理失败数量                                |
+| total_processed  | int        | 累计已处理数量                                  |
+| total_pending    | int        | 剩余待处理数量                                  |
+| failed_documents | list       | 失败文档列表（含 pdf_name、reason、suggestion） |
+| errors           | list[dict] | 错误列表                                        |
 
 ---
 
@@ -1402,10 +1402,10 @@
 - **描述**：上传单个文档的 PDF（用于文档列表中的"上传 PDF"按钮）
 - **Content-Type**：`multipart/form-data`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| document_id | int | query | 是 | 文档 ID |
-| pdf_file | File | body | 是 | PDF 文件 |
+| 参数        | 类型 | 位置  | 必填 | 说明     |
+| ----------- | ---- | ----- | ---- | -------- |
+| document_id | int  | query | 是   | 文档 ID  |
+| pdf_file    | File | body  | 是   | PDF 文件 |
 
 **响应格式**：
 
@@ -1422,12 +1422,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| success | bool | 是否成功 |
-| message | string | 结果消息 |
-| document_id | int | 文档 ID |
-| chunk_count | int | 生成的切块数量 |
+| 字段        | 类型   | 说明           |
+| ----------- | ------ | -------------- |
+| success     | bool   | 是否成功       |
+| message     | string | 结果消息       |
+| document_id | int    | 文档 ID        |
+| chunk_count | int    | 生成的切块数量 |
 
 ---
 
@@ -1437,10 +1437,10 @@
 - **描述**：重新上传 PDF 并重试失败的文档处理
 - **Content-Type**：`multipart/form-data`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| document_id | int | query | 是 | 文档 ID |
-| pdf_file | File | body | 是 | PDF 文件 |
+| 参数        | 类型 | 位置  | 必填 | 说明     |
+| ----------- | ---- | ----- | ---- | -------- |
+| document_id | int  | query | 是   | 文档 ID  |
+| pdf_file    | File | body  | 是   | PDF 文件 |
 
 **响应格式**：
 
@@ -1457,12 +1457,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| success | bool | 是否成功 |
-| message | string | 结果消息 |
-| document_id | int | 文档 ID |
-| chunk_count | int | 生成的切块数量 |
+| 字段        | 类型   | 说明           |
+| ----------- | ------ | -------------- |
+| success     | bool   | 是否成功       |
+| message     | string | 结果消息       |
+| document_id | int    | 文档 ID        |
+| chunk_count | int    | 生成的切块数量 |
 
 ---
 
@@ -1496,25 +1496,25 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| total_documents | int | 文档总数 |
-| metadata_loaded | int | 元数据已加载数 |
-| pdf_uploaded | int | PDF 已上传数 |
-| chunked | int | 已切块数 |
-| vectorized | int | 已向量化数 |
-| pending_pdf_upload | int | 待上传 PDF 数 |
-| pending_chunk | int | 待切块数 |
-| pending_vectorize | int | 待向量化数 |
-| failed_chunk | int | 切块失败数 |
-| failed_vectorize | int | 向量化失败数 |
-| progress_percentage | float | 整体进度百分比 |
-| recent_processed | list | 最近处理的文档列表 |
-| recent_processed[].id | int | 文档 ID |
-| recent_processed[].title | string | 文档标题 |
-| recent_processed[].doc_type | string | 文档类型 |
-| recent_processed[].status | string | 处理状态描述 |
-| recent_processed[].updated_at | datetime\|null | 更新时间 |
+| 字段                          | 类型           | 说明               |
+| ----------------------------- | -------------- | ------------------ |
+| total_documents               | int            | 文档总数           |
+| metadata_loaded               | int            | 元数据已加载数     |
+| pdf_uploaded                  | int            | PDF 已上传数       |
+| chunked                       | int            | 已切块数           |
+| vectorized                    | int            | 已向量化数         |
+| pending_pdf_upload            | int            | 待上传 PDF 数      |
+| pending_chunk                 | int            | 待切块数           |
+| pending_vectorize             | int            | 待向量化数         |
+| failed_chunk                  | int            | 切块失败数         |
+| failed_vectorize              | int            | 向量化失败数       |
+| progress_percentage           | float          | 整体进度百分比     |
+| recent_processed              | list           | 最近处理的文档列表 |
+| recent_processed[].id         | int            | 文档 ID            |
+| recent_processed[].title      | string         | 文档标题           |
+| recent_processed[].doc_type   | string         | 文档类型           |
+| recent_processed[].status     | string         | 处理状态描述       |
+| recent_processed[].updated_at | datetime\|null | 更新时间           |
 
 ---
 
@@ -1550,20 +1550,20 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | int | 工作台 ID |
-| source_file_name | string\|null | 附件4 源文件名 |
-| source_file_path | string\|null | 附件4 源文件路径 |
-| import_status | int | 导入状态：0 未导入 / 1 导入中 / 2 已导入 / 3 导入失败 |
-| total_questions | int | 题目总数 |
-| answered_count | int | 已回答数量 |
-| failed_count | int | 失败数量 |
-| pending_count | int | 待处理数量 |
-| last_export_path | string\|null | 最近导出文件路径 |
-| last_exported_at | datetime\|null | 最近导出时间 |
-| created_at | datetime | 创建时间 |
-| updated_at | datetime | 更新时间 |
+| 字段             | 类型           | 说明                                                  |
+| ---------------- | -------------- | ----------------------------------------------------- |
+| id               | int            | 工作台 ID                                             |
+| source_file_name | string\|null   | 附件4 源文件名                                        |
+| source_file_path | string\|null   | 附件4 源文件路径                                      |
+| import_status    | int            | 导入状态：0 未导入 / 1 导入中 / 2 已导入 / 3 导入失败 |
+| total_questions  | int            | 题目总数                                              |
+| answered_count   | int            | 已回答数量                                            |
+| failed_count     | int            | 失败数量                                              |
+| pending_count    | int            | 待处理数量                                            |
+| last_export_path | string\|null   | 最近导出文件路径                                      |
+| last_exported_at | datetime\|null | 最近导出时间                                          |
+| created_at       | datetime       | 创建时间                                              |
+| updated_at       | datetime       | 更新时间                                              |
 
 ---
 
@@ -1573,9 +1573,9 @@
 - **描述**：上传并解析附件4，初始化工作台
 - **Content-Type**：`multipart/form-data`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| file | File | body | 是 | 附件4 文件 |
+| 参数 | 类型 | 位置 | 必填 | 说明       |
+| ---- | ---- | ---- | ---- | ---------- |
+| file | File | body | 是   | 附件4 文件 |
 
 **响应格式**：
 
@@ -1592,12 +1592,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| workspace_id | int | 工作台 ID |
-| source_file_name | string | 源文件名 |
-| total_questions | int | 解析出的题目总数 |
-| message | string | 导入结果消息 |
+| 字段             | 类型   | 说明             |
+| ---------------- | ------ | ---------------- |
+| workspace_id     | int    | 工作台 ID        |
+| source_file_name | string | 源文件名         |
+| total_questions  | int    | 解析出的题目总数 |
+| message          | string | 导入结果消息     |
 
 ---
 
@@ -1606,9 +1606,9 @@
 - **GET** `/api/v1/task2/questions`
 - **描述**：获取任务二题目列表
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| status | int | query | 否 | 状态筛选：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
+| 参数   | 类型 | 位置  | 必填 | 说明                                              |
+| ------ | ---- | ----- | ---- | ------------------------------------------------- |
+| status | int  | query | 否   | 状态筛选：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
 
 **响应格式**：
 
@@ -1645,29 +1645,29 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| items | list | 题目列表 |
-| items[].id | int | 题目 ID |
-| items[].workspace_id | int | 关联工作台 ID |
-| items[].question_code | string | 题目编号 |
-| items[].question_type | string\|null | 问题类型 |
-| items[].question_raw_json | string\|null | 原始问题 JSON 字符串 |
-| items[].rounds_json | list\|null | 解析后的多轮问题数组 |
-| items[].status | int | 状态：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
-| items[].session_id | string\|null | 关联的会话 ID |
-| items[].answer_json | list\|null | 回答 JSON 数组 |
-| items[].sql_text | string\|null | 生成的 SQL 语句 |
-| items[].chart_type | string\|null | 图表类型 |
-| items[].image_paths_json | list\|null | 图表文件路径列表 |
-| items[].last_error | string\|null | 最后一次错误信息 |
-| items[].answered_at | datetime\|null | 回答完成时间 |
-| items[].created_at | datetime | 创建时间 |
-| items[].updated_at | datetime | 更新时间 |
-| total | int | 总数 |
-| pending_count | int | 待处理数量 |
-| answered_count | int | 已回答数量 |
-| failed_count | int | 失败数量 |
+| 字段                      | 类型           | 说明                                          |
+| ------------------------- | -------------- | --------------------------------------------- |
+| items                     | list           | 题目列表                                      |
+| items[].id                | int            | 题目 ID                                       |
+| items[].workspace_id      | int            | 关联工作台 ID                                 |
+| items[].question_code     | string         | 题目编号                                      |
+| items[].question_type     | string\|null   | 问题类型                                      |
+| items[].question_raw_json | string\|null   | 原始问题 JSON 字符串                          |
+| items[].rounds_json       | list\|null     | 解析后的多轮问题数组                          |
+| items[].status            | int            | 状态：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
+| items[].session_id        | string\|null   | 关联的会话 ID                                 |
+| items[].answer_json       | list\|null     | 回答 JSON 数组                                |
+| items[].sql_text          | string\|null   | 生成的 SQL 语句                               |
+| items[].chart_type        | string\|null   | 图表类型                                      |
+| items[].image_paths_json  | list\|null     | 图表文件路径列表                              |
+| items[].last_error        | string\|null   | 最后一次错误信息                              |
+| items[].answered_at       | datetime\|null | 回答完成时间                                  |
+| items[].created_at        | datetime       | 创建时间                                      |
+| items[].updated_at        | datetime       | 更新时间                                      |
+| total                     | int            | 总数                                          |
+| pending_count             | int            | 待处理数量                                    |
+| answered_count            | int            | 已回答数量                                    |
+| failed_count              | int            | 失败数量                                      |
 
 ---
 
@@ -1676,9 +1676,9 @@
 - **GET** `/api/v1/task2/questions/{question_id}`
 - **描述**：获取指定题目的详细信息
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question_id | int | path | 是 | 题目 ID |
+| 参数        | 类型 | 位置 | 必填 | 说明    |
+| ----------- | ---- | ---- | ---- | ------- |
+| question_id | int  | path | 是   | 题目 ID |
 
 **响应格式**：同 [4.3 题目列表](#43-获取题目列表) 中的 `items[]` 单项结构。
 
@@ -1689,9 +1689,9 @@
 - **POST** `/api/v1/task2/questions/{question_id}/answer`
 - **描述**：执行单题回答
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question_id | int | path | 是 | 题目 ID |
+| 参数        | 类型 | 位置 | 必填 | 说明    |
+| ----------- | ---- | ---- | ---- | ------- |
+| question_id | int  | path | 是   | 题目 ID |
 
 **响应格式**：
 
@@ -1711,15 +1711,15 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| question_id | int | 题目 ID |
-| question_code | string | 题目编号 |
-| status | int | 状态：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
-| answer_json | list\|null | 回答 JSON 数组 |
-| sql_text | string\|null | 生成的 SQL 语句 |
-| chart_type | string\|null | 图表类型 |
-| image_paths | list\|null | 图表文件路径列表 |
+| 字段          | 类型         | 说明                                          |
+| ------------- | ------------ | --------------------------------------------- |
+| question_id   | int          | 题目 ID                                       |
+| question_code | string       | 题目编号                                      |
+| status        | int          | 状态：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
+| answer_json   | list\|null   | 回答 JSON 数组                                |
+| sql_text      | string\|null | 生成的 SQL 语句                               |
+| chart_type    | string\|null | 图表类型                                      |
+| image_paths   | list\|null   | 图表文件路径列表                              |
 
 ---
 
@@ -1728,9 +1728,9 @@
 - **DELETE** `/api/v1/task2/questions/{question_id}/answer`
 - **描述**：删除指定题目的当前回答
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question_id | int | path | 是 | 题目 ID |
+| 参数        | 类型 | 位置 | 必填 | 说明    |
+| ----------- | ---- | ---- | ---- | ------- |
+| question_id | int  | path | 是   | 题目 ID |
 
 **响应格式**：
 
@@ -1747,12 +1747,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| question_id | int | 题目 ID |
-| question_code | string | 题目编号 |
-| status | int | 删除后状态（重置为 0 待处理） |
-| message | string | 结果消息 |
+| 字段          | 类型   | 说明                          |
+| ------------- | ------ | ----------------------------- |
+| question_id   | int    | 题目 ID                       |
+| question_code | string | 题目编号                      |
+| status        | int    | 删除后状态（重置为 0 待处理） |
+| message       | string | 结果消息                      |
 
 ---
 
@@ -1761,9 +1761,9 @@
 - **POST** `/api/v1/task2/questions/{question_id}/rerun`
 - **描述**：删除旧结果后重新执行回答
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question_id | int | path | 是 | 题目 ID |
+| 参数        | 类型 | 位置 | 必填 | 说明    |
+| ----------- | ---- | ---- | ---- | ------- |
+| question_id | int  | path | 是   | 题目 ID |
 
 **响应格式**：同 [4.5 回答单题](#45-回答单题)
 
@@ -1774,9 +1774,9 @@
 - **POST** `/api/v1/task2/questions/batch-answer`
 - **描述**：批量回答题目
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| scope | string | query | 否 | 处理范围：`all` 全部 / `unfinished` 未完成 / `failed` 失败，默认 `unfinished` |
+| 参数  | 类型   | 位置  | 必填 | 说明                                                                                  |
+| ----- | ------ | ----- | ---- | ------------------------------------------------------------------------------------- |
+| scope | string | query | 否   | 处理范围：`all` 全部 / `unfinished` 未完成 / `failed` 失败，默认 `unfinished` |
 
 **响应格式**：
 
@@ -1808,18 +1808,18 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| total | int | 待处理总数 |
-| processed | int | 已处理数量 |
-| success | int | 成功数量 |
-| failed | int | 失败数量 |
-| message | string\|null | 结果消息 |
-| results | list\|null | 各题处理结果 |
-| results[].question_code | string | 题目编号 |
-| results[].status | string | 处理状态：success / failed |
-| results[].result | object\|null | 成功时的回答结果 |
-| results[].error | string\|null | 失败时的错误信息 |
+| 字段                    | 类型         | 说明                       |
+| ----------------------- | ------------ | -------------------------- |
+| total                   | int          | 待处理总数                 |
+| processed               | int          | 已处理数量                 |
+| success                 | int          | 成功数量                   |
+| failed                  | int          | 失败数量                   |
+| message                 | string\|null | 结果消息                   |
+| results                 | list\|null   | 各题处理结果               |
+| results[].question_code | string       | 题目编号                   |
+| results[].status        | string       | 处理状态：success / failed |
+| results[].result        | object\|null | 成功时的回答结果           |
+| results[].error         | string\|null | 失败时的错误信息           |
 
 ---
 
@@ -1845,14 +1845,14 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| xlsx_path | string | 导出 Excel 文件路径 |
-| json_path | string | 导出 JSON 文件路径 |
-| total_questions | int | 题目总数 |
-| answered_count | int | 已回答数量 |
-| failed_count | int | 失败数量 |
-| exported_at | string | 导出时间 |
+| 字段            | 类型   | 说明                |
+| --------------- | ------ | ------------------- |
+| xlsx_path       | string | 导出 Excel 文件路径 |
+| json_path       | string | 导出 JSON 文件路径  |
+| total_questions | int    | 题目总数            |
+| answered_count  | int    | 已回答数量          |
+| failed_count    | int    | 失败数量            |
+| exported_at     | string | 导出时间            |
 
 ---
 
@@ -1874,10 +1874,10 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| xlsx_path | string | 最近导出文件路径 |
-| exported_at | string\|null | 最近导出时间 |
+| 字段        | 类型         | 说明             |
+| ----------- | ------------ | ---------------- |
+| xlsx_path   | string       | 最近导出文件路径 |
+| exported_at | string\|null | 最近导出时间     |
 
 ---
 
@@ -1893,10 +1893,10 @@
 - **描述**：处理任务三问题（完整流程：规划 → 执行 → 生成答案）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question | string | body | 是 | 问题内容，长度 1~2000 字符 |
-| context | dict | body | 否 | 附加上下文 |
+| 参数     | 类型   | 位置 | 必填 | 说明                       |
+| -------- | ------ | ---- | ---- | -------------------------- |
+| question | string | body | 是   | 问题内容，长度 1~2000 字符 |
+| context  | dict   | body | 否   | 附加上下文                 |
 
 **响应格式**：
 
@@ -1953,24 +1953,24 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| question_id | string\|null | 问题编号 |
-| answer | object | 回答内容 |
-| answer.content | string | 回答文本 |
-| answer.references | list | 引用来源列表 |
-| answer.references[].paper_path | string\|null | 文档路径 |
-| answer.references[].text | string | 支撑结论的摘要证据 |
-| answer.references[].page_no | int\|null | 页码 |
-| answer.references[].paper_image | string\|null | 图表或页图路径 |
-| sql | string\|null | 生成的 SQL 语句 |
-| execution_trace | object\|null | 执行轨迹 |
-| execution_trace.plan | object | 执行计划（含 steps 步骤列表） |
-| execution_trace.results | list | 各步骤执行结果 |
-| execution_trace.final_answer | string\|null | 最终答案 |
-| execution_trace.references | list | 引用来源列表 |
-| execution_trace.started_at | datetime\|null | 开始时间 |
-| execution_trace.finished_at | datetime\|null | 结束时间 |
+| 字段                            | 类型           | 说明                          |
+| ------------------------------- | -------------- | ----------------------------- |
+| question_id                     | string\|null   | 问题编号                      |
+| answer                          | object         | 回答内容                      |
+| answer.content                  | string         | 回答文本                      |
+| answer.references               | list           | 引用来源列表                  |
+| answer.references[].paper_path  | string\|null   | 文档路径                      |
+| answer.references[].text        | string         | 支撑结论的摘要证据            |
+| answer.references[].page_no     | int\|null      | 页码                          |
+| answer.references[].paper_image | string\|null   | 图表或页图路径                |
+| sql                             | string\|null   | 生成的 SQL 语句               |
+| execution_trace                 | object\|null   | 执行轨迹                      |
+| execution_trace.plan            | object         | 执行计划（含 steps 步骤列表） |
+| execution_trace.results         | list           | 各步骤执行结果                |
+| execution_trace.final_answer    | string\|null   | 最终答案                      |
+| execution_trace.references      | list           | 引用来源列表                  |
+| execution_trace.started_at      | datetime\|null | 开始时间                      |
+| execution_trace.finished_at     | datetime\|null | 结束时间                      |
 
 ---
 
@@ -1980,10 +1980,10 @@
 - **描述**：生成执行计划（不执行）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question | string | body | 是 | 问题内容 |
-| context | dict | body | 否 | 附加上下文信息 |
+| 参数     | 类型   | 位置 | 必填 | 说明           |
+| -------- | ------ | ---- | ---- | -------------- |
+| question | string | body | 是   | 问题内容       |
+| context  | dict   | body | 否   | 附加上下文信息 |
 
 **请求体示例**：
 
@@ -2029,20 +2029,20 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| plan | object | 执行计划 |
-| plan.question | string | 原始用户问题 |
-| plan.steps | list | 子任务步骤列表 |
-| plan.steps[].step_id | string | 步骤唯一标识 |
-| plan.steps[].step_type | string | 步骤类型：sql_query / derive_metric / retrieve_evidence / aggregate / verify / compose_answer |
-| plan.steps[].goal | string | 步骤目标描述 |
-| plan.steps[].depends_on | list[string] | 依赖的步骤 ID 列表 |
-| plan.steps[].params | dict | 步骤参数 |
-| plan.steps[].priority | int | 执行优先级 |
-| plan.context | dict | 规划上下文 |
-| plan.created_at | datetime\|null | 计划创建时间 |
-| reasoning | string\|null | 规划推理过程 |
+| 字段                    | 类型           | 说明                                                                                          |
+| ----------------------- | -------------- | --------------------------------------------------------------------------------------------- |
+| plan                    | object         | 执行计划                                                                                      |
+| plan.question           | string         | 原始用户问题                                                                                  |
+| plan.steps              | list           | 子任务步骤列表                                                                                |
+| plan.steps[].step_id    | string         | 步骤唯一标识                                                                                  |
+| plan.steps[].step_type  | string         | 步骤类型：sql_query / derive_metric / retrieve_evidence / aggregate / verify / compose_answer |
+| plan.steps[].goal       | string         | 步骤目标描述                                                                                  |
+| plan.steps[].depends_on | list[string]   | 依赖的步骤 ID 列表                                                                            |
+| plan.steps[].params     | dict           | 步骤参数                                                                                      |
+| plan.steps[].priority   | int            | 执行优先级                                                                                    |
+| plan.context            | dict           | 规划上下文                                                                                    |
+| plan.created_at         | datetime\|null | 计划创建时间                                                                                  |
+| reasoning               | string\|null   | 规划推理过程                                                                                  |
 
 ---
 
@@ -2052,10 +2052,10 @@
 - **描述**：生成执行计划并执行（不生成最终答案）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question | string | body | 是 | 问题内容，长度 1~2000 字符 |
-| context | dict | body | 否 | 附加上下文信息 |
+| 参数     | 类型   | 位置 | 必填 | 说明                       |
+| -------- | ------ | ---- | ---- | -------------------------- |
+| question | string | body | 是   | 问题内容，长度 1~2000 字符 |
+| context  | dict   | body | 否   | 附加上下文信息             |
 
 **请求体示例**：
 
@@ -2109,22 +2109,22 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| plan | object | 执行计划（同 5.1.2） |
-| trace | object | 执行轨迹 |
-| trace.plan | object | 执行计划 |
-| trace.results | list | 各步骤执行结果 |
-| trace.results[].step_id | string | 步骤 ID |
-| trace.results[].step_type | string | 步骤类型 |
-| trace.results[].status | string | 执行状态：pending / running / completed / failed / skipped |
-| trace.results[].output | dict | 执行输出结果 |
-| trace.results[].error_message | string\|null | 错误信息 |
-| trace.results[].execution_time_ms | int\|null | 执行耗时（毫秒） |
-| trace.final_answer | string\|null | 最终答案 |
-| trace.references | list | 引用来源列表 |
-| trace.started_at | datetime\|null | 开始时间 |
-| trace.finished_at | datetime\|null | 结束时间 |
+| 字段                              | 类型           | 说明                                                       |
+| --------------------------------- | -------------- | ---------------------------------------------------------- |
+| plan                              | object         | 执行计划（同 5.1.2）                                       |
+| trace                             | object         | 执行轨迹                                                   |
+| trace.plan                        | object         | 执行计划                                                   |
+| trace.results                     | list           | 各步骤执行结果                                             |
+| trace.results[].step_id           | string         | 步骤 ID                                                    |
+| trace.results[].step_type         | string         | 步骤类型                                                   |
+| trace.results[].status            | string         | 执行状态：pending / running / completed / failed / skipped |
+| trace.results[].output            | dict           | 执行输出结果                                               |
+| trace.results[].error_message     | string\|null   | 错误信息                                                   |
+| trace.results[].execution_time_ms | int\|null      | 执行耗时（毫秒）                                           |
+| trace.final_answer                | string\|null   | 最终答案                                                   |
+| trace.references                  | list           | 引用来源列表                                               |
+| trace.started_at                  | datetime\|null | 开始时间                                                   |
+| trace.finished_at                 | datetime\|null | 结束时间                                                   |
 
 ---
 
@@ -2134,10 +2134,10 @@
 - **描述**：验证问题处理结果（规划 → 执行 → 校验）
 - **Content-Type**：`application/json`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question | string | body | 是 | 问题内容，长度 1~2000 字符 |
-| context | dict | body | 否 | 附加上下文信息 |
+| 参数     | 类型   | 位置 | 必填 | 说明                       |
+| -------- | ------ | ---- | ---- | -------------------------- |
+| question | string | body | 是   | 问题内容，长度 1~2000 字符 |
+| context  | dict   | body | 否   | 附加上下文信息             |
 
 **请求体示例**：
 
@@ -2177,15 +2177,15 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| answer | string\|null | 最终答案 |
-| verification | object | 校验结果 |
-| verification.passed | bool | 是否通过校验 |
-| verification.errors | list[string] | 错误列表 |
-| verification.warnings | list[string] | 警告列表 |
-| verification.details | dict | 详细信息 |
-| references | list[dict] | 引用列表 |
+| 字段                  | 类型         | 说明         |
+| --------------------- | ------------ | ------------ |
+| answer                | string\|null | 最终答案     |
+| verification          | object       | 校验结果     |
+| verification.passed   | bool         | 是否通过校验 |
+| verification.errors   | list[string] | 错误列表     |
+| verification.warnings | list[string] | 警告列表     |
+| verification.details  | dict         | 详细信息     |
+| references            | list[dict]   | 引用列表     |
 
 ---
 
@@ -2194,10 +2194,10 @@
 - **POST** `/api/v1/task3/export/single`
 - **描述**：导出单个问题结果（独立模式，不依赖工作台）
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question_id | string | query | 是 | 问题编号 |
-| question | string | query | 是 | 问题内容 |
+| 参数        | 类型   | 位置  | 必填 | 说明     |
+| ----------- | ------ | ----- | ---- | -------- |
+| question_id | string | query | 是   | 问题编号 |
+| question    | string | query | 是   | 问题内容 |
 
 **响应格式**：
 
@@ -2221,16 +2221,16 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | string | 题目编号 |
-| question | string | 问题内容 |
-| sql | string\|null | 生成的 SQL |
-| answer | object | 导出答案 |
-| answer.content | string | 回答内容 |
-| answer.references | list[dict] | 引用列表 |
-| success | bool | 是否成功 |
-| error | string\|null | 失败原因 |
+| 字段              | 类型         | 说明       |
+| ----------------- | ------------ | ---------- |
+| id                | string       | 题目编号   |
+| question          | string       | 问题内容   |
+| sql               | string\|null | 生成的 SQL |
+| answer            | object       | 导出答案   |
+| answer.content    | string       | 回答内容   |
+| answer.references | list[dict]   | 引用列表   |
+| success           | bool         | 是否成功   |
+| error             | string\|null | 失败原因   |
 
 ---
 
@@ -2264,20 +2264,20 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | int | 工作台 ID |
-| source_file_name | string\|null | 附件6 源文件名 |
-| source_file_path | string\|null | 附件6 源文件路径 |
-| import_status | int | 导入状态：0 未导入 / 1 导入中 / 2 已导入 / 3 导入失败 |
-| total_questions | int | 题目总数 |
-| answered_count | int | 已回答数量 |
-| failed_count | int | 失败数量 |
-| pending_count | int | 待处理数量 |
-| last_export_path | string\|null | 最近导出文件路径 |
-| last_exported_at | datetime\|null | 最近导出时间 |
-| created_at | datetime | 创建时间 |
-| updated_at | datetime | 更新时间 |
+| 字段             | 类型           | 说明                                                  |
+| ---------------- | -------------- | ----------------------------------------------------- |
+| id               | int            | 工作台 ID                                             |
+| source_file_name | string\|null   | 附件6 源文件名                                        |
+| source_file_path | string\|null   | 附件6 源文件路径                                      |
+| import_status    | int            | 导入状态：0 未导入 / 1 导入中 / 2 已导入 / 3 导入失败 |
+| total_questions  | int            | 题目总数                                              |
+| answered_count   | int            | 已回答数量                                            |
+| failed_count     | int            | 失败数量                                              |
+| pending_count    | int            | 待处理数量                                            |
+| last_export_path | string\|null   | 最近导出文件路径                                      |
+| last_exported_at | datetime\|null | 最近导出时间                                          |
+| created_at       | datetime       | 创建时间                                              |
+| updated_at       | datetime       | 更新时间                                              |
 
 ---
 
@@ -2287,9 +2287,9 @@
 - **描述**：上传并解析附件6，初始化工作台
 - **Content-Type**：`multipart/form-data`
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| file | File | body | 是 | 附件6 文件（.xlsx） |
+| 参数 | 类型 | 位置 | 必填 | 说明                |
+| ---- | ---- | ---- | ---- | ------------------- |
+| file | File | body | 是   | 附件6 文件（.xlsx） |
 
 **响应格式**：
 
@@ -2306,12 +2306,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| workspace_id | int | 工作台 ID |
-| source_file_name | string | 源文件名 |
-| total_questions | int | 解析出的题目总数 |
-| message | string | 导入结果消息 |
+| 字段             | 类型   | 说明             |
+| ---------------- | ------ | ---------------- |
+| workspace_id     | int    | 工作台 ID        |
+| source_file_name | string | 源文件名         |
+| total_questions  | int    | 解析出的题目总数 |
+| message          | string | 导入结果消息     |
 
 ---
 
@@ -2320,11 +2320,11 @@
 - **GET** `/api/v1/task3/questions`
 - **描述**：分页获取任务三题目列表
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| status | int | query | 否 | 状态筛选：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
-| page | int | query | 否 | 页码，从 1 开始，默认 `1` |
-| page_size | int | query | 否 | 每页数量，默认 `10` |
+| 参数      | 类型 | 位置  | 必填 | 说明                                              |
+| --------- | ---- | ----- | ---- | ------------------------------------------------- |
+| status    | int  | query | 否   | 状态筛选：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
+| page      | int  | query | 否   | 页码，从 1 开始，默认 `1`                       |
+| page_size | int  | query | 否   | 每页数量，默认 `10`                             |
 
 **响应格式**：
 
@@ -2362,25 +2362,25 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| lists | list | 题目列表 |
-| lists[].id | int | 题目 ID |
-| lists[].workspace_id | int | 关联工作台 ID |
-| lists[].question_code | string | 题目编号 |
-| lists[].question_type | string\|null | 问题类型 |
-| lists[].question_raw_json | string\|null | 原始问题 JSON 字符串 |
-| lists[].status | int | 状态：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
-| lists[].answer_json | list\|null | 回答 JSON 数组 |
-| lists[].sql_text | string\|null | 生成的 SQL 语句 |
-| lists[].execution_plan | dict\|null | 执行计划对象 |
-| lists[].verification | dict\|null | 校验结果对象 |
-| lists[].retrieval_summary | dict\|null | 知识库检索摘要 |
-| lists[].last_error | string\|null | 最后一次错误信息 |
-| lists[].answered_at | datetime\|null | 回答完成时间 |
-| lists[].created_at | datetime | 创建时间 |
-| lists[].updated_at | datetime | 更新时间 |
-| pagination | object | 分页信息 |
+| 字段                      | 类型           | 说明                                          |
+| ------------------------- | -------------- | --------------------------------------------- |
+| lists                     | list           | 题目列表                                      |
+| lists[].id                | int            | 题目 ID                                       |
+| lists[].workspace_id      | int            | 关联工作台 ID                                 |
+| lists[].question_code     | string         | 题目编号                                      |
+| lists[].question_type     | string\|null   | 问题类型                                      |
+| lists[].question_raw_json | string\|null   | 原始问题 JSON 字符串                          |
+| lists[].status            | int            | 状态：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
+| lists[].answer_json       | list\|null     | 回答 JSON 数组                                |
+| lists[].sql_text          | string\|null   | 生成的 SQL 语句                               |
+| lists[].execution_plan    | dict\|null     | 执行计划对象                                  |
+| lists[].verification      | dict\|null     | 校验结果对象                                  |
+| lists[].retrieval_summary | dict\|null     | 知识库检索摘要                                |
+| lists[].last_error        | string\|null   | 最后一次错误信息                              |
+| lists[].answered_at       | datetime\|null | 回答完成时间                                  |
+| lists[].created_at        | datetime       | 创建时间                                      |
+| lists[].updated_at        | datetime       | 更新时间                                      |
+| pagination                | object         | 分页信息                                      |
 
 ---
 
@@ -2389,9 +2389,9 @@
 - **GET** `/api/v1/task3/questions/{question_id}`
 - **描述**：获取指定题目的详细信息
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question_id | int | path | 是 | 题目 ID |
+| 参数        | 类型 | 位置 | 必填 | 说明    |
+| ----------- | ---- | ---- | ---- | ------- |
+| question_id | int  | path | 是   | 题目 ID |
 
 **响应格式**：同 [5.2.3 题目列表](#523-获取题目列表) 中的 `lists[]` 单项结构。
 
@@ -2402,9 +2402,9 @@
 - **POST** `/api/v1/task3/questions/{question_id}/answer`
 - **描述**：执行单题回答
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question_id | int | path | 是 | 题目 ID |
+| 参数        | 类型 | 位置 | 必填 | 说明    |
+| ----------- | ---- | ---- | ---- | ------- |
+| question_id | int  | path | 是   | 题目 ID |
 
 **响应格式**：
 
@@ -2420,11 +2420,11 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | int | 题目 ID |
-| status | int | 题目状态：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
-| answered_at | datetime\|null | 回答完成时间 |
+| 字段        | 类型           | 说明                                              |
+| ----------- | -------------- | ------------------------------------------------- |
+| id          | int            | 题目 ID                                           |
+| status      | int            | 题目状态：0 待处理 / 1 回答中 / 2 已完成 / 3 失败 |
+| answered_at | datetime\|null | 回答完成时间                                      |
 
 ---
 
@@ -2433,9 +2433,9 @@
 - **DELETE** `/api/v1/task3/questions/{question_id}/answer`
 - **描述**：删除指定题目的当前回答
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question_id | int | path | 是 | 题目 ID |
+| 参数        | 类型 | 位置 | 必填 | 说明    |
+| ----------- | ---- | ---- | ---- | ------- |
+| question_id | int  | path | 是   | 题目 ID |
 
 **响应格式**：
 
@@ -2451,11 +2451,11 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | int | 题目 ID |
-| status | int | 删除后状态（重置为 0 待处理） |
-| answered_at | datetime\|null | 回答完成时间（清空为 null） |
+| 字段        | 类型           | 说明                          |
+| ----------- | -------------- | ----------------------------- |
+| id          | int            | 题目 ID                       |
+| status      | int            | 删除后状态（重置为 0 待处理） |
+| answered_at | datetime\|null | 回答完成时间（清空为 null）   |
 
 ---
 
@@ -2464,9 +2464,9 @@
 - **POST** `/api/v1/task3/questions/{question_id}/rerun`
 - **描述**：删除旧结果后重新执行回答
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| question_id | int | path | 是 | 题目 ID |
+| 参数        | 类型 | 位置 | 必填 | 说明    |
+| ----------- | ---- | ---- | ---- | ------- |
+| question_id | int  | path | 是   | 题目 ID |
 
 **响应格式**：同 [5.2.5 回答单题](#525-回答单题)
 
@@ -2477,9 +2477,9 @@
 - **POST** `/api/v1/task3/questions/batch-answer`
 - **描述**：批量回答题目
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| scope | string | query | 否 | 处理范围：`all` 全部 / `unfinished` 未完成 / `failed` 失败，默认 `unfinished` |
+| 参数  | 类型   | 位置  | 必填 | 说明                                                                                  |
+| ----- | ------ | ----- | ---- | ------------------------------------------------------------------------------------- |
+| scope | string | query | 否   | 处理范围：`all` 全部 / `unfinished` 未完成 / `failed` 失败，默认 `unfinished` |
 
 **响应格式**：
 
@@ -2494,10 +2494,10 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| success | int | 成功数量 |
-| failed | int | 失败数量 |
+| 字段    | 类型 | 说明     |
+| ------- | ---- | -------- |
+| success | int  | 成功数量 |
+| failed  | int  | 失败数量 |
 
 ---
 
@@ -2521,12 +2521,12 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| xlsx_path | string | 导出文件路径 |
-| success_count | int | 成功数量 |
-| fail_count | int | 失败数量 |
-| total | int | 总题目数 |
+| 字段          | 类型   | 说明         |
+| ------------- | ------ | ------------ |
+| xlsx_path     | string | 导出文件路径 |
+| success_count | int    | 成功数量     |
+| fail_count    | int    | 失败数量     |
+| total         | int    | 总题目数     |
 
 ---
 
@@ -2550,9 +2550,9 @@
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| xlsx_path | string | 导出文件路径 |
-| exported_at | string\|null | 导出时间 |
-| total_questions | int | 总题目数 |
-| answered_count | int | 已回答数量 |
+| 字段            | 类型         | 说明         |
+| --------------- | ------------ | ------------ |
+| xlsx_path       | string       | 导出文件路径 |
+| exported_at     | string\|null | 导出时间     |
+| total_questions | int          | 总题目数     |
+| answered_count  | int          | 已回答数量   |

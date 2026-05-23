@@ -20,12 +20,16 @@ import {
   faArrowLeft,
   faSearch,
   faChevronDown,
+  faChevronRight,
   faRobot,
   faUser,
   faPaperPlane,
   faStop,
   faCopy,
-  faCheck
+  faCheck,
+  faMessage,
+  faComments,
+  faPlus
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 
@@ -52,12 +56,16 @@ library.add(
   faArrowLeft,
   faSearch,
   faChevronDown,
+  faChevronRight,
   faRobot,
   faUser,
   faPaperPlane,
   faStop,
   faCopy,
-  faCheck
+  faCheck,
+  faMessage,
+  faComments,
+  faPlus
 )
 
 const app = createApp(App)
