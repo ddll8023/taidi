@@ -390,8 +390,10 @@ def _generate_answer_stream(
             HumanMessage(content=user_prompt),
         ]
         model = get_model.chat_model
+        logger.info(f"开始流式生成回答")
         for chunk in model.stream(prompt):
             if chunk.content:
+                # print(chunk.content, end="", flush=True)
                 yield chunk.content
     except Exception as e:
         logger.error(f"生成回答失败: {e}")
@@ -451,34 +453,29 @@ def _summarize_overflow(session_id: str):
     """后台任务：检查滑动窗口是否溢出，触发摘要压缩"""
     db = get_background_db_session()
     try:
-        chat_session = db.execute(
+        chat_session = db.scalar(
             select(models_chat_session.ChatSession)
             .where(models_chat_session.ChatSession.id == session_id)
             .with_for_update()
-        ).scalar_one_or_none()
+        )
         if not chat_session:
             return
 
         messages = chat_session.messages or []
-        if len(messages) < constants_chat.MAX_HISTORY_MESSAGES:
+        if len(messages) <= constants_chat.MAX_HISTORY_MESSAGES:
             return
 
-        conv_msgs = (
-            db.execute(
-                select(models_chat_message.ChatMessage)
-                .where(
-                    models_chat_message.ChatMessage.id.in_(messages),
-                    models_chat_message.ChatMessage.message_type == "conversation",
-                )
-                .order_by(models_chat_message.ChatMessage.id)
-                .limit(2)
+        conv_msgs = db.scalars(
+            select(models_chat_message.ChatMessage)
+            .where(
+                models_chat_message.ChatMessage.id.in_(messages),
             )
-            .scalars()
-            .all()
-        )
+            .order_by(models_chat_message.ChatMessage.id)
+            .limit(2)
+        ).all()
         if len(conv_msgs) < 2:
             return
-
+        logger.info(f"开始生成摘要: {conv_msgs}")
         summary_text = _generate_summary(conv_msgs)
         logger.info(f"摘要生成完成: session_id={session_id}")
 
@@ -486,7 +483,6 @@ def _summarize_overflow(session_id: str):
             session_id=session_id,
             message_type="summary",
             summary_content=summary_text,
-            created_at=datetime.now(),
         )
         db.add(summary_msg)
         db.flush()
@@ -508,6 +504,7 @@ def _summarize_overflow(session_id: str):
 
 def _generate_summary(conv_msgs):
     """调用 LLM 将对话历史压缩为摘要"""
+
     conversation_text = "\n\n".join(
         [f"问题: {m.query}\n回答: {m.answer}" for m in conv_msgs]
     )
@@ -522,4 +519,5 @@ def _generate_summary(conv_msgs):
     ]
     model = get_model.chat_model
     result = model.invoke(prompt)
+
     return result.content

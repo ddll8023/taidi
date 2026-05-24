@@ -12,7 +12,9 @@ class IdentifyIntentResultItem(BaseModel):
         default_factory=list, description="识别到的公司"
     )
     metrics: list[dict] | None = Field(default_factory=list, description="识别到的指标")
-    time_range: dict | None = Field(default_factory=dict, description="识别到的时间")
+    time_range: list[dict] | None = Field(
+        default_factory=list, description="识别到的时间列表，单期查询为单元素列表"
+    )
     query_type: str | None = Field(None, description="查询类型")
     confidence: float = Field(0.0, description="置信度")
     continuity_config: dict | None = Field(

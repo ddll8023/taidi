@@ -114,7 +114,7 @@ intent_parse:
     {{
       "companys": [{{"value": "公司A", "stock_abbr": "A", "stock_code": "000001"}}, {{"value": "公司B", "stock_abbr": "B", "stock_code": "000002"}}],
       "metrics": [{{"field": "数据库字段名", "table": "表名", "display_name": "中文显示名"}}],
-      "time_range": {{"report_year": 年份, "report_period": "Q1/HY/Q3/FY", "is_range": false}},
+      "time_range": [{{"report_year": 年份, "report_period": "Q1/HY/Q3/FY"}}],
       "query_type": "single_value/trend/comparison/ranking/continuity",
       "confidence": 0.0到1.0,
       "continuity_config": {{"period_count": N, "condition": "条件描述", "start_period": {{"report_year": 年份, "report_period": "Q1/HY/Q3/FY"}}, "end_period": {{"report_year": 年份, "report_period": "Q1/HY/Q3/FY"}}}}
@@ -124,9 +124,9 @@ intent_parse:
     1. 如果用户没有指定公司，companys设为[]
     2. 如果用户指定了多个公司（如"对比A和B"、"A和B的比较"），query_type为comparison
     3. 如果用户没有指定时间，time_range设为null
-    4. 如果用户问"近几年"、"变化趋势"，query_type为trend，is_range为true
+    4. 如果用户问"近几年"、"变化趋势"，query_type为trend，time_range应包含所有相关报告期
     5. 如果用户问"最高/最低/top"、"排名"、"前N"、"排序"、"榜单"，query_type为ranking
-    6. 如果用户问"对比/比较/相比"、"差异"、"波动"、"变化幅度"，query_type为comparison
+    6. 如果用户问"对比/比较/相比"、"差异"、"波动"、"变化幅度"、"增加还是减少"、"涨跌"、"变动"，query_type为comparison；如果是跨期对比（如"两年对比"、"2022和2023年"、"去年跟今年"），time_range应包含所有需要对比的报告期
     7. 如果用户问"有哪些"、"列出"、"筛选"、"满足XX条件的公司"、"所有公司"、"XX家公司"、"全行业"，company设为null（集合查询），query_type为ranking
     8. 如果用户问"连续N个报告期"、"连续N年"、"连续N季度"、"均超过"、"均低于"、"均满足"等连续性条件：
        - query_type设为continuity
@@ -260,14 +260,14 @@ sql_generate:
 
     返回格式：
     {{
-      "sql": "SELECT * FROM income_sheet WHERE stock_code IN ('000001', '000002') AND report_year = 2023 AND report_period = 'Q1'"
+      "sql": "SELECT * FROM income_sheet WHERE stock_code IN ('000001', '000002') AND report_year IN (2022, 2023) AND report_period = 'FY' ORDER BY report_year"
     }}
 
     规则：
     1. 只生成SELECT语句，禁止DDL/DML
     2. 只使用以下表：income_sheet, balance_sheet, cash_flow_sheet, core_performance_indicators_sheet, company_basic_info
     3. 公司筛选使用 stock_code
-    4. 时间筛选使用 report_year 和 report_period
+    4. 时间筛选使用 report_year 和 report_period；当 time_range 包含多个报告期时，使用 report_year IN (...) 同时查询所有年度，并按 report_year 排序以便对比
     5. report_period 取值：Q1(一季度)、Q2(二季度)、Q3(三季度)、Q4(四季度)、HY(半年度)、FY(年度)
     6. 金额单位统一为万元
     7. 只输出SQL，不要解释，返回json字符串格式
