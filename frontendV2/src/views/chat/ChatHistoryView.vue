@@ -9,7 +9,8 @@ import { useRouter } from 'vue-router'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
-import { getChatList } from '@/api/chat'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import { getChatList, deleteChatSession } from '@/api/chat'
 
 const router = useRouter()
 
@@ -24,6 +25,9 @@ const listState = reactive({
 
 const isLoading = ref(false)
 const errorMessage = ref('')
+const confirmDialogVisible = ref(false)
+const sessionToDelete = ref(null)
+const isDeleting = ref(false)
 
 // ── 计算属性 ──
 
@@ -82,6 +86,32 @@ const goToChat = (session) => {
 
 const goToNewChat = () => {
   router.push({ name: 'Chat' })
+}
+
+const deleteSession = (session, event) => {
+  event.stopPropagation()
+  sessionToDelete.value = session
+  confirmDialogVisible.value = true
+}
+
+const confirmDelete = async () => {
+  if (!sessionToDelete.value) return
+  isDeleting.value = true
+  try {
+    await deleteChatSession(sessionToDelete.value.id)
+    listState.items = listState.items.filter((s) => s.id !== sessionToDelete.value.id)
+    listState.total = Math.max(0, listState.total - 1)
+    confirmDialogVisible.value = false
+  } catch (error) {
+    alert(error.message || '删除失败')
+  } finally {
+    isDeleting.value = false
+  }
+}
+
+const cancelDelete = () => {
+  confirmDialogVisible.value = false
+  sessionToDelete.value = null
 }
 
 onMounted(() => {
@@ -175,6 +205,13 @@ onMounted(() => {
                 class="shrink-0 text-sm text-ink-300 transition-all duration-200 group-hover:text-accent-500 group-hover:translate-x-0.5"
                 aria-hidden="true"
               />
+              <button
+                class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-ink-300 opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+                title="删除会话"
+                @click="deleteSession(session, $event)"
+              >
+                <FontAwesomeIcon :icon="['fas', 'trash']" class="text-xs" aria-hidden="true" />
+              </button>
             </div>
           </div>
         </div>
@@ -192,4 +229,15 @@ onMounted(() => {
       </div>
     </SurfacePanel>
   </div>
+
+  <ConfirmDialog
+    :visible="confirmDialogVisible"
+    title="删除会话"
+    :message="`确定要删除会话「${sessionToDelete?.session_name || '未命名对话'}」吗？此操作不可撤销。`"
+    confirm-text="删除"
+    cancel-text="取消"
+    :loading="isDeleting"
+    @confirm="confirmDelete"
+    @close="cancelDelete"
+  />
 </template>

@@ -11,7 +11,8 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
-import { sendChatMessageStream, getChatList, getChatDetail } from '@/api/chat'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import { sendChatMessageStream, getChatList, getChatDetail, deleteChatSession } from '@/api/chat'
 import { renderMarkdown } from '@/utils/markdown'
 
 // ── 步骤配置 ──
@@ -37,6 +38,9 @@ const isListLoading = ref(false)
 const listError = ref('')
 const isHistoryLoading = ref(false)
 const activeSessionId = ref(null)
+const confirmDialogVisible = ref(false)
+const sessionToDelete = ref(null)
+const isDeleting = ref(false)
 
 const fetchSessions = async () => {
   isListLoading.value = true
@@ -206,6 +210,36 @@ const selectSession = async (session) => {
   }
 }
 
+// ── 删除会话 ──
+
+const deleteSession = (session, event) => {
+  event.stopPropagation()
+  sessionToDelete.value = session
+  confirmDialogVisible.value = true
+}
+
+const confirmDelete = async () => {
+  if (!sessionToDelete.value) return
+  isDeleting.value = true
+  try {
+    await deleteChatSession(sessionToDelete.value.id)
+    if (activeSessionId.value === sessionToDelete.value.id) {
+      newConversation()
+    }
+    sessions.items = sessions.items.filter((s) => s.id !== sessionToDelete.value.id)
+    confirmDialogVisible.value = false
+  } catch (error) {
+    alert(error.message || '删除失败')
+  } finally {
+    isDeleting.value = false
+  }
+}
+
+const cancelDelete = () => {
+  confirmDialogVisible.value = false
+  sessionToDelete.value = null
+}
+
 // ── 格式化 ──
 
 const formatDateTime = (value) => {
@@ -252,7 +286,7 @@ onMounted(() => {
         <!-- 会话条目 -->
         <div v-for="session in sessions.items" :key="session.id">
           <button
-            class="flex w-full items-center gap-3 border-b border-black/5 px-4 py-3.5 text-left transition-all duration-150 hover:bg-accent-50/50"
+            class="group flex w-full items-center gap-3 border-b border-black/5 px-4 py-3.5 text-left transition-all duration-150 hover:bg-accent-50/50"
             :class="activeSessionId === session.id ? 'bg-accent-50 border-l-2 border-l-accent-500' : 'border-l-2 border-l-transparent'"
             @click="selectSession(session)"
           >
@@ -273,6 +307,13 @@ onMounted(() => {
               class="inline-block h-2 w-2 shrink-0 rounded-full bg-green-500"
               title="活跃"
             ></span>
+            <button
+              class="ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-300 opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+              title="删除会话"
+              @click="deleteSession(session, $event)"
+            >
+              <FontAwesomeIcon :icon="['fas', 'trash']" class="text-[0.6em]" aria-hidden="true" />
+            </button>
           </button>
         </div>
       </div>
@@ -458,6 +499,17 @@ onMounted(() => {
       </div>
     </SurfacePanel>
   </div>
+
+  <ConfirmDialog
+    :visible="confirmDialogVisible"
+    title="删除会话"
+    :message="`确定要删除会话「${sessionToDelete?.session_name || '未命名对话'}」吗？此操作不可撤销。`"
+    confirm-text="删除"
+    cancel-text="取消"
+    :loading="isDeleting"
+    @confirm="confirmDelete"
+    @close="cancelDelete"
+  />
 </template>
 
 <style scoped>

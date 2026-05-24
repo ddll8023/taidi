@@ -14,7 +14,7 @@ from sqlalchemy import select, func, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.database import get_background_db_session
+from app.db.database import get_background_db_session, commit_or_rollback
 from app.constants import chat as constants_chat
 from app.models import company_basic_info as models_company_basic_info
 from app.models import chat_message as models_chat_message
@@ -166,7 +166,7 @@ def start_chat(
 
     current_messages = chat_session.messages or []
     chat_session.messages = current_messages + [chat_message.id]
-    db.commit()
+    commit_or_rollback(db)
     logger.info(
         f"消息已持久化: session_id={start_chat_request.session_id} "
         f"message_id={chat_message.id} window_size={len(chat_session.messages)}"
@@ -257,6 +257,31 @@ def get_chat_detail(
         messages=message_items,
         created_at=chat_session.created_at,
         updated_at=chat_session.updated_at,
+    )
+
+
+def delete_chat_session(
+    db: Session,
+    delete_chat_session_request: schemas_chat.DeleteChatSessionRequest,
+):
+    """删除聊天会话"""
+    logger.info(f"删除聊天会话: session_id={delete_chat_session_request.session_id}")
+
+    chat_session_entity = db.get(
+        models_chat_session.ChatSession, delete_chat_session_request.session_id
+    )
+
+    if not chat_session_entity:
+        logger.error(f"会话不存在: session_id={delete_chat_session_request.session_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "会话不存在")
+
+    db.delete(chat_session_entity)
+    commit_or_rollback(db)
+
+    logger.info(f"聊天会话已删除: session_id={delete_chat_session_request.session_id}")
+    return schemas_chat.DeleteChatSessionResponse(
+        session_id=delete_chat_session_request.session_id,
+        deleted=True,
     )
 
 
@@ -490,13 +515,12 @@ def _summarize_overflow(session_id: str):
         conv_ids = {m.id for m in conv_msgs}
         remaining = [mid for mid in messages if mid not in conv_ids]
         chat_session.messages = [summary_msg.id] + remaining
-        db.commit()
+        commit_or_rollback(db)
         logger.info(
             f"滑动窗口已压缩: session_id={session_id} "
             f"old_size={len(messages)} new_size={len(chat_session.messages)}"
         )
     except Exception as e:
-        db.rollback()
         logger.error(f"摘要生成失败: session_id={session_id} error={e}")
     finally:
         db.close()

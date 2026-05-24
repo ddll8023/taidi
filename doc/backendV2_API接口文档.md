@@ -654,6 +654,45 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | created_at | str | 会话创建时间 |
 | updated_at | str | 会话更新时间 |
 
+### 3.7 删除聊天会话
+
+- **POST** `/api/v1/chat/delete`
+- **描述**：删除指定的聊天会话及其关联的所有消息记录。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）：**
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| session_id | str | 是 | 会话 ID |
+
+**请求示例：**
+```json
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**响应格式：**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "deleted": true
+  }
+}
+```
+
+**响应字段说明：**
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| session_id | str | 已删除的会话 ID |
+| deleted | bool | 是否删除成功 |
+
 ---
 
 ## 四、后端处理流程说明

@@ -111,3 +111,12 @@ export function getChatList(params) {
 export function getChatDetail(sessionId) {
   return request.post("/chat/detail", { session_id: sessionId });
 }
+
+/**
+ * 删除聊天会话
+ * @param {string} sessionId - 会话ID
+ * @returns {Promise} { session_id, deleted }
+ */
+export function deleteChatSession(sessionId) {
+  return request.post("/chat/delete", { session_id: sessionId });
+}

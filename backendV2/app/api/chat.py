@@ -84,3 +84,24 @@ def get_chat_detail(
         return success(services_chat.get_chat_detail(db, get_chat_detail_request))
     except ServiceException as e:
         return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/delete",
+    response_model=ApiResponse[schemas_chat.DeleteChatSessionResponse],
+    description="删除聊天会话",
+)
+def delete_chat_session(
+    db: Annotated[Session, Depends(get_db)],
+    delete_chat_session_request: Annotated[
+        schemas_chat.DeleteChatSessionRequest,
+        Body(..., description="删除聊天会话请求"),
+    ],
+):
+    """删除聊天会话"""
+    try:
+        return success(
+            services_chat.delete_chat_session(db, delete_chat_session_request)
+        )
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)

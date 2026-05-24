@@ -61,6 +61,12 @@ class GetChatDetailRequest(BaseModel):
     session_id: str = Field(..., description="会话ID")
 
 
+class DeleteChatSessionRequest(BaseModel):
+    """删除聊天会话请求"""
+
+    session_id: str = Field(..., description="会话ID")
+
+
 # ========== 响应类（Response）==========
 
 
@@ -89,3 +95,10 @@ class GetChatDetailResponse(BaseModel):
     updated_at: datetime = Field(..., description="更新时间")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DeleteChatSessionResponse(BaseModel):
+    """删除聊天会话响应"""
+
+    session_id: str = Field(..., description="会话ID")
+    deleted: bool = Field(..., description="是否删除成功")
