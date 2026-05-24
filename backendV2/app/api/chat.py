@@ -65,3 +65,22 @@ def get_chat_list(
         return success(services_chat.get_chat_list(db, get_chat_list_request))
     except ServiceException as e:
         return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/detail",
+    response_model=ApiResponse[schemas_chat.GetChatDetailResponse],
+    description="获取聊天详情",
+)
+def get_chat_detail(
+    db: Annotated[Session, Depends(get_db)],
+    get_chat_detail_request: Annotated[
+        schemas_chat.GetChatDetailRequest,
+        Body(..., description="获取聊天详情请求"),
+    ],
+):
+    """获取聊天详情"""
+    try:
+        return success(services_chat.get_chat_detail(db, get_chat_detail_request))
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)

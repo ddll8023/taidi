@@ -590,6 +590,70 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | lists[].updated_at | str | 更新时间 |
 | pagination | object | 分页信息 |
 
+### 3.6 获取对话详情
+
+- **POST** `/api/v1/chat/detail`
+- **描述**：获取单个会话的详细信息，包含会话基础信息及全部对话消息（用户问题、AI 回答、生成 SQL、意图识别结果等）。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）：**
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| session_id | str | 是 | 会话 ID |
+
+**请求示例：**
+```json
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**响应格式：**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "session_name": "贵州茅台2023年净利润",
+    "status": 0,
+    "messages": [
+      {
+        "id": 1,
+        "query": "贵州茅台2023年净利润是多少？",
+        "answer": "贵州茅台2023年净利润为**747.34亿元**。",
+        "sql_query": "SELECT net_profit FROM income_sheet WHERE stock_code='600519' AND report_year=2023 AND report_period='FY'",
+        "sql_result": [{"net_profit": 747.34}],
+        "intent_result": {"companys": [{"stock_code": "600519", "company_name": "贵州茅台"}], "metrics": [{"name": "净利润"}], "time_range": {"year": 2023}, "query_type": "single", "confidence": 0.95},
+        "created_at": "2025-01-01T10:00:00"
+      }
+    ],
+    "created_at": "2025-01-01T10:00:00",
+    "updated_at": "2025-01-01T10:05:00"
+  }
+}
+```
+
+**响应字段说明：**
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| id | str | 会话 ID（UUID） |
+| session_name | str | 会话名称 |
+| status | int | 状态：0 活跃 / 1 已关闭 |
+| messages | object[] | 对话消息列表，按时间顺序排列 |
+| messages[].id | int | 消息 ID |
+| messages[].query | str | 用户问题 |
+| messages[].answer | str | AI 回答（Markdown 格式） |
+| messages[].sql_query | str | 生成的 SQL 查询语句 |
+| messages[].sql_result | object[] | SQL 执行结果（截断至 100 行） |
+| messages[].intent_result | object | 意图识别结果（公司、指标、时间等） |
+| messages[].created_at | str | 消息创建时间 |
+| created_at | str | 会话创建时间 |
+| updated_at | str | 会话更新时间 |
+
 ---
 
 ## 四、后端处理流程说明

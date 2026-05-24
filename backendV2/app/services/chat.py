@@ -215,6 +215,51 @@ def get_chat_list(
     )
 
 
+def get_chat_detail(
+    db: Session,
+    get_chat_detail_request: schemas_chat.GetChatDetailRequest,
+):
+    """获取聊天详情"""
+    logger.info(f"获取聊天详情: session_id={get_chat_detail_request.session_id}")
+
+    chat_session = db.execute(
+        select(models_chat_session.ChatSession).where(
+            models_chat_session.ChatSession.id == get_chat_detail_request.session_id
+        )
+    ).scalar_one_or_none()
+
+    if not chat_session:
+        logger.error(f"会话不存在: session_id={get_chat_detail_request.session_id}")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "会话不存在")
+
+    message_items = []
+    message_entities = (
+        db.execute(
+            select(models_chat_message.ChatMessage)
+            .where(
+                models_chat_message.ChatMessage.session_id
+                == get_chat_detail_request.session_id,
+                models_chat_message.ChatMessage.message_type == "conversation",
+            )
+            .order_by(models_chat_message.ChatMessage.id)
+        )
+        .scalars()
+        .all()
+    )
+    message_items = [
+        schemas_chat.ChatMessageItem.model_validate(m) for m in message_entities
+    ]
+
+    return schemas_chat.GetChatDetailResponse(
+        id=chat_session.id,
+        session_name=chat_session.session_name,
+        status=chat_session.status,
+        messages=message_items,
+        created_at=chat_session.created_at,
+        updated_at=chat_session.updated_at,
+    )
+
+
 """辅助函数"""
 
 
@@ -464,7 +509,7 @@ def _summarize_overflow(session_id: str):
 def _generate_summary(conv_msgs):
     """调用 LLM 将对话历史压缩为摘要"""
     conversation_text = "\n\n".join(
-        [f"用户: {m.query}\n回答: {m.answer}" for m in conv_msgs]
+        [f"问题: {m.query}\n回答: {m.answer}" for m in conv_msgs]
     )
     prompt_config = settings.PROMPT_CONFIG.get_chat_config["summarize"]
     prompt = [

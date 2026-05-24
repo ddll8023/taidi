@@ -11,7 +11,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
-import { sendChatMessageStream, getChatList } from '@/api/chat'
+import { sendChatMessageStream, getChatList, getChatDetail } from '@/api/chat'
 import { renderMarkdown } from '@/utils/markdown'
 
 // ── 步骤配置 ──
@@ -35,6 +35,7 @@ const sessions = reactive({
 })
 const isListLoading = ref(false)
 const listError = ref('')
+const isHistoryLoading = ref(false)
 const activeSessionId = ref(null)
 
 const fetchSessions = async () => {
@@ -180,13 +181,29 @@ const newConversation = () => {
 
 // ── 选择会话 ──
 
-const selectSession = (session) => {
+const selectSession = async (session) => {
   activeSessionId.value = session.id
   sessionId.value = session.id
-  // 清空消息 —— 后续可以扩展为加载历史消息
   messages.splice(0, messages.length)
-  addMessage('system', `继续对话：${session.session_name || '未命名对话'}`)
-  messages.splice(0, 1) // 先占位再删除，实际应加载历史
+  isHistoryLoading.value = true
+  try {
+    const response = await getChatDetail(session.id)
+    const payload = response?.data || response
+    const historyMessages = payload?.messages || []
+    for (const msg of historyMessages) {
+      if (msg.query) {
+        addMessage('user', msg.query)
+      }
+      if (msg.answer) {
+        addMessage('assistant', msg.answer, { sql: msg.sql_query || null })
+      }
+    }
+    await scrollToBottom()
+  } catch (error) {
+    addMessage('system', `加载历史消息失败：${error.message || '请稍后重试'}`)
+  } finally {
+    isHistoryLoading.value = false
+  }
 }
 
 // ── 格式化 ──
@@ -284,9 +301,18 @@ onMounted(() => {
 
       <!-- 消息列表 -->
       <div class="chat-messages flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+        <!-- 加载历史消息 -->
+        <div
+          v-if="isHistoryLoading"
+          class="flex flex-col items-center justify-center py-20 text-center"
+        >
+          <FontAwesomeIcon :icon="['fas', 'spinner']" spin class="text-2xl text-accent-500" aria-hidden="true" />
+          <p class="mt-3 text-sm text-ink-500">加载历史消息...</p>
+        </div>
+
         <!-- 空状态 -->
         <div
-          v-if="!hasMessages"
+          v-else-if="!hasMessages"
           class="flex flex-col items-center justify-center py-20 text-center"
         >
           <div class="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-accent-50">

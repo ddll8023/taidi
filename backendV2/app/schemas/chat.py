@@ -2,6 +2,9 @@ from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 
 
+# ========== 辅助类（Support）==========
+
+
 class IdentifyIntentResultItem(BaseModel):
     """识别意图结果项"""
 
@@ -15,6 +18,25 @@ class IdentifyIntentResultItem(BaseModel):
     continuity_config: dict | None = Field(
         default_factory=dict, description="连续性配置"
     )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChatMessageItem(BaseModel):
+    """聊天消息项"""
+
+    id: int = Field(..., description="消息ID")
+    query: str | None = Field(None, description="用户查询")
+    answer: str | None = Field(None, description="回答")
+    sql_query: str | None = Field(None, description="生成的SQL")
+    sql_result: list | None = Field(None, description="SQL执行结果")
+    intent_result: dict | None = Field(None, description="意图解析结果")
+    created_at: datetime = Field(..., description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ========== 请求类（Request）==========
 
 
 class StartChatRequest(BaseModel):
@@ -31,13 +53,37 @@ class GetChatListRequest(BaseModel):
     page_size: int = Field(10, description="每页数量")
 
 
+class GetChatDetailRequest(BaseModel):
+    """获取聊天详情请求"""
+
+    session_id: str = Field(..., description="会话ID")
+
+
+# ========== 响应类（Response）==========
+
+
 class GetChatListResponse(BaseModel):
     """获取聊天列表响应"""
-
-    model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(..., description="会话ID")
     session_name: str = Field(..., description="会话名称")
     status: int = Field(..., description="会话状态")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GetChatDetailResponse(BaseModel):
+    """获取聊天详情响应"""
+
+    id: str = Field(..., description="会话ID")
+    session_name: str = Field(..., description="会话名称")
+    status: int = Field(..., description="会话状态")
+    messages: list[ChatMessageItem] = Field(
+        default_factory=list, description="消息列表"
+    )
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
