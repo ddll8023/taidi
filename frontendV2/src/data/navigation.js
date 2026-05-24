@@ -27,6 +27,13 @@ export const navigationGroups = [
         description: '上传财报文件、查看解析状态',
         icon: 'file-lines',
         to: '/reports/list'
+      },
+      {
+        title: '知识库',
+        shortLabel: '知识库',
+        description: '加载研报元数据，构建知识库',
+        icon: 'microchip',
+        to: '/knowledge-base'
       }
     ]
   }

@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from app.db.database import Base, engine
 from app.schemas.common import ApiResponse, ErrorCode
 from app.schemas.response import error, success
-from app.api import import_company_base_info, analyze_data, chat
+from app.api import import_company_base_info, analyze_data, chat, knowledge_base
 
 app = FastAPI(
     title="Backend API",
@@ -25,6 +25,7 @@ app.add_middleware(
 app.include_router(import_company_base_info.router)
 app.include_router(analyze_data.router)
 app.include_router(chat.router)
+app.include_router(knowledge_base.router)
 
 
 # 全局异常处理器：捕获 HTTPException

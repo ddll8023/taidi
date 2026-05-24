@@ -740,3 +740,95 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | 年度报告摘要              | FY            | SUMMARY     |
 
 ---
+
+## 五、知识库管理（/api/v1/knowledge-base）✅ 已完成
+
+系统初始化接口，用于加载研报元数据（个股研报 / 行业研报）到知识库，供智能问数检索使用。
+
+### 5.1 系统初始化
+
+- **POST** `/api/v1/knowledge-base/init`
+- **描述**：上传研报 Excel 文件，将元数据导入知识库。支持个股研报（`RESEARCH_REPORT`）和行业研报（`INDUSTRY_REPORT`）两种文档类型。
+- **Content-Type**：`multipart/form-data`
+
+| 参数 | 类型 | 位置 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- | ---- |
+| file | File | body | 是 | 研报 Excel 文件（`.xlsx` 或 `.xls`） |
+| doc_type | str | body(Form) | 是 | 文档类型：`RESEARCH_REPORT` 个股研报 / `INDUSTRY_REPORT` 行业研报 |
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "success": true,
+    "message": "导入成功",
+    "total_count": 5000
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| success | bool | 是否成功 |
+| message | str | 结果消息（含失败条数提示） |
+| total_count | int | 导入的总记录数 |
+
+**个股研报 Excel 列映射**：
+
+| Excel 列名 | 对应字段 | 说明 |
+| ---------- | -------- | ---- |
+| title | title | 研报标题 |
+| stockName | stock_abbr | 股票简称 |
+| stockCode | stock_code | 股票代码（6位） |
+| orgCode | org_code | 机构代码 |
+| orgName | org_name | 研究机构名称 |
+| publishDate | publish_date | 发布日期 |
+| predictThisYearEps | predict_this_year_eps | 预测本年 EPS |
+| predictThisYearPe | predict_this_year_pe | 预测本年 PE |
+| indvInduName | industry_name | 行业名称 |
+| emRatingName | em_rating_name | 评级 |
+| researcher | researcher | 研究员 |
+
+**行业研报 Excel 列映射**：
+
+| Excel 列名 | 对应字段 | 说明 |
+| ---------- | -------- | ---- |
+| title | title | 研报标题 |
+| orgCode | org_code | 机构代码 |
+| orgName | org_name | 研究机构名称 |
+| publishDate | publish_date | 发布日期 |
+| industryName | industry_name | 行业名称 |
+| researcher | researcher | 研究员 |
+
+### 5.2 查询初始化状态
+
+- **POST** `/api/v1/knowledge-base/init-status`
+- **描述**：查询知识库初始化状态，返回各类元数据数量。
+- **Content-Type**：`application/json`
+
+无请求参数。
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "initialized": true,
+    "stock_metadata_count": 3000,
+    "industry_metadata_count": 2000,
+    "total_metadata_count": 5000
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| initialized | bool | 是否已初始化（有数据即为 true） |
+| stock_metadata_count | int | 个股研报元数据数量 |
+| industry_metadata_count | int | 行业研报元数据数量 |
+| total_metadata_count | int | 总元数据数量 |

@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
 from app.core.config import settings
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
@@ -13,20 +12,20 @@ engine = create_engine(
 # 创建会话工厂
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
 # 模型基类
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 
 # 数据库会话依赖
 def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    with SessionLocal() as db:
+        try:
+            yield db
+        except Exception as exc:
+            db.rollback()
+            raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
 
 
 def get_background_db_session():

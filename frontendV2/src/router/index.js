@@ -32,6 +32,12 @@ const routes = [
         name: 'Chat',
         component: () => import('@/views/chat/ChatPage.vue'),
         meta: { title: '智能问数', description: '自然语言查询财务数据', eyebrow: '项目 / 问数' }
+      },
+      {
+        path: 'knowledge-base',
+        name: 'KnowledgeBase',
+        component: () => import('@/views/knowledge/KnowledgeBaseView.vue'),
+        meta: { title: '知识库管理', description: '加载研报元数据到知识库', eyebrow: '项目 / 知识库' }
       }
     ]
   }
