@@ -54,3 +54,18 @@ def get_init_status(
         return success(services_knowledge_base.get_init_status(db))
     except ServiceException as e:
         return error(e.code, e.message)
+
+
+@router.post(
+    "/stats",
+    response_model=ApiResponse[schemas_knowledge_base.KnowledgeBaseStatsResponse],
+    description="获取知识库整体统计信息",
+)
+def get_knowledge_base_stats(
+    db: Annotated[Session, Depends(get_db)],
+):
+    """获取知识库整体统计信息"""
+    try:
+        return success(services_knowledge_base.get_knowledge_base_stats(db))
+    except ServiceException as e:
+        return error(e.code, e.message)

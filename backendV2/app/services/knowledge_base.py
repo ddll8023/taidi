@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.constants import knowledge_base as constants_knowledge_base
 from app.db.database import commit_or_rollback
 from app.models import knowledge_document as models_knowledge_document
+from app.models import knowledge_chunk as models_knowledge_chunk
 from app.schemas import knowledge_base as schemas_knowledge_base
 from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
@@ -89,6 +90,70 @@ def get_init_status(db: Session):
     )
 
 
+def get_knowledge_base_stats(db: Session):
+    """获取知识库整体统计信息"""
+    logger.info("查询知识库统计信息")
+
+    doc_total = (
+        db.scalar(select(func.count(models_knowledge_document.KnowledgeDocument.id)))
+        or 0
+    )
+
+    # 查询文档切块状态统计
+    doc_chunk_status_rows = db.execute(
+        select(
+            models_knowledge_document.KnowledgeDocument.chunk_status,
+            func.count(models_knowledge_document.KnowledgeDocument.id),
+        ).group_by(models_knowledge_document.KnowledgeDocument.chunk_status)
+    ).all()
+    doc_by_chunk_status = {str(row[0]): row[1] for row in doc_chunk_status_rows}
+
+    # 查询文档向量状态统计
+    doc_vector_status_rows = db.execute(
+        select(
+            models_knowledge_document.KnowledgeDocument.vector_status,
+            func.count(models_knowledge_document.KnowledgeDocument.id),
+        ).group_by(models_knowledge_document.KnowledgeDocument.vector_status)
+    ).all()
+    doc_by_vector_status = {str(row[0]): row[1] for row in doc_vector_status_rows}
+
+    # 查询文档类型统计
+    doc_type_rows = db.execute(
+        select(
+            models_knowledge_document.KnowledgeDocument.doc_type,
+            func.count(models_knowledge_document.KnowledgeDocument.id),
+        ).group_by(models_knowledge_document.KnowledgeDocument.doc_type)
+    ).all()
+    doc_by_type = {row[0]: row[1] for row in doc_type_rows}
+
+    chunk_total = (
+        db.scalar(select(func.count(models_knowledge_chunk.KnowledgeChunk.id))) or 0
+    )
+
+    # 查询切块向量状态统计
+    chunk_vector_status_rows = db.execute(
+        select(
+            models_knowledge_chunk.KnowledgeChunk.vector_status,
+            func.count(models_knowledge_chunk.KnowledgeChunk.id),
+        ).group_by(models_knowledge_chunk.KnowledgeChunk.vector_status)
+    ).all()
+    chunk_by_vector_status = {str(row[0]): row[1] for row in chunk_vector_status_rows}
+
+    logger.info(f"知识库统计查询完成: doc_total={doc_total} chunk_total={chunk_total}")
+    return schemas_knowledge_base.KnowledgeBaseStatsResponse(
+        documents=schemas_knowledge_base.DocumentStatsData(
+            total=doc_total,
+            by_chunk_status=doc_by_chunk_status,
+            by_vector_status=doc_by_vector_status,
+            by_doc_type=doc_by_type,
+        ),
+        chunks=schemas_knowledge_base.ChunkStatsData(
+            total=chunk_total,
+            by_vector_status=chunk_by_vector_status,
+        ),
+    )
+
+
 """辅助函数"""
 
 
@@ -128,10 +193,12 @@ def _import_excel(
     finally:
         try:
             os.unlink(temp_path)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"临时文件删除失败: path={temp_path} error={exc}")
 
     logger.info(f"Excel解析完成: {filename} 总行数={len(data)}")
+    if not data:
+        logger.warning(f"Excel文件无有效数据: file={filename}")
 
     entities_to_add: list[models_knowledge_document.KnowledgeDocument] = []
 
@@ -250,6 +317,8 @@ def _import_excel(
         commit_or_rollback(db)
         success_count = len(entities_to_add)
         logger.info(f"批量写入完成: doc_type={doc_type} 写入{success_count}条")
+    else:
+        logger.warning(f"无有效数据入库: file={filename} doc_type={doc_type}")
 
     logger.info(
         f"Excel整体处理完成: file={filename} success={success_count} failed={len(errors)}"

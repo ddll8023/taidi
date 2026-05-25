@@ -695,57 +695,11 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 
 ---
 
-## 四、后端处理流程说明
-
-### 4.1 上传建档流程
-
-```
-客户端上传 PDF
-  │
-  ├─ 1. 校验文件类型（仅 .pdf）
-  ├─ 2. 保存 PDF 到 uploads/financial_report/
-  ├─ 3. 用 PyPDFLoader 读取首页文本
-  ├─ 4. 正则解析元数据：
-  │      ├─ 股票代码（证券代码 / 股票代码）
-  │      ├─ 报告年份 + 报告标签（年度报告/半年度报告等）
-  │      ├─ 映射为 report_period / report_type
-  │      └─ 提取显式日期
-  ├─ 5. 写入 financial_report 表
-  └─ 6. 返回建档结果
-```
-
-### 3.2 元数据解析规则
-
-| 字段          | 提取方式                         | 示例                 |
-| ------------- | -------------------------------- | -------------------- |
-| stock_code    | 正则匹配 `证券代码：000001`    | `000001`           |
-| report_year   | 正则匹配 `2023 年`             | `2023`             |
-| report_label  | 正则匹配报告标签                 | `年度报告`         |
-| report_period | 从 `REPORT_LABEL_TO_META` 映射 | `FY`               |
-| report_type   | 从 `REPORT_LABEL_TO_META` 映射 | `REPORT`           |
-| report_title  | 匹配到的标题文本                 | `2023 年 年度报告` |
-| report_date   | 正则匹配 `2024年4月20日`       | `2024-04-20`       |
-
-### 3.3 报告标签映射关系
-
-| 标签                      | report_period | report_type |
-| ------------------------- | ------------- | ----------- |
-| 一季度报告 / 第一季度报告 | Q1            | REPORT      |
-| 二季度报告 / 第二季度报告 | Q2            | REPORT      |
-| 半年度报告                | HY            | REPORT      |
-| 半年度报告摘要            | HY            | SUMMARY     |
-| 三季度报告 / 第三季度报告 | Q3            | REPORT      |
-| 四季度报告 / 第四季度报告 | Q4            | REPORT      |
-| 年度报告                  | FY            | REPORT      |
-| 年度报告摘要              | FY            | SUMMARY     |
-
----
-
-## 五、知识库管理（/api/v1/knowledge-base）✅ 已完成
+## 四、知识库管理（/api/v1/knowledge-base）✅ 已完成
 
 系统初始化接口，用于加载研报元数据（个股研报 / 行业研报）到知识库，供智能问数检索使用。
 
-### 5.1 系统初始化
+### 4.1 系统初始化
 
 - **POST** `/api/v1/knowledge-base/init`
 - **描述**：上传研报 Excel 文件，将元数据导入知识库。支持个股研报（`RESEARCH_REPORT`）和行业研报（`INDUSTRY_REPORT`）两种文档类型。
@@ -786,11 +740,28 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | orgCode | org_code | 机构代码 |
 | orgName | org_name | 研究机构名称 |
 | publishDate | publish_date | 发布日期 |
-| predictThisYearEps | predict_this_year_eps | 预测本年 EPS |
-| predictThisYearPe | predict_this_year_pe | 预测本年 PE |
+| predictNextTwoYearEps | predict_next_two_year_eps | 预测未来两年每股收益（EPS） |
+| predictNextTwoYearPe | predict_next_two_year_pe | 预测未来两年市盈率（PE） |
+| predictNextYearEps | predict_next_year_eps | 预测下一年每股收益（EPS） |
+| predictNextYearPe | predict_next_year_pe | 预测下一年市盈率（PE） |
+| predictThisYearEps | predict_this_year_eps | 预测本年每股收益（EPS） |
+| predictThisYearPe | predict_this_year_pe | 预测本年市盈率（PE） |
+| predictLastYearEps | predict_last_year_eps | 预测上一年每股收益（EPS） |
+| predictLastYearPe | predict_last_year_pe | 预测上一年市盈率（PE） |
 | indvInduName | industry_name | 行业名称 |
-| emRatingName | em_rating_name | 评级 |
+| emRatingName | em_rating_name | 当前评级 |
+| lastEmRatingName | last_em_rating_name | 上一次评级 |
+| indvIsNew | indv_is_new | 是否为新标的 |
 | researcher | researcher | 研究员 |
+| newListingDate | new_listing_date | 上市日期 |
+| newPurchaseDate | new_purchase_date | 申购日期 |
+| newIssuePrice | new_issue_price | 发行价格 |
+| newPeIssueA | new_pe_issue_a | 发行市盈率 |
+| indvAimPriceT | indv_aim_price_t | 目标价上限 |
+| indvAimPriceL | indv_aim_price_l | 目标价下限 |
+| sRatingName | s_rating_name | 国际评级名称 |
+| sRatingCode | s_rating_code | 国际评级编码 |
+| market | market | 交易所 |
 
 **行业研报 Excel 列映射**：
 
@@ -799,11 +770,16 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | title | title | 研报标题 |
 | orgCode | org_code | 机构代码 |
 | orgName | org_name | 研究机构名称 |
+| orgSName | org_S_Name | 券商简称 |
 | publishDate | publish_date | 发布日期 |
 | industryName | industry_name | 行业名称 |
+| emRatingName | em_rating_name | 当前评级 |
+| lastEmRatingName | last_em_rating_name | 上一次评级 |
 | researcher | researcher | 研究员 |
+| sRatingName | s_rating_name | 国际评级名称 |
+| sRatingCode | s_rating_code | 国际评级编码 |
 
-### 5.2 查询初始化状态
+### 4.2 查询初始化状态
 
 - **POST** `/api/v1/knowledge-base/init-status`
 - **描述**：查询知识库初始化状态，返回各类元数据数量。
@@ -832,3 +808,104 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | stock_metadata_count | int | 个股研报元数据数量 |
 | industry_metadata_count | int | 行业研报元数据数量 |
 | total_metadata_count | int | 总元数据数量 |
+
+### 4.3 获取知识库整体统计信息
+
+- **POST** `/api/v1/knowledge-base/stats`
+- **描述**：获取知识库整体统计信息，包含文档维度和切块维度的数量统计与状态分布。
+- **Content-Type**：`application/json`
+
+无请求参数。
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "documents": {
+      "total": 5000,
+      "by_chunk_status": {
+        "0": 300,
+        "1": 4500,
+        "2": 200
+      },
+      "by_vector_status": {
+        "0": 1000,
+        "1": 4000
+      },
+      "by_doc_type": {
+        "RESEARCH_REPORT": 3000,
+        "INDUSTRY_REPORT": 2000
+      }
+    },
+    "chunks": {
+      "total": 50000,
+      "by_vector_status": {
+        "0": 5000,
+        "1": 45000
+      }
+    }
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| documents | object | 文档维度统计 |
+| documents.total | int | 文档总数 |
+| documents.by_chunk_status | dict | 按切块状态分组：0 待处理 / 1 已完成 / 2 失败 |
+| documents.by_vector_status | dict | 按向量状态分组：0 未向量化 / 1 已向量化 |
+| documents.by_doc_type | dict | 按文档类型分组（如 RESEARCH_REPORT、INDUSTRY_REPORT） |
+| chunks | object | 切块维度统计 |
+| chunks.total | int | 切块总数 |
+| chunks.by_vector_status | dict | 按向量状态分组：0 未向量化 / 1 已向量化 |
+
+---
+
+## 五、后端处理流程说明
+
+### 5.1 上传建档流程
+
+```
+客户端上传 PDF
+  │
+  ├─ 1. 校验文件类型（仅 .pdf）
+  ├─ 2. 保存 PDF 到 uploads/financial_report/
+  ├─ 3. 用 PyPDFLoader 读取首页文本
+  ├─ 4. 正则解析元数据：
+  │      ├─ 股票代码（证券代码 / 股票代码）
+  │      ├─ 报告年份 + 报告标签（年度报告/半年度报告等）
+  │      ├─ 映射为 report_period / report_type
+  │      └─ 提取显式日期
+  ├─ 5. 写入 financial_report 表
+  └─ 6. 返回建档结果
+```
+
+### 5.2 元数据解析规则
+
+| 字段          | 提取方式                         | 示例                 |
+| ------------- | -------------------------------- | -------------------- |
+| stock_code    | 正则匹配 `证券代码：000001`    | `000001`           |
+| report_year   | 正则匹配 `2023 年`             | `2023`             |
+| report_label  | 正则匹配报告标签                 | `年度报告`         |
+| report_period | 从 `REPORT_LABEL_TO_META` 映射 | `FY`               |
+| report_type   | 从 `REPORT_LABEL_TO_META` 映射 | `REPORT`           |
+| report_title  | 匹配到的标题文本                 | `2023 年 年度报告` |
+| report_date   | 正则匹配 `2024年4月20日`       | `2024-04-20`       |
+
+### 5.3 报告标签映射关系
+
+| 标签                      | report_period | report_type |
+| ------------------------- | ------------- | ----------- |
+| 一季度报告 / 第一季度报告 | Q1            | REPORT      |
+| 二季度报告 / 第二季度报告 | Q2            | REPORT      |
+| 半年度报告                | HY            | REPORT      |
+| 半年度报告摘要            | HY            | SUMMARY     |
+| 三季度报告 / 第三季度报告 | Q3            | REPORT      |
+| 四季度报告 / 第四季度报告 | Q4            | REPORT      |
+| 年度报告                  | FY            | REPORT      |
+| 年度报告摘要              | FY            | SUMMARY     |

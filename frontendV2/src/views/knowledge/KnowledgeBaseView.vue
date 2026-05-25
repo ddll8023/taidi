@@ -1,14 +1,17 @@
 <script setup>
 /**
  * 知识库管理页面
- * 功能描述：系统初始化（研报元数据导入）+ 状态查询/文档管理
- * 依赖组件：SurfacePanel, BaseButton, BaseSelect, AppEmptyState
+ * 功能描述：系统初始化（研报元数据导入）+ 状态查询 + 统计信息仪表盘
+ * 依赖组件：MetricTile, StatusBadge, BaseButton, BaseSelect, SystemInitModal, UploadPdfModal
  */
 import { ref, computed, onMounted } from 'vue'
+import MetricTile from '@/components/common/MetricTile.vue'
+import StatusBadge from '@/components/common/StatusBadge.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
-import AppEmptyState from '@/components/ui/AppEmptyState.vue'
-import { initKnowledgeBase, getInitStatus } from '@/api/knowledgeBase'
+import SystemInitModal from '@/components/common/SystemInitModal.vue'
+import UploadPdfModal from '@/components/common/UploadPdfModal.vue'
+import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats } from '@/api/knowledgeBase'
 
 // ── 常量 ──
 
@@ -17,76 +20,138 @@ const DOC_TYPE_OPTIONS = [
   { value: 'INDUSTRY_REPORT', label: '行业研报' }
 ]
 
-const docTypeLabelMap = {
+const DOC_TYPE_LABEL_MAP = {
   RESEARCH_REPORT: '个股研报',
   INDUSTRY_REPORT: '行业研报'
 }
 
-// ── 状态 ──
+// 状态码映射（与 V1 保持一致）
+const CHUNK_STATUS_MAP = {
+  0: { label: '待处理', tone: 'neutral' },
+  1: { label: '处理中', tone: 'warning' },
+  2: { label: '已完成', tone: 'success' },
+  3: { label: '失败', tone: 'danger' }
+}
+
+const VECTOR_STATUS_MAP = {
+  0: { label: '待处理', tone: 'neutral' },
+  1: { label: '处理中', tone: 'warning' },
+  2: { label: '已完成', tone: 'success' },
+  3: { label: '失败', tone: 'danger' },
+  4: { label: '跳过', tone: 'warning' }
+}
+
+// ── 统计数据 ──
+
+const stats = ref({
+  documents: { total: 0, by_chunk_status: {}, by_vector_status: {}, by_doc_type: {} },
+  chunks: { total: 0, by_vector_status: {} }
+})
+
+const statsLoading = ref(false)
+
+// ── 初始化状态 ──
+
+const initStatus = ref({ initialized: false, stock_metadata_count: 0, industry_metadata_count: 0, total_metadata_count: 0 })
+const isStatusLoading = ref(false)
+const isRefreshing = ref(false)
+
+// ── 导入操作 ──
 
 const fileInput = ref(null)
 const selectedDocType = ref('RESEARCH_REPORT')
-
 const isUploading = ref(false)
 const uploadMessage = ref({ type: '', text: '' })
 const importResult = ref(null)
 
-const isStatusLoading = ref(false)
-const statusData = ref(null)
-const isRefreshing = ref(false)
+// ── 弹窗 ──
 
-// 筛选
-const filterDocType = ref('')
-const filterStatus = ref('')
-
-// 选中的文档（空列表占位）
-const selectedIds = ref([])
-const documents = ref([])
-const total = ref(0)
-const currentPage = ref(1)
-const pageSize = ref(20)
-const loading = ref(false)
+const showSystemInitModal = ref(false)
+const showUploadPdfModal = ref(false)
 
 // ── 计算属性 ──
 
-const isInitialized = computed(() => statusData.value?.initialized ?? false)
-const totalMetadataCount = computed(() => statusData.value?.total_metadata_count ?? 0)
-const stockMetadataCount = computed(() => statusData.value?.stock_metadata_count ?? 0)
-const industryMetadataCount = computed(() => statusData.value?.industry_metadata_count ?? 0)
+const totalDocuments = computed(() => stats.value.documents.total)
+
+const chunkedDocuments = computed(() => {
+  const byChunk = stats.value.documents.by_chunk_status || {}
+  return (byChunk[2] || 0) + (byChunk[3] || 0)
+})
+
+const vectorizedDocuments = computed(() => {
+  const byVec = stats.value.documents.by_vector_status || {}
+  return byVec[2] || 0
+})
+
+const pendingDocuments = computed(() => {
+  const byChunk = stats.value.documents.by_chunk_status || {}
+  const byVec = stats.value.documents.by_vector_status || {}
+  return (byChunk[0] || 0) + (byVec[0] || 0)
+})
+
+const failedDocuments = computed(() => {
+  const byChunk = stats.value.documents.by_chunk_status || {}
+  const byVec = stats.value.documents.by_vector_status || {}
+  return (byChunk[3] || 0) + (byVec[3] || 0)
+})
+
+const totalChunks = computed(() => stats.value.chunks.total)
+
+const isInitialized = computed(() => initStatus.value.initialized ?? false)
+const totalMetadataCount = computed(() => initStatus.value.total_metadata_count ?? 0)
 
 const noticeClass = computed(() => {
   if (!uploadMessage.value.text) return ''
   return uploadMessage.value.type === 'success'
-    ? 'border-green-200 bg-green-50/80 text-green-700'
-    : 'border-red-200 bg-red-50/80 text-red-700'
+    ? 'border-green-200 bg-green-50 text-green-700'
+    : 'border-red-200 bg-red-50 text-red-700'
 })
 
-const totalPages = computed(() => Math.ceil(total.value / pageSize.value) || 1)
-
-// ── 数据请求 ──
+// ── 数据加载 ──
 
 const loadInitStatus = async ({ silent = false } = {}) => {
-  if (silent) {
-    isRefreshing.value = true
-  } else {
-    isStatusLoading.value = true
-  }
+  if (silent) isRefreshing.value = true
+  else isStatusLoading.value = true
   try {
-    const result = await getInitStatus()
-    statusData.value = result.data
+    const res = await getInitStatus()
+    initStatus.value = res.data || res
   } catch {
-    statusData.value = null
+    initStatus.value = { initialized: false, stock_metadata_count: 0, industry_metadata_count: 0, total_metadata_count: 0 }
   } finally {
     isStatusLoading.value = false
     isRefreshing.value = false
   }
 }
 
+const loadStats = async () => {
+  statsLoading.value = true
+  try {
+    const res = await getKnowledgeBaseStats()
+    stats.value = res.data || res
+  } catch {
+    showToast('加载统计数据失败', 'error')
+  } finally {
+    statsLoading.value = false
+  }
+}
+
 // ── 事件处理 ──
 
-const triggerFileInput = () => {
-  fileInput.value?.click()
+function showToast(message, type = 'info') {
+  const colorMap = {
+    success: 'bg-green-600',
+    error: 'bg-red-600',
+    warning: 'bg-yellow-500',
+    info: 'bg-blue-600'
+  }
+  const toast = document.createElement('div')
+  toast.className = `fixed bottom-6 right-6 ${colorMap[type] || colorMap.info} text-white px-4 py-3 rounded-xl shadow-lg z-50 text-sm`
+  toast.textContent = message
+  document.body.appendChild(toast)
+  setTimeout(() => toast.remove(), 3000)
 }
+
+const triggerFileInput = () => fileInput.value?.click()
 
 const handleFileChange = async (event) => {
   const file = event.target.files?.[0]
@@ -108,6 +173,7 @@ const handleFileChange = async (event) => {
     uploadMessage.value = { type: 'success', text: msg }
     event.target.value = ''
     await loadInitStatus()
+    await loadStats()
   } catch (error) {
     uploadMessage.value = { type: 'error', text: error.message || '导入失败' }
   } finally {
@@ -115,28 +181,41 @@ const handleFileChange = async (event) => {
   }
 }
 
-const handleFilterChange = () => {
-  currentPage.value = 1
+function handleSystemInit() {
+  showSystemInitModal.value = true
 }
 
-const handlePageChange = (page) => {
-  currentPage.value = page
+async function handleSystemInitSuccess() {
+  showToast('系统初始化成功', 'success')
+  await loadInitStatus()
+  await loadStats()
 }
 
-const getDocTypeLabel = (type) => docTypeLabelMap[type] || type || '-'
+function handleUploadPdf() {
+  showUploadPdfModal.value = true
+}
+
+async function handleUploadPdfSuccess() {
+  showToast('PDF上传处理完成', 'success')
+  await loadInitStatus()
+  await loadStats()
+}
+
+// ── 初始化 ──
 
 onMounted(() => {
   loadInitStatus()
+  loadStats()
 })
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 h-full overflow-y-auto">
-    <!-- ═══ 页头 ═══ -->
-    <div class="flex items-center justify-between shrink-0 rounded-2xl border border-black/5 bg-white/80 p-4">
+  <div class="flex flex-col gap-4 p-4 h-full overflow-y-auto">
+    <!-- ═══ 页面标题 ═══ -->
+    <div class="flex items-center justify-between rounded-2xl border border-black/5 bg-white/80 p-4 shrink-0">
       <div>
         <h2 class="text-lg font-semibold text-ink-900">知识库管理</h2>
-        <p class="mt-1 text-sm text-ink-500">系统初始化 → 研报元数据导入</p>
+        <p class="mt-1 text-sm text-ink-500">增量构建模式：初始化 → 上传PDF → 向量化</p>
       </div>
       <div class="flex items-center gap-2">
         <span
@@ -144,10 +223,10 @@ onMounted(() => {
           class="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-green-700 border border-green-200"
         >
           <FontAwesomeIcon :icon="['fas', 'check-circle']" aria-hidden="true" />
-          已初始化（{{ totalMetadataCount }} 条）
+          已初始化（{{ totalMetadataCount }} 条元数据）
         </span>
         <span
-          v-else-if="statusData"
+          v-else-if="initStatus"
           class="inline-flex items-center gap-1.5 rounded-full bg-yellow-50 px-3 py-1 text-xs font-medium text-yellow-700 border border-yellow-200"
         >
           <FontAwesomeIcon :icon="['fas', 'exclamation-circle']" aria-hidden="true" />
@@ -164,49 +243,59 @@ onMounted(() => {
           variant="secondary"
           icon="rotate-right"
           size="sm"
+          icon-only
           :loading="isRefreshing"
-          class="h-9 w-9 !p-0"
+          aria-label="刷新"
           @click="loadInitStatus({ silent: true })"
         />
       </div>
     </div>
 
-    <!-- ═══ 统计卡片 ═══ -->
-    <div class="grid grid-cols-1 gap-4 sm:grid-cols-3 shrink-0">
-      <article class="rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
-        <p class="text-sm font-medium text-ink-500">个股研报</p>
-        <p class="mt-2 text-3xl font-semibold tracking-tight text-ink-900">{{ stockMetadataCount }}</p>
-        <p class="mt-1 text-xs text-ink-400">条元数据</p>
-      </article>
-      <article class="rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
-        <p class="text-sm font-medium text-ink-500">行业研报</p>
-        <p class="mt-2 text-3xl font-semibold tracking-tight text-ink-900">{{ industryMetadataCount }}</p>
-        <p class="mt-1 text-xs text-ink-400">条元数据</p>
-      </article>
-      <article class="rounded-2xl border border-black/5 bg-gradient-to-br from-accent-500 to-accent-600 p-5 shadow-sm">
-        <p class="text-sm font-medium text-white/80">合计</p>
-        <p class="mt-2 text-3xl font-semibold tracking-tight text-white">{{ totalMetadataCount }}</p>
-        <p class="mt-1 text-xs text-white/60">条元数据</p>
-      </article>
+    <!-- ═══ 统计卡片区 ═══ -->
+    <div class="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6 shrink-0">
+      <MetricTile title="总文档数" :value="String(totalDocuments)" tone="neutral" />
+      <MetricTile title="已切块" :value="String(chunkedDocuments)" tone="success" />
+      <MetricTile title="已向量化" :value="String(vectorizedDocuments)" tone="success" />
+      <MetricTile title="待处理" :value="String(pendingDocuments)" tone="warning" />
+      <MetricTile title="失败" :value="String(failedDocuments)" tone="danger" />
+      <MetricTile title="总切块数" :value="String(totalChunks)" tone="neutral" />
     </div>
 
-    <!-- ═══ 操作按钮栏 ═══ -->
-    <div class="flex flex-wrap items-center gap-3 shrink-0 rounded-2xl border border-black/5 bg-white/80 p-3">
-      <BaseSelect
-        v-model="selectedDocType"
-        :options="DOC_TYPE_OPTIONS"
-        size="sm"
-      />
-      <BaseButton icon="file-excel" :loading="isUploading" @click="triggerFileInput">
-        {{ isUploading ? '导入中...' : '选择Excel文件' }}
-      </BaseButton>
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".xlsx,.xls"
-        class="hidden"
-        @change="handleFileChange"
-      />
+    <!-- ═══ 操作按钮区 ═══ -->
+    <div class="flex flex-wrap items-center gap-2 rounded-2xl border border-black/5 bg-white/80 p-3 shrink-0">
+      <button
+        class="flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
+        @click="handleSystemInit"
+      >
+        <FontAwesomeIcon :icon="['fas', 'gear']" />
+        <span>系统初始化</span>
+      </button>
+
+      <button
+        class="flex items-center gap-2 rounded-xl bg-ink-900 px-4 py-2 text-sm text-white transition-colors hover:bg-ink-700 disabled:opacity-50"
+        :disabled="!isInitialized"
+        @click="handleUploadPdf"
+      >
+        <FontAwesomeIcon :icon="['fas', 'cloud-arrow-up']" />
+        <span>上传研报PDF</span>
+      </button>
+
+      <div class="h-6 w-px bg-ink-200 mx-1"></div>
+
+      <!-- 快捷导入区 -->
+      <div class="flex items-center gap-2">
+        <BaseSelect v-model="selectedDocType" :options="DOC_TYPE_OPTIONS" size="sm" />
+        <BaseButton icon="upload" :loading="isUploading" @click="triggerFileInput">
+          {{ isUploading ? '导入中...' : '选择Excel文件' }}
+        </BaseButton>
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".xlsx,.xls"
+          class="hidden"
+          @change="handleFileChange"
+        />
+      </div>
 
       <span class="ml-auto text-xs text-ink-400">
         共 {{ totalMetadataCount }} 条元数据
@@ -225,91 +314,178 @@ onMounted(() => {
       </p>
     </div>
 
-    <!-- ═══ 筛选栏 ═══ -->
-    <div class="flex flex-wrap items-center gap-3 shrink-0 rounded-xl border border-black/5 bg-slate-50 p-3">
-      <span class="text-sm text-ink-500">筛选：</span>
-      <BaseSelect
-        v-model="filterDocType"
-        :options="[
-          { value: '', label: '全部类型' },
-          { value: 'RESEARCH_REPORT', label: '个股研报' },
-          { value: 'INDUSTRY_REPORT', label: '行业研报' }
-        ]"
-        placeholder="全部类型"
-        size="sm"
-        @change="handleFilterChange"
-      />
-      <BaseSelect
-        v-model="filterStatus"
-        :options="[
-          { value: '', label: '全部状态' },
-          { value: 'loaded', label: '已加载' },
-          { value: 'pending', label: '待处理' }
-        ]"
-        placeholder="全部状态"
-        size="sm"
-        @change="handleFilterChange"
-      />
-    </div>
-
-    <!-- ═══ 文档表格 ═══ -->
-    <div class="flex flex-col rounded-2xl border border-black/5 bg-white/80 overflow-hidden" style="height: 480px;">
+    <!-- ═══ 统计信息仪表盘 ═══ -->
+    <div class="flex flex-col gap-3">
       <!-- 加载中 -->
-      <div v-if="loading" class="flex items-center justify-center py-16">
-        <FontAwesomeIcon :icon="['fas', 'spinner']" spin class="text-2xl text-ink-400" aria-hidden="true" />
-      </div>
-
-      <!-- 表格 -->
-      <div v-else class="overflow-x-auto overflow-y-auto h-full">
-        <table class="w-full text-sm">
-          <thead class="border-b border-black/5 bg-slate-50 sticky top-0">
-            <tr>
-              <th class="w-10 px-4 py-3 text-left font-semibold text-ink-600">
-                <input type="checkbox" class="rounded border-ink-300" disabled />
-              </th>
-              <th class="px-4 py-3 text-left font-semibold text-ink-600">ID</th>
-              <th class="px-4 py-3 text-left font-semibold text-ink-600">标题</th>
-              <th class="px-4 py-3 text-left font-semibold text-ink-600">文档类型</th>
-              <th class="px-4 py-3 text-left font-semibold text-ink-600">股票代码</th>
-              <th class="px-4 py-3 text-center font-semibold text-ink-600">状态</th>
-              <th class="px-4 py-3 text-left font-semibold text-ink-600">操作</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-black/5">
-            <!-- 空状态 -->
-            <tr v-if="!isInitialized">
-              <td colspan="7" class="px-4 py-16">
-                <div class="flex flex-col items-center justify-center text-center">
-                  <FontAwesomeIcon :icon="['fas', 'database']" class="text-3xl text-ink-200 mb-3" aria-hidden="true" />
-                  <p class="text-sm font-medium text-ink-500">尚未初始化</p>
-                  <p class="mt-1 text-xs text-ink-400">请上传 Excel 文件完成系统初始化</p>
-                </div>
-              </td>
-            </tr>
-            <tr v-else-if="isInitialized">
-              <td colspan="7" class="px-4 py-16">
-                <div class="flex flex-col items-center justify-center text-center">
-                  <FontAwesomeIcon :icon="['fas', 'check-circle']" class="text-3xl text-green-300 mb-3" aria-hidden="true" />
-                  <p class="text-sm font-medium text-ink-500">初始化已完成</p>
-                  <p class="mt-1 text-xs text-ink-400">
-                    已加载 {{ totalMetadataCount }} 条元数据（个股 {{ stockMetadataCount }} 条，行业 {{ industryMetadataCount }} 条）
-                  </p>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- 分页 -->
-      <div class="flex items-center justify-between border-t border-black/5 px-4 py-3 text-sm text-ink-500">
-        <p>暂无文档列表 — 共 {{ totalMetadataCount }} 条元数据</p>
-        <div class="flex items-center gap-2">
-          <BaseButton variant="secondary" size="sm" disabled>上一页</BaseButton>
-          <BaseButton variant="secondary" size="sm" disabled>下一页</BaseButton>
+      <div
+        v-if="statsLoading"
+        class="flex items-center justify-center rounded-2xl border border-black/5 bg-white py-10"
+      >
+        <div class="flex items-center gap-2.5">
+          <FontAwesomeIcon :icon="['fas', 'spinner']" spin class="text-base text-ink-400" aria-hidden="true" />
+          <span class="text-sm text-ink-400">正在加载统计信息...</span>
         </div>
       </div>
+
+      <!-- 无数据 -->
+      <div
+        v-else-if="!stats"
+        class="flex items-center justify-center rounded-2xl border border-black/5 bg-white py-10"
+      >
+        <FontAwesomeIcon :icon="['fas', 'chart-pie']" class="mr-2.5 text-base text-ink-300" aria-hidden="true" />
+        <span class="text-sm text-ink-400">暂无统计数据，请先完成系统初始化后再查看</span>
+        <BaseButton variant="secondary" size="sm" class="ml-4" @click="loadStats">重新加载</BaseButton>
+      </div>
+
+      <template v-else>
+        <!-- KPI 指标栏 -->
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div class="flex items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3">
+            <FontAwesomeIcon :icon="['fas', 'file-lines']" class="text-sm text-ink-300" aria-hidden="true" />
+            <div>
+              <p class="text-lg font-semibold tabular-nums text-ink-900">{{ stats.documents?.total ?? 0 }}</p>
+              <p class="text-xs text-ink-400">文档总数</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3">
+            <FontAwesomeIcon :icon="['fas', 'scissors']" class="text-sm text-ink-300" aria-hidden="true" />
+            <div>
+              <p class="text-lg font-semibold tabular-nums text-ink-900">{{ chunkedDocuments }}</p>
+              <p class="text-xs text-ink-400">已切块</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3">
+            <FontAwesomeIcon :icon="['fas', 'bolt']" class="text-sm text-ink-300" aria-hidden="true" />
+            <div>
+              <p class="text-lg font-semibold tabular-nums text-ink-900">{{ vectorizedDocuments }}</p>
+              <p class="text-xs text-ink-400">已向量化</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3">
+            <FontAwesomeIcon :icon="['fas', 'cubes']" class="text-sm text-ink-300" aria-hidden="true" />
+            <div>
+              <p class="text-lg font-semibold tabular-nums text-ink-900">{{ totalChunks }}</p>
+              <p class="text-xs text-ink-400">切块总数</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 文档分布 -->
+        <section class="rounded-xl border border-black/5 bg-white">
+          <div class="flex items-center gap-2 border-b border-black/5 px-4 py-2.5">
+            <FontAwesomeIcon :icon="['fas', 'file-lines']" class="text-xs text-ink-300" aria-hidden="true" />
+            <h3 class="text-sm font-medium text-ink-700">文档分布</h3>
+            <span class="ml-auto text-xs text-ink-400 tabular-nums">{{ stats.documents?.total ?? 0 }} 份</span>
+          </div>
+          <div class="grid grid-cols-1 gap-0 divide-y divide-black/5 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+            <!-- 文档类型 -->
+            <div class="px-4 py-3">
+              <p class="text-xs text-ink-400 mb-2">文档类型</p>
+              <div v-if="Object.keys(stats.documents?.by_doc_type || {}).length" class="space-y-1.5">
+                <div
+                  v-for="(count, key) in stats.documents.by_doc_type"
+                  :key="key"
+                  class="flex items-center justify-between"
+                >
+                  <span class="text-sm text-ink-600">{{ DOC_TYPE_LABEL_MAP[key] || key }}</span>
+                  <span class="text-sm font-medium tabular-nums text-ink-800">{{ count }}</span>
+                </div>
+              </div>
+              <p v-else class="text-xs text-ink-300">-</p>
+            </div>
+            <!-- 切块状态 -->
+            <div class="px-4 py-3">
+              <p class="text-xs text-ink-400 mb-2">切块状态</p>
+              <div v-if="Object.keys(stats.documents?.by_chunk_status || {}).length" class="space-y-1.5">
+                <div
+                  v-for="(count, key) in stats.documents.by_chunk_status"
+                  :key="key"
+                  class="flex items-center justify-between"
+                >
+                  <StatusBadge :label="CHUNK_STATUS_MAP[key]?.label || `状态${key}`" :tone="CHUNK_STATUS_MAP[key]?.tone || 'neutral'" />
+                  <span class="text-sm font-medium tabular-nums text-ink-800">{{ count }}</span>
+                </div>
+              </div>
+              <p v-else class="text-xs text-ink-300">-</p>
+            </div>
+            <!-- 向量状态 -->
+            <div class="px-4 py-3">
+              <p class="text-xs text-ink-400 mb-2">向量状态</p>
+              <div v-if="Object.keys(stats.documents?.by_vector_status || {}).length" class="space-y-1.5">
+                <div
+                  v-for="(count, key) in stats.documents.by_vector_status"
+                  :key="key"
+                  class="flex items-center justify-between"
+                >
+                  <StatusBadge :label="VECTOR_STATUS_MAP[key]?.label || `状态${key}`" :tone="VECTOR_STATUS_MAP[key]?.tone || 'neutral'" />
+                  <span class="text-sm font-medium tabular-nums text-ink-800">{{ count }}</span>
+                </div>
+              </div>
+              <p v-else class="text-xs text-ink-300">-</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 向量化进度 -->
+        <section class="rounded-xl border border-black/5 bg-white">
+          <div class="flex items-center gap-2 border-b border-black/5 px-4 py-2.5">
+            <FontAwesomeIcon :icon="['fas', 'bolt']" class="text-xs text-ink-300" aria-hidden="true" />
+            <h3 class="text-sm font-medium text-ink-700">切块向量化进度</h3>
+            <span class="ml-auto text-xs text-ink-400 tabular-nums">{{ totalChunks }} 块</span>
+          </div>
+          <div class="px-4 py-3">
+            <div v-if="Object.keys(stats.chunks?.by_vector_status || {}).length" class="space-y-3">
+              <div
+                v-for="(count, key) in stats.chunks.by_vector_status"
+                :key="key"
+              >
+                <div class="flex items-center justify-between mb-1">
+                  <StatusBadge :label="VECTOR_STATUS_MAP[key]?.label || `状态${key}`" :tone="VECTOR_STATUS_MAP[key]?.tone || 'neutral'" />
+                  <span class="text-xs tabular-nums text-ink-400">
+                    {{ count }}（{{ totalChunks ? (count / totalChunks * 100).toFixed(1) : 0 }}%）
+                  </span>
+                </div>
+                <div class="h-1.5 w-full overflow-hidden rounded-full bg-ink-100">
+                  <div
+                    class="h-full rounded-full transition-all"
+                    :style="{ width: totalChunks ? (count / totalChunks * 100).toFixed(1) + '%' : '0%' }"
+                  ></div>
+                </div>
+              </div>
+            </div>
+            <p v-else class="py-4 text-center text-sm text-ink-300">暂无切块数据</p>
+          </div>
+        </section>
+
+        <!-- 底部操作 -->
+        <div class="flex items-center justify-end gap-3">
+          <span class="text-xs text-ink-400">上次更新：刚刚</span>
+          <BaseButton
+            variant="secondary"
+            icon="rotate-right"
+            size="sm"
+            :loading="statsLoading"
+            @click="loadStats"
+          >
+            刷新统计
+          </BaseButton>
+        </div>
+      </template>
     </div>
+
+    <!-- ═══ 系统初始化弹窗 ═══ -->
+    <SystemInitModal
+      :visible="showSystemInitModal"
+      @close="showSystemInitModal = false"
+      @success="handleSystemInitSuccess"
+    />
+
+    <!-- ═══ 增量上传PDF弹窗 ═══ -->
+    <UploadPdfModal
+      :visible="showUploadPdfModal"
+      @close="showUploadPdfModal = false"
+      @success="handleUploadPdfSuccess"
+    />
   </div>
 </template>
 

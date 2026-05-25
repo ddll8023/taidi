@@ -1,6 +1,6 @@
 /**
  * 知识库管理 API
- * 功能描述：系统初始化（研报元数据导入）、初始化状态查询
+ * 功能描述：系统初始化（研报元数据导入）、初始化状态查询、整体统计信息
  */
 import request from './request'
 
@@ -23,4 +23,12 @@ export function initKnowledgeBase(file, docType) {
  */
 export function getInitStatus() {
   return request.post('/knowledge-base/init-status')
+}
+
+/**
+ * 获取知识库整体统计信息
+ * @returns {Promise} { documents: { total, by_chunk_status, by_vector_status, by_doc_type }, chunks: { total, by_vector_status } }
+ */
+export function getKnowledgeBaseStats() {
+  return request.post('/knowledge-base/stats')
 }
