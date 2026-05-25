@@ -1,5 +1,8 @@
 """知识库管理 Schema"""
 
+from datetime import date
+from typing import Literal
+
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -41,7 +44,43 @@ class ChunkStatsData(BaseModel):
 # 系统初始化使用 multipart/form-data，API 层 Form 逐个声明，不需要请求类
 
 
+class KnowledgeDocumentListRequest(BaseModel):
+    """知识库文档列表请求"""
+
+    page: int = Field(1, ge=1, description="页码")
+    page_size: int = Field(10, ge=10, description="每页数量")
+    keyword: str | None = Field(None, description="标题关键词搜索")
+    doc_type: str | None = Field(None, description="文档类型筛选")
+    stock_code: str | None = Field(None, description="股票代码筛选")
+    chunk_status: Literal[0, 1, 2, 3] | None = Field(
+        None, description="切块状态筛选：0待切块/1切块中/2完成/3失败"
+    )
+    vector_status: Literal[0, 1, 2, 3] | None = Field(
+        None, description="向量状态筛选：0未向量化/1向量化中/2已向量化/3失败"
+    )
+    sort_by: Literal["created_at", "updated_at"] | None = Field(
+        "updated_at", description="排序字段"
+    )
+    sort_order: Literal["desc", "asc"] | None = Field("desc", description="排序方式")
+
+
 # ========== 响应类（Response）==========
+
+
+class KnowledgeDocumentListItemResponse(BaseModel):
+    """知识库文档列表项响应"""
+
+    id: int = Field(..., description="文档ID")
+    doc_type: str = Field(..., description="文档类型")
+    title: str = Field(..., description="文档标题")
+    stock_code: str | None = Field(None, description="股票代码")
+    stock_abbr: str | None = Field(None, description="股票简称")
+    publish_date: date | None = Field(None, description="发布日期")
+    chunk_status: int = Field(..., description="切块状态")
+    vector_status: int = Field(..., description="向量状态")
+    metadata_status: int = Field(..., description="元数据状态")
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class InitKnowledgeBaseResponse(BaseModel):

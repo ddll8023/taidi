@@ -1,6 +1,7 @@
 """知识库管理服务"""
 
 import hashlib
+import math
 import os
 import tempfile
 
@@ -14,7 +15,7 @@ from app.db.database import commit_or_rollback
 from app.models import knowledge_document as models_knowledge_document
 from app.models import knowledge_chunk as models_knowledge_chunk
 from app.schemas import knowledge_base as schemas_knowledge_base
-from app.schemas.common import ErrorCode
+from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
@@ -150,6 +151,91 @@ def get_knowledge_base_stats(db: Session):
         chunks=schemas_knowledge_base.ChunkStatsData(
             total=chunk_total,
             by_vector_status=chunk_by_vector_status,
+        ),
+    )
+
+
+def get_knowledge_document_list(
+    db: Session,
+    get_knowledge_document_list_request: schemas_knowledge_base.KnowledgeDocumentListRequest,
+):
+    """查询知识库文档列表"""
+    logger.info(
+        f"查询知识库文档列表: page={get_knowledge_document_list_request.page} page_size={get_knowledge_document_list_request.page_size}"
+    )
+    base_stmt = select(models_knowledge_document.KnowledgeDocument)
+
+    if get_knowledge_document_list_request.keyword:
+        base_stmt = base_stmt.where(
+            models_knowledge_document.KnowledgeDocument.title.like(
+                f"%{get_knowledge_document_list_request.keyword}%"
+            )
+        )
+
+    if get_knowledge_document_list_request.doc_type is not None:
+        base_stmt = base_stmt.where(
+            models_knowledge_document.KnowledgeDocument.doc_type
+            == get_knowledge_document_list_request.doc_type
+        )
+
+    if get_knowledge_document_list_request.stock_code is not None:
+        base_stmt = base_stmt.where(
+            models_knowledge_document.KnowledgeDocument.stock_code
+            == get_knowledge_document_list_request.stock_code
+        )
+
+    if get_knowledge_document_list_request.chunk_status is not None:
+        base_stmt = base_stmt.where(
+            models_knowledge_document.KnowledgeDocument.chunk_status
+            == get_knowledge_document_list_request.chunk_status
+        )
+
+    if get_knowledge_document_list_request.vector_status is not None:
+        base_stmt = base_stmt.where(
+            models_knowledge_document.KnowledgeDocument.vector_status
+            == get_knowledge_document_list_request.vector_status
+        )
+
+    total = db.scalar(select(func.count()).select_from(base_stmt.subquery()))
+
+    sort_column = (
+        models_knowledge_document.KnowledgeDocument.updated_at
+        if get_knowledge_document_list_request.sort_by == "updated_at"
+        else models_knowledge_document.KnowledgeDocument.created_at
+    )
+
+    result = db.scalars(
+        base_stmt.order_by(
+            sort_column.desc()
+            if get_knowledge_document_list_request.sort_order == "desc"
+            else sort_column.asc()
+        )
+        .offset(
+            (get_knowledge_document_list_request.page - 1)
+            * get_knowledge_document_list_request.page_size
+        )
+        .limit(get_knowledge_document_list_request.page_size)
+    )
+
+    logger.info(
+        f"知识库文档列表查询完成: total={total} page={get_knowledge_document_list_request.page}"
+    )
+    return PaginatedResponse[schemas_knowledge_base.KnowledgeDocumentListItemResponse](
+        lists=[
+            schemas_knowledge_base.KnowledgeDocumentListItemResponse.model_validate(
+                item
+            )
+            for item in result
+        ],
+        pagination=PaginationInfo(
+            page=get_knowledge_document_list_request.page,
+            page_size=get_knowledge_document_list_request.page_size,
+            total=total,
+            total_pages=(
+                math.ceil(total / get_knowledge_document_list_request.page_size)
+                if total
+                else 0
+            ),
         ),
     )
 

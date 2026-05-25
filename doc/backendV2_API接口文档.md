@@ -864,6 +864,83 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | chunks.total | int | 切块总数 |
 | chunks.by_vector_status | dict | 按向量状态分组：0 未向量化 / 1 已向量化 |
 
+### 4.4 获取知识库文档列表
+
+- **POST** `/api/v1/knowledge-base/list`
+- **描述**：分页查询知识库文档列表，支持多条件筛选与排序。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+| ---- | ---- | ---- | ------ | ---- |
+| page | int | 否 | 1 | 页码（≥1） |
+| page_size | int | 否 | 10 | 每页数量（≥10） |
+| keyword | str | 否 | null | 标题关键词模糊搜索 |
+| doc_type | str | 否 | null | 文档类型筛选（`RESEARCH_REPORT` / `INDUSTRY_REPORT`） |
+| stock_code | str | 否 | null | 股票代码筛选（6位） |
+| chunk_status | int | 否 | null | 切块状态筛选：0 待切块 / 1 切块中 / 2 完成 / 3 失败 |
+| vector_status | int | 否 | null | 向量状态筛选：0 未向量化 / 1 向量化中 / 2 已向量化 / 3 失败 |
+| sort_by | str | 否 | `updated_at` | 排序字段：`created_at` / `updated_at` |
+| sort_order | str | 否 | `desc` | 排序方式：`desc` / `asc` |
+
+**请求示例**：
+```json
+{
+  "page": 1,
+  "page_size": 10,
+  "keyword": "贵州茅台",
+  "doc_type": "RESEARCH_REPORT",
+  "chunk_status": 2,
+  "sort_by": "updated_at",
+  "sort_order": "desc"
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "lists": [
+      {
+        "id": 1,
+        "doc_type": "RESEARCH_REPORT",
+        "title": "贵州茅台深度研究报告",
+        "stock_code": "600519",
+        "stock_abbr": "贵州茅台",
+        "publish_date": "2024-03-15",
+        "chunk_status": 2,
+        "vector_status": 2,
+        "metadata_status": 1
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total": 156,
+      "total_pages": 16
+    }
+  }
+}
+```
+
+**列表项字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| id | int | 文档 ID |
+| doc_type | str | 文档类型：`RESEARCH_REPORT` 个股研报 / `INDUSTRY_REPORT` 行业研报 |
+| title | str | 文档标题 |
+| stock_code | str | 股票代码（个股研报有值，行业研报为 null） |
+| stock_abbr | str | 股票简称（个股研报有值，行业研报为 null） |
+| publish_date | str | 发布日期 |
+| chunk_status | int | 切块状态：0 待切块 / 1 切块中 / 2 完成 / 3 失败 |
+| vector_status | int | 向量状态：0 未向量化 / 1 向量化中 / 2 已向量化 / 3 失败 |
+| metadata_status | int | 元数据状态 |
+
 ---
 
 ## 五、后端处理流程说明

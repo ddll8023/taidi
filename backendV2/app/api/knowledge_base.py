@@ -2,6 +2,7 @@
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     Form,
@@ -11,11 +12,31 @@ from typing import Annotated
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.schemas.response import success, error
-from app.schemas.common import ApiResponse
+from app.schemas.common import ApiResponse, PaginatedResponse
 from app.utils.exception import ServiceException
 from app.services import knowledge_base as services_knowledge_base
 from app.schemas import knowledge_base as schemas_knowledge_base
+
 router = APIRouter(prefix="/api/v1/knowledge-base", tags=["知识库管理"])
+
+
+@router.post(
+    "/list",
+    response_model=ApiResponse[PaginatedResponse],
+    description="获取知识库文档列表",
+)
+def get_knowledge_document_list(
+    db: Annotated[Session, Depends(get_db)],
+    body: Annotated[
+        schemas_knowledge_base.KnowledgeDocumentListRequest,
+        Body(..., description="知识库文档列表请求"),
+    ],
+):
+    """获取知识库文档列表"""
+    try:
+        return success(services_knowledge_base.get_knowledge_document_list(db, body))
+    except ServiceException as e:
+        return error(e.code, e.message)
 
 
 @router.post(

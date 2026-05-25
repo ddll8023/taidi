@@ -30,7 +30,20 @@ import {
   faMessage,
   faComments,
   faPlus,
-  faTriangleExclamation
+  faTriangleExclamation,
+  faExclamationCircle,
+  faGear,
+  faUpload,
+  faScissors,
+  faBolt,
+  faCubes,
+  faList,
+  faInbox,
+  faAnglesLeft,
+  faAngleLeft,
+  faAngleRight,
+  faAnglesRight,
+  faChartPie
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 
@@ -67,7 +80,20 @@ library.add(
   faMessage,
   faComments,
   faPlus,
-  faTriangleExclamation
+  faTriangleExclamation,
+  faExclamationCircle,
+  faGear,
+  faUpload,
+  faScissors,
+  faBolt,
+  faCubes,
+  faList,
+  faInbox,
+  faAnglesLeft,
+  faAngleLeft,
+  faAngleRight,
+  faAnglesRight,
+  faChartPie
 )
 
 const app = createApp(App)

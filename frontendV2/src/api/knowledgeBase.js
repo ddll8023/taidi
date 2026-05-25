@@ -32,3 +32,21 @@ export function getInitStatus() {
 export function getKnowledgeBaseStats() {
   return request.post('/knowledge-base/stats')
 }
+
+/**
+ * 获取知识库文档列表（分页 + 筛选 + 排序）
+ * @param {Object} params - 查询参数
+ * @param {number} params.page - 页码（≥1）
+ * @param {number} params.page_size - 每页数量（≥10）
+ * @param {string} [params.keyword] - 标题关键词搜索
+ * @param {string} [params.doc_type] - 文档类型筛选：RESEARCH_REPORT / INDUSTRY_REPORT
+ * @param {string} [params.stock_code] - 股票代码筛选
+ * @param {number} [params.chunk_status] - 切块状态筛选：0待切块/1切块中/2完成/3失败
+ * @param {number} [params.vector_status] - 向量状态筛选：0未向量化/1向量化中/2已向量化/3失败
+ * @param {string} [params.sort_by] - 排序字段：created_at / updated_at
+ * @param {string} [params.sort_order] - 排序方式：desc / asc
+ * @returns {Promise} { lists: [...], pagination: { page, page_size, total, total_pages } }
+ */
+export function getKnowledgeDocumentList(params) {
+  return request.post('/knowledge-base/list', params)
+}

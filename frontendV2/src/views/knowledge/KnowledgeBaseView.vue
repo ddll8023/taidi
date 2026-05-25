@@ -4,14 +4,15 @@
  * 功能描述：系统初始化（研报元数据导入）+ 状态查询 + 统计信息仪表盘
  * 依赖组件：MetricTile, StatusBadge, BaseButton, BaseSelect, SystemInitModal, UploadPdfModal
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import MetricTile from '@/components/common/MetricTile.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import SystemInitModal from '@/components/common/SystemInitModal.vue'
 import UploadPdfModal from '@/components/common/UploadPdfModal.vue'
-import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats } from '@/api/knowledgeBase'
+import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList } from '@/api/knowledgeBase'
 
 // ── 常量 ──
 
@@ -69,6 +70,45 @@ const importResult = ref(null)
 const showSystemInitModal = ref(false)
 const showUploadPdfModal = ref(false)
 
+// ── 文档列表 ──
+
+const listState = reactive({
+  items: [],
+  page: 1,
+  pageSize: 10,
+  total: 0
+})
+
+const listKeyword = ref('')
+const listDocTypeFilter = ref('')
+const listChunkStatusFilter = ref('')
+const listVectorStatusFilter = ref('')
+const isLoadingList = ref(false)
+const isRefreshingList = ref(false)
+const listErrorMessage = ref('')
+
+const docTypeFilterOptions = [
+  { value: '', label: '全部类型' },
+  { value: 'RESEARCH_REPORT', label: '个股研报' },
+  { value: 'INDUSTRY_REPORT', label: '行业研报' }
+]
+
+const chunkStatusFilterOptions = [
+  { value: '', label: '全部切块状态' },
+  { value: '0', label: '待切块' },
+  { value: '1', label: '切块中' },
+  { value: '2', label: '已完成' },
+  { value: '3', label: '失败' }
+]
+
+const vectorStatusFilterOptions = [
+  { value: '', label: '全部向量状态' },
+  { value: '0', label: '未向量化' },
+  { value: '1', label: '向量化中' },
+  { value: '2', label: '已向量化' },
+  { value: '3', label: '失败' }
+]
+
 // ── 计算属性 ──
 
 const totalDocuments = computed(() => stats.value.documents.total)
@@ -105,6 +145,13 @@ const noticeClass = computed(() => {
   return uploadMessage.value.type === 'success'
     ? 'border-green-200 bg-green-50 text-green-700'
     : 'border-red-200 bg-red-50 text-red-700'
+})
+
+const hasListItems = computed(() => listState.items.length > 0)
+const listTotalPages = computed(() => {
+  const pageSize = Number(listState.pageSize) || 10
+  const total = Number(listState.total) || listState.items.length
+  return Math.max(1, Math.ceil(total / pageSize))
 })
 
 // ── 数据加载 ──
@@ -201,11 +248,81 @@ async function handleUploadPdfSuccess() {
   await loadStats()
 }
 
+// ── 文档列表加载 ──
+
+const formatDate = (value) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date)
+}
+
+const fetchDocumentList = async ({ silent = false } = {}) => {
+  if (silent) {
+    isRefreshingList.value = true
+  } else {
+    isLoadingList.value = true
+    listErrorMessage.value = ''
+  }
+
+  try {
+    const params = {
+      page: listState.page,
+      page_size: listState.pageSize
+    }
+    if (listKeyword.value.trim()) params.keyword = listKeyword.value.trim()
+    if (listDocTypeFilter.value) params.doc_type = listDocTypeFilter.value
+    if (listChunkStatusFilter.value !== '') params.chunk_status = Number(listChunkStatusFilter.value)
+    if (listVectorStatusFilter.value !== '') params.vector_status = Number(listVectorStatusFilter.value)
+
+    const response = await getKnowledgeDocumentList(params)
+    const payload = response?.data || response
+    listState.items = payload?.lists || []
+    listState.total = payload?.pagination?.total || 0
+    listErrorMessage.value = ''
+  } catch (error) {
+    listErrorMessage.value = error.message || '加载文档列表失败'
+    listState.items = []
+  } finally {
+    isLoadingList.value = false
+    isRefreshingList.value = false
+  }
+}
+
+const handleListSearch = () => {
+  listState.page = 1
+  fetchDocumentList()
+}
+
+const handleListReset = () => {
+  listKeyword.value = ''
+  listDocTypeFilter.value = ''
+  listChunkStatusFilter.value = ''
+  listVectorStatusFilter.value = ''
+  listState.page = 1
+  fetchDocumentList()
+}
+
+const handleListPageChange = (page) => {
+  if (page < 1 || page > listTotalPages.value) return
+  listState.page = page
+  fetchDocumentList()
+}
+
+const handleListKeydown = (event) => {
+  if (event.key === 'Enter') handleListSearch()
+}
+
 // ── 初始化 ──
 
 onMounted(() => {
   loadInitStatus()
   loadStats()
+  fetchDocumentList()
 })
 </script>
 
@@ -469,6 +586,166 @@ onMounted(() => {
           >
             刷新统计
           </BaseButton>
+        </div>
+      </template>
+    </div>
+
+    <!-- ═══ 文档列表 ═══ -->
+    <div class="flex flex-col gap-3">
+      <div class="flex items-center gap-2">
+        <FontAwesomeIcon :icon="['fas', 'list']" class="text-xs text-ink-300" aria-hidden="true" />
+        <h3 class="text-sm font-medium text-ink-700">文档列表</h3>
+        <span class="text-xs text-ink-400 tabular-nums">共 {{ listState.total }} 条</span>
+        <div class="ml-auto">
+          <BaseButton
+            variant="secondary"
+            icon="rotate-right"
+            size="sm"
+            :loading="isRefreshingList"
+            @click="fetchDocumentList({ silent: true })"
+          >
+            刷新
+          </BaseButton>
+        </div>
+      </div>
+
+      <!-- 筛选栏 -->
+      <div class="flex flex-wrap items-center gap-2 rounded-2xl border border-black/5 bg-white/80 p-3">
+        <BaseInput
+          v-model="listKeyword"
+          placeholder="搜索标题关键词..."
+          size="sm"
+          class="w-48"
+          @keydown="handleListKeydown"
+        />
+        <BaseSelect v-model="listDocTypeFilter" :options="docTypeFilterOptions" size="sm" />
+        <BaseSelect v-model="listChunkStatusFilter" :options="chunkStatusFilterOptions" size="sm" />
+        <BaseSelect v-model="listVectorStatusFilter" :options="vectorStatusFilterOptions" size="sm" />
+        <BaseButton variant="primary" icon="search" size="sm" @click="handleListSearch">搜索</BaseButton>
+        <BaseButton variant="secondary" icon="rotate-right" size="sm" @click="handleListReset">重置</BaseButton>
+      </div>
+
+      <!-- 加载中 -->
+      <div
+        v-if="isLoadingList"
+        class="flex items-center justify-center rounded-2xl border border-black/5 bg-white py-10"
+      >
+        <div class="flex items-center gap-2.5">
+          <FontAwesomeIcon :icon="['fas', 'spinner']" spin class="text-base text-ink-400" aria-hidden="true" />
+          <span class="text-sm text-ink-400">正在加载文档列表...</span>
+        </div>
+      </div>
+
+      <!-- 加载失败 -->
+      <div
+        v-else-if="listErrorMessage"
+        class="flex items-center justify-center rounded-2xl border border-black/5 bg-white py-10"
+      >
+        <div class="text-center">
+          <FontAwesomeIcon :icon="['fas', 'triangle-exclamation']" class="mb-2 text-base text-danger" aria-hidden="true" />
+          <p class="text-sm text-ink-500">{{ listErrorMessage }}</p>
+          <BaseButton variant="secondary" size="sm" class="mt-3" @click="fetchDocumentList()">重新加载</BaseButton>
+        </div>
+      </div>
+
+      <!-- 空数据 -->
+      <div
+        v-else-if="!hasListItems"
+        class="flex items-center justify-center rounded-2xl border border-black/5 bg-white py-10"
+      >
+        <FontAwesomeIcon :icon="['fas', 'inbox']" class="mr-2.5 text-base text-ink-300" aria-hidden="true" />
+        <span class="text-sm text-ink-400">暂无文档数据</span>
+      </div>
+
+      <!-- 文档表格 -->
+      <template v-else>
+        <div class="overflow-x-auto rounded-2xl border border-black/5 bg-white">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-black/5 bg-ink-50 text-left text-xs font-medium text-ink-500 uppercase tracking-wider">
+                <th class="px-4 py-3 w-28">标题</th>
+                <th class="px-4 py-3 w-24">文档类型</th>
+                <th class="px-4 py-3 w-28">股票代码</th>
+                <th class="px-4 py-3 w-40">股票简称</th>
+                <th class="px-4 py-3 w-28">发布日期</th>
+                <th class="px-4 py-3 w-24">切块状态</th>
+                <th class="px-4 py-3 w-24">向量状态</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-black/5">
+              <tr
+                v-for="item in listState.items"
+                :key="item.id"
+                class="transition-colors hover:bg-ink-50/50"
+              >
+                <td class="px-4 py-3">
+                  <p class="max-w-xs truncate font-medium text-ink-800" :title="item.title">
+                    {{ item.title || '-' }}
+                  </p>
+                </td>
+                <td class="px-4 py-3">
+                  <span class="text-ink-600">{{ DOC_TYPE_LABEL_MAP[item.doc_type] || item.doc_type || '-' }}</span>
+                </td>
+                <td class="px-4 py-3 tabular-nums text-ink-600">{{ item.stock_code || '-' }}</td>
+                <td class="px-4 py-3 text-ink-600">{{ item.stock_abbr || '-' }}</td>
+                <td class="px-4 py-3 text-ink-500">{{ formatDate(item.publish_date) }}</td>
+                <td class="px-4 py-3">
+                  <StatusBadge
+                    :label="CHUNK_STATUS_MAP[item.chunk_status]?.label || `状态${item.chunk_status}`"
+                    :tone="CHUNK_STATUS_MAP[item.chunk_status]?.tone || 'neutral'"
+                  />
+                </td>
+                <td class="px-4 py-3">
+                  <StatusBadge
+                    :label="VECTOR_STATUS_MAP[item.vector_status]?.label || `状态${item.vector_status}`"
+                    :tone="VECTOR_STATUS_MAP[item.vector_status]?.tone || 'neutral'"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 分页 -->
+        <div class="flex items-center justify-between rounded-2xl border border-black/5 bg-white/80 px-4 py-3">
+          <span class="text-xs text-ink-400">
+            第 {{ listState.page }}/{{ listTotalPages }} 页，共 {{ listState.total }} 条
+          </span>
+          <div class="flex items-center gap-1.5">
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-only
+              icon="angles-left"
+              :disabled="listState.page <= 1"
+              @click="handleListPageChange(1)"
+            />
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-only
+              icon="angle-left"
+              :disabled="listState.page <= 1"
+              @click="handleListPageChange(listState.page - 1)"
+            />
+            <span class="px-2 text-xs tabular-nums text-ink-600">{{ listState.page }}</span>
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-only
+              icon="angle-right"
+              :disabled="listState.page >= listTotalPages"
+              @click="handleListPageChange(listState.page + 1)"
+            />
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              icon-only
+              icon="angles-right"
+              :disabled="listState.page >= listTotalPages"
+              @click="handleListPageChange(listTotalPages)"
+            />
+          </div>
         </div>
       </template>
     </div>
