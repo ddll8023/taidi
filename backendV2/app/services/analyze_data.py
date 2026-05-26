@@ -67,8 +67,9 @@ def upload_report_file(db: Session, file_list: list[UploadFile]):
                     f"文件 {file.filename} 不是PDF文件",
                 )
             # 保存文件
+
             bytes_content = file.file.read()
-            file_name = f"{file.filename}-{uuid.uuid4().hex}"
+            file_name = f"{file.filename.removesuffix('.pdf')}-{uuid.uuid4().hex}.pdf"
             file_path = os.path.join(settings.FINCANCIAL_REPORT_UPLOAD_DIR, file_name)
 
             save_file(bytes_content, file_path)
@@ -546,6 +547,7 @@ def _extract_report_data_from_filename(
 ):
     """从文件名中提取元数据"""
     data = {}
+    filename = filename.removesuffix(".pdf")
 
     # 格式1：{6位股票代码}_{日期}_{随机码}.pdf — 上交所文件名格式
     match = re.match(

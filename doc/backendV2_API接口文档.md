@@ -941,6 +941,153 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | vector_status | int | 向量状态：0 未向量化 / 1 向量化中 / 2 已向量化 / 3 失败 |
 | metadata_status | int | 元数据状态 |
 
+### 4.5 提交文档切块任务
+
+- **POST** `/api/v1/knowledge-base/chunk`
+- **描述**：对选中的知识库文档执行文本切块（同步执行）。逐文档读取 PDF 全文 → 递归字符分割 → 写入 `knowledge_chunk` 表，同时更新文档的切块状态。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| document_ids | int[] | 是 | 待切块的文档 ID 列表，至少 1 个 |
+
+**请求示例**：
+```json
+{
+  "document_ids": [1, 2, 3]
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 3,
+    "success_count": 2,
+    "failed_count": 1,
+    "results": [
+      {
+        "document_id": 1,
+        "title": "某某公司研报",
+        "chunk_count": 15,
+        "success": true,
+        "error": null
+      },
+      {
+        "document_id": 2,
+        "title": "",
+        "chunk_count": 0,
+        "success": false,
+        "error": "文档不存在"
+      }
+    ]
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| total | int | 请求处理的文档总数 |
+| success_count | int | 切块成功的文档数 |
+| failed_count | int | 切块失败的文档数 |
+| results | object[] | 逐文档切块结果列表 |
+| results[].document_id | int | 文档 ID |
+| results[].title | str | 文档标题 |
+| results[].chunk_count | int | 生成的切块数量 |
+| results[].success | bool | 是否切块成功 |
+| results[].error | str\|null | 失败原因（成功时为 null） |
+
+**切块流程说明**：
+
+```
+提交切块请求
+  │
+  └─ 逐文档执行（同步）：
+       ├─ 1. 校验文档存在且 PDF 源文件可读
+       ├─ 2. 标记 chunk_status = 1（切块中）
+       ├─ 3. 清理该文档旧切块数据
+       ├─ 4. 读取 PDF 全文（分页 + 短页合并）
+       ├─ 5. RecursiveCharacterTextSplitter 切块
+       ├─ 6. 跳过长度 < 50 字符的切块
+       ├─ 7. 批量写入 knowledge_chunk 表
+       ├─ 8. 更新 doc.chunk_count、chunk_status = 2（完成）
+       └─ 异常时：chunk_status = 3（失败） + 记录错误信息
+```
+
+### 4.6 批量上传知识库文档 PDF
+
+- **POST** `/api/v1/knowledge-base/upload`
+- **描述**：批量上传研报 PDF 文件，按文件名（不含扩展名）匹配已存在的元数据记录，写入 PDF 源文件路径并更新 `metadata_status`。
+- **Content-Type**：`multipart/form-data`
+
+| 参数 | 类型 | 位置 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- | ---- |
+| file_list | File[] | body | 是 | PDF 文件列表，支持多文件同时上传 |
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 3,
+    "success_count": 2,
+    "failed_count": 1,
+    "success_documents": [
+      {
+        "document_id": 1,
+        "title": "某某公司研报",
+        "file_name": "某某公司研报.pdf"
+      }
+    ],
+    "failed_files": [
+      {
+        "file_name": "无效文件.txt",
+        "error": "文件 无效文件.txt 不是PDF文件"
+      }
+    ]
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| total | int | 上传文件总数 |
+| success_count | int | 成功匹配并保存的数量 |
+| failed_count | int | 失败数量 |
+| success_documents | object[] | 成功上传的文档列表 |
+| success_documents[].document_id | int | 匹配到的文档 ID |
+| success_documents[].title | str | 文档标题 |
+| success_documents[].file_name | str | 原始文件名 |
+| failed_files | object[] | 失败文件列表 |
+| failed_files[].file_name | str | 文件名 |
+| failed_files[].error | str | 错误描述 |
+
+**上传匹配规则**：
+
+```
+提交上传请求
+  │
+  └─ 逐文件处理：
+       ├─ 1. 校验文件扩展名为 .pdf
+       ├─ 2. 取文件名（去 .pdf）作为匹配标题
+       ├─ 3. 在 knowledge_document 表中查找 title == 文件名 且 metadata_status == 1 的记录
+       ├─ 4. 校验该文档是否已上传过 PDF（source_path 是否已存在）
+       ├─ 5. 保存 PDF 到 uploads/research_report/ 目录
+       ├─ 6. 更新 doc.source_path、doc.doc_hash、doc.metadata_status = 2
+       └─ 异常/不匹配时：记录失败原因，继续处理下一个文件
+```
+
 ---
 
 ## 五、后端处理流程说明

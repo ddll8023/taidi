@@ -43,7 +43,9 @@ import {
   faAngleLeft,
   faAngleRight,
   faAnglesRight,
-  faChartPie
+  faChartPie,
+  faBrain,
+  faCircleCheck
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 
@@ -93,7 +95,9 @@ library.add(
   faAngleLeft,
   faAngleRight,
   faAnglesRight,
-  faChartPie
+  faChartPie,
+  faBrain,
+  faCircleCheck
 )
 
 const app = createApp(App)

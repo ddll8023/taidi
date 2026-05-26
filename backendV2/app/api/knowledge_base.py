@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/v1/knowledge-base", tags=["知识库管理"])
 def get_knowledge_document_list(
     db: Annotated[Session, Depends(get_db)],
     body: Annotated[
-        schemas_knowledge_base.KnowledgeDocumentListRequest,
+        schemas_knowledge_base.GetKnowledgeDocumentListRequest,
         Body(..., description="知识库文档列表请求"),
     ],
 ):
@@ -64,7 +64,7 @@ def init_knowledge_base(
 
 @router.post(
     "/init-status",
-    response_model=ApiResponse[schemas_knowledge_base.InitStatusResponse],
+    response_model=ApiResponse[schemas_knowledge_base.GetInitStatusResponse],
     description="查询系统初始化状态",
 )
 def get_init_status(
@@ -79,7 +79,7 @@ def get_init_status(
 
 @router.post(
     "/stats",
-    response_model=ApiResponse[schemas_knowledge_base.KnowledgeBaseStatsResponse],
+    response_model=ApiResponse[schemas_knowledge_base.GetKnowledgeBaseStatsResponse],
     description="获取知识库整体统计信息",
 )
 def get_knowledge_base_stats(
@@ -88,5 +88,44 @@ def get_knowledge_base_stats(
     """获取知识库整体统计信息"""
     try:
         return success(services_knowledge_base.get_knowledge_base_stats(db))
+    except ServiceException as e:
+        return error(e.code, e.message)
+
+
+@router.post(
+    "/chunk",
+    response_model=ApiResponse[schemas_knowledge_base.ChunkDocumentsResponse],
+    description="提交文档切块任务：读取PDF文本并按语义边界切块",
+)
+def chunk_documents(
+    db: Annotated[Session, Depends(get_db)],
+    chunk_documents_request: Annotated[
+        schemas_knowledge_base.ChunkDocumentsRequest,
+        Body(..., description="切块请求"),
+    ],
+):
+    """提交文档切块任务"""
+    try:
+        return success(
+            services_knowledge_base.chunk_documents(db, chunk_documents_request)
+        )
+    except ServiceException as e:
+        return error(e.code, e.message)
+
+
+@router.post(
+    "/upload",
+    response_model=ApiResponse[schemas_knowledge_base.UploadKnowledgeDocumentResponse],
+    description="批量上传知识库文档PDF：按文件名匹配元数据并入库",
+)
+def upload_knowledge_documents(
+    db: Annotated[Session, Depends(get_db)],
+    file_list: Annotated[list[UploadFile], File(..., description="PDF文件列表")],
+):
+    """批量上传知识库文档PDF"""
+    try:
+        return success(
+            services_knowledge_base.upload_knowledge_documents(db, file_list)
+        )
     except ServiceException as e:
         return error(e.code, e.message)

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     MYSQL_USER: str = ""
     MYSQL_PASSWORD: str = ""
     MYSQL_DATABASE: str = "financial_report"
+
     @property
     def DATABASE_URL(self) -> str:
         return (
@@ -60,6 +61,7 @@ class Settings(BaseSettings):
     MILVUS_KB_COLLECTION: str = "knowledge_chunk_embedding"
     CHUNK_SIZE: int = 1600
     CHUNK_OVERLAP: int = 160
+    CHUNK_SEPARATORS: list[str] = ["\n\n", "\n", "。", ". ", " ", ""]
 
     class Config:
         env_file = ".env"

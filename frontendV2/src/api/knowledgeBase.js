@@ -1,6 +1,6 @@
 /**
  * 知识库管理 API
- * 功能描述：系统初始化（研报元数据导入）、初始化状态查询、整体统计信息
+ * 功能描述：系统初始化（研报元数据导入）、初始化状态查询、整体统计信息、文档切块、PDF上传
  */
 import request from './request'
 
@@ -49,4 +49,26 @@ export function getKnowledgeBaseStats() {
  */
 export function getKnowledgeDocumentList(params) {
   return request.post('/knowledge-base/list', params)
+}
+
+/**
+ * 提交文档切块任务
+ * @param {number[]} documentIds - 待切块的文档ID列表
+ * @returns {Promise} { total, success_count, failed_count, results: [{ document_id, title, chunk_count, success, error }] }
+ */
+export function chunkDocuments(documentIds) {
+  return request.post('/knowledge-base/chunk', { document_ids: documentIds })
+}
+
+/**
+ * 批量上传知识库文档PDF
+ * @param {File[]} files - PDF 文件列表
+ * @returns {Promise} { total, success_count, failed_count, success_documents: [...], failed_files: [...] }
+ */
+export function uploadKnowledgeDocuments(files) {
+  const formData = new FormData()
+  files.forEach((file) => {
+    formData.append('file_list', file)
+  })
+  return request.post('/knowledge-base/upload', formData)
 }

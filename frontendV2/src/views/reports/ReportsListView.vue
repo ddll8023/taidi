@@ -12,6 +12,7 @@ import { getReportList, parseReports, deleteReport } from '@/api/financialReport
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import UploadReportModal from '@/components/reports/UploadReportModal.vue'
+import PaginationBar from '@/components/common/PaginationBar.vue'
 
 // ── 状态 ──
 
@@ -440,15 +441,12 @@ onMounted(async () => {
           </div>
 
           <!-- 分页 -->
-          <div
-            class="flex flex-col gap-4 border-t border-black/5 px-5 py-4 text-sm text-ink-500 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <p>第 {{ listState.page }} / {{ totalPages }} 页，共 {{ listState.total }} 条</p>
-            <div class="flex items-center gap-2">
-              <BaseButton variant="secondary" size="sm" :disabled="listState.page <= 1" @click="listState.page--; fetchReports()">上一页</BaseButton>
-              <BaseButton variant="secondary" size="sm" :disabled="listState.page >= totalPages" @click="listState.page++; fetchReports()">下一页</BaseButton>
-            </div>
-          </div>
+          <PaginationBar
+            v-model:page="listState.page"
+            v-model:pageSize="listState.pageSize"
+            :total="listState.total"
+            @change="fetchReports"
+          />
         </div>
       </div>
     </SurfacePanel>

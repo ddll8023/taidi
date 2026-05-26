@@ -2,7 +2,7 @@
 /**
  * 知识库管理页面
  * 功能描述：系统初始化（研报元数据导入）+ 状态查询 + 统计信息仪表盘
- * 依赖组件：MetricTile, StatusBadge, BaseButton, BaseSelect, SystemInitModal, UploadPdfModal
+ * 依赖组件：MetricTile, StatusBadge, BaseButton, BaseSelect, BaseInput, SystemInitModal, UploadPdfModal, SurfacePanel, AppEmptyState
  */
 import { ref, reactive, computed, onMounted } from 'vue'
 import MetricTile from '@/components/common/MetricTile.vue'
@@ -12,7 +12,10 @@ import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import SystemInitModal from '@/components/common/SystemInitModal.vue'
 import UploadPdfModal from '@/components/common/UploadPdfModal.vue'
-import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList } from '@/api/knowledgeBase'
+import PaginationBar from '@/components/common/PaginationBar.vue'
+import SurfacePanel from '@/components/ui/SurfacePanel.vue'
+import AppEmptyState from '@/components/ui/AppEmptyState.vue'
+import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, chunkDocuments, uploadKnowledgeDocuments } from '@/api/knowledgeBase'
 
 // ── 常量 ──
 
@@ -40,6 +43,12 @@ const VECTOR_STATUS_MAP = {
   2: { label: '已完成', tone: 'success' },
   3: { label: '失败', tone: 'danger' },
   4: { label: '跳过', tone: 'warning' }
+}
+
+const METADATA_STATUS_MAP = {
+  0: { label: '未加载', tone: 'neutral' },
+  1: { label: '待上传', tone: 'warning' },
+  2: { label: '已上传', tone: 'success' }
 }
 
 // ── 统计数据 ──
@@ -248,6 +257,139 @@ async function handleUploadPdfSuccess() {
   await loadStats()
 }
 
+// ── 切块操作 ──
+
+const selectedIds = ref(new Set())
+const isChunking = ref(false)
+const isChunkingAll = ref(false)
+const chunkMessage = ref({ type: '', text: '' })
+
+const allSelected = computed(() => {
+  return listState.items.length > 0 && selectedIds.value.size === listState.items.length
+})
+
+const selectedCount = computed(() => selectedIds.value.size)
+
+const toggleSelectAll = () => {
+  if (allSelected.value) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(listState.items.map(item => item.id))
+  }
+}
+
+const toggleSelectOne = (id) => {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    next.add(id)
+  }
+  selectedIds.value = next
+}
+
+const handleSelectedChunk = async () => {
+  if (selectedIds.value.size === 0) return
+
+  isChunking.value = true
+  chunkMessage.value = { type: '', text: '' }
+
+  try {
+    const res = await chunkDocuments([...selectedIds.value])
+    const payload = res.data || res
+    const successCount = payload.success_count ?? 0
+    const failedCount = payload.failed_count ?? 0
+    chunkMessage.value = {
+      type: failedCount === 0 ? 'success' : 'warning',
+      text: `切块完成：成功 ${successCount} 个，失败 ${failedCount} 个`
+    }
+    selectedIds.value = new Set()
+    await loadStats()
+    await fetchDocumentList()
+  } catch (error) {
+    chunkMessage.value = { type: 'error', text: error.message || '切块操作失败' }
+  } finally {
+    isChunking.value = false
+  }
+}
+
+const handleChunkAll = async () => {
+  isChunkingAll.value = true
+  chunkMessage.value = { type: '', text: '' }
+  try {
+    const ids = listState.items.map(item => item.id)
+    const res = await chunkDocuments(ids)
+    const payload = res.data || res
+    const successCount = payload.success_count ?? 0
+    const failedCount = payload.failed_count ?? 0
+    chunkMessage.value = {
+      type: failedCount === 0 ? 'success' : 'warning',
+      text: `当前页全部切块完成：成功 ${successCount} 个，失败 ${failedCount} 个`
+    }
+    selectedIds.value = new Set()
+    await loadStats()
+    await fetchDocumentList()
+  } catch (error) {
+    chunkMessage.value = { type: 'error', text: error.message || '批量切块失败' }
+  } finally {
+    isChunkingAll.value = false
+  }
+}
+
+// ── 行级操作 ──
+
+const rowFileInputs = ref({})
+const rowLoading = ref({})
+
+const setRowFileRef = (id) => (el) => {
+  if (el) rowFileInputs.value[id] = el
+}
+
+const triggerRowFileInput = (id) => {
+  rowFileInputs.value[id]?.click()
+}
+
+const handleRowUploadPdf = async (doc, event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  rowLoading.value = { ...rowLoading.value, [doc.id]: 'upload' }
+  try {
+    await uploadKnowledgeDocuments([file])
+    showToast(`「${doc.title}」上传成功`, 'success')
+    await loadStats()
+    await fetchDocumentList()
+  } catch (e) {
+    showToast(e.message || '上传失败', 'error')
+  } finally {
+    rowLoading.value = { ...rowLoading.value, [doc.id]: null }
+    event.target.value = ''
+  }
+}
+
+const handleRowChunk = async (doc) => {
+  rowLoading.value = { ...rowLoading.value, [doc.id]: 'chunk' }
+  try {
+    const res = await chunkDocuments([doc.id])
+    const payload = res.data || res
+    const ok = payload.success_count > 0
+    showToast(
+      ok ? `「${doc.title}」切块完成，${payload.results?.[0]?.chunk_count ?? 0} 块` : '切块失败',
+      ok ? 'success' : 'error'
+    )
+    await loadStats()
+    await fetchDocumentList()
+  } catch (e) {
+    showToast(e.message || '切块失败', 'error')
+  } finally {
+    rowLoading.value = { ...rowLoading.value, [doc.id]: null }
+  }
+}
+
+const handleRowVectorize = (doc) => {
+  showToast(`「${doc.title}」向量化功能开发中`, 'warning')
+}
+
 // ── 文档列表加载 ──
 
 const formatDate = (value) => {
@@ -284,6 +426,7 @@ const fetchDocumentList = async ({ silent = false } = {}) => {
     listState.items = payload?.lists || []
     listState.total = payload?.pagination?.total || 0
     listErrorMessage.value = ''
+    selectedIds.value = new Set()
   } catch (error) {
     listErrorMessage.value = error.message || '加载文档列表失败'
     listState.items = []
@@ -397,23 +540,6 @@ onMounted(() => {
         <span>上传研报PDF</span>
       </button>
 
-      <div class="h-6 w-px bg-ink-200 mx-1"></div>
-
-      <!-- 快捷导入区 -->
-      <div class="flex items-center gap-2">
-        <BaseSelect v-model="selectedDocType" :options="DOC_TYPE_OPTIONS" size="sm" />
-        <BaseButton icon="upload" :loading="isUploading" @click="triggerFileInput">
-          {{ isUploading ? '导入中...' : '选择Excel文件' }}
-        </BaseButton>
-        <input
-          ref="fileInput"
-          type="file"
-          accept=".xlsx,.xls"
-          class="hidden"
-          @change="handleFileChange"
-        />
-      </div>
-
       <span class="ml-auto text-xs text-ink-400">
         共 {{ totalMetadataCount }} 条元数据
       </span>
@@ -429,6 +555,19 @@ onMounted(() => {
       <p v-if="importResult?.data?.total_count" class="mt-1 text-xs opacity-80">
         总计导入：{{ importResult.data.total_count }} 条
       </p>
+    </div>
+
+    <!-- ═══ 切块结果通知 ═══ -->
+    <div
+      v-if="chunkMessage.text"
+      class="shrink-0 rounded-2xl border px-4 py-3 text-sm"
+      :class="{
+        'border-green-200 bg-green-50 text-green-700': chunkMessage.type === 'success',
+        'border-yellow-200 bg-yellow-50 text-yellow-700': chunkMessage.type === 'warning',
+        'border-red-200 bg-red-50 text-red-700': chunkMessage.type === 'error'
+      }"
+    >
+      <p class="font-medium">{{ chunkMessage.text }}</p>
     </div>
 
     <!-- ═══ 统计信息仪表盘 ═══ -->
@@ -455,37 +594,6 @@ onMounted(() => {
       </div>
 
       <template v-else>
-        <!-- KPI 指标栏 -->
-        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div class="flex items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3">
-            <FontAwesomeIcon :icon="['fas', 'file-lines']" class="text-sm text-ink-300" aria-hidden="true" />
-            <div>
-              <p class="text-lg font-semibold tabular-nums text-ink-900">{{ stats.documents?.total ?? 0 }}</p>
-              <p class="text-xs text-ink-400">文档总数</p>
-            </div>
-          </div>
-          <div class="flex items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3">
-            <FontAwesomeIcon :icon="['fas', 'scissors']" class="text-sm text-ink-300" aria-hidden="true" />
-            <div>
-              <p class="text-lg font-semibold tabular-nums text-ink-900">{{ chunkedDocuments }}</p>
-              <p class="text-xs text-ink-400">已切块</p>
-            </div>
-          </div>
-          <div class="flex items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3">
-            <FontAwesomeIcon :icon="['fas', 'bolt']" class="text-sm text-ink-300" aria-hidden="true" />
-            <div>
-              <p class="text-lg font-semibold tabular-nums text-ink-900">{{ vectorizedDocuments }}</p>
-              <p class="text-xs text-ink-400">已向量化</p>
-            </div>
-          </div>
-          <div class="flex items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3">
-            <FontAwesomeIcon :icon="['fas', 'cubes']" class="text-sm text-ink-300" aria-hidden="true" />
-            <div>
-              <p class="text-lg font-semibold tabular-nums text-ink-900">{{ totalChunks }}</p>
-              <p class="text-xs text-ink-400">切块总数</p>
-            </div>
-          </div>
-        </div>
 
         <!-- 文档分布 -->
         <section class="rounded-xl border border-black/5 bg-white">
@@ -573,182 +681,245 @@ onMounted(() => {
             <p v-else class="py-4 text-center text-sm text-ink-300">暂无切块数据</p>
           </div>
         </section>
-
-        <!-- 底部操作 -->
-        <div class="flex items-center justify-end gap-3">
-          <span class="text-xs text-ink-400">上次更新：刚刚</span>
-          <BaseButton
-            variant="secondary"
-            icon="rotate-right"
-            size="sm"
-            :loading="statsLoading"
-            @click="loadStats"
-          >
-            刷新统计
-          </BaseButton>
-        </div>
       </template>
     </div>
 
     <!-- ═══ 文档列表 ═══ -->
-    <div class="flex flex-col gap-3">
-      <div class="flex items-center gap-2">
-        <FontAwesomeIcon :icon="['fas', 'list']" class="text-xs text-ink-300" aria-hidden="true" />
-        <h3 class="text-sm font-medium text-ink-700">文档列表</h3>
-        <span class="text-xs text-ink-400 tabular-nums">共 {{ listState.total }} 条</span>
-        <div class="ml-auto">
-          <BaseButton
-            variant="secondary"
-            icon="rotate-right"
-            size="sm"
-            :loading="isRefreshingList"
-            @click="fetchDocumentList({ silent: true })"
-          >
-            刷新
-          </BaseButton>
-        </div>
-      </div>
+    <SurfacePanel :padded="false">
+      <!-- 页头 -->
+      <div class="border-b border-black/5 px-5 py-5 sm:px-6">
+        <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <p class="shell-kicker">Documents</p>
+            <h3 class="mt-2 text-xl font-semibold text-ink-900">文档列表</h3>
+            <p class="mt-2 max-w-3xl text-sm leading-6 text-ink-600">
+              管理系统中的文档记录，支持上传 PDF、提交切块和向量化操作。
+            </p>
+            <p class="mt-4 text-sm text-ink-500">当前页 {{ listState.items.length }} 条记录</p>
+          </div>
 
-      <!-- 筛选栏 -->
-      <div class="flex flex-wrap items-center gap-2 rounded-2xl border border-black/5 bg-white/80 p-3">
-        <BaseInput
-          v-model="listKeyword"
-          placeholder="搜索标题关键词..."
-          size="sm"
-          class="w-48"
-          @keydown="handleListKeydown"
-        />
-        <BaseSelect v-model="listDocTypeFilter" :options="docTypeFilterOptions" size="sm" />
-        <BaseSelect v-model="listChunkStatusFilter" :options="chunkStatusFilterOptions" size="sm" />
-        <BaseSelect v-model="listVectorStatusFilter" :options="vectorStatusFilterOptions" size="sm" />
-        <BaseButton variant="primary" icon="search" size="sm" @click="handleListSearch">搜索</BaseButton>
-        <BaseButton variant="secondary" icon="rotate-right" size="sm" @click="handleListReset">重置</BaseButton>
-      </div>
-
-      <!-- 加载中 -->
-      <div
-        v-if="isLoadingList"
-        class="flex items-center justify-center rounded-2xl border border-black/5 bg-white py-10"
-      >
-        <div class="flex items-center gap-2.5">
-          <FontAwesomeIcon :icon="['fas', 'spinner']" spin class="text-base text-ink-400" aria-hidden="true" />
-          <span class="text-sm text-ink-400">正在加载文档列表...</span>
-        </div>
-      </div>
-
-      <!-- 加载失败 -->
-      <div
-        v-else-if="listErrorMessage"
-        class="flex items-center justify-center rounded-2xl border border-black/5 bg-white py-10"
-      >
-        <div class="text-center">
-          <FontAwesomeIcon :icon="['fas', 'triangle-exclamation']" class="mb-2 text-base text-danger" aria-hidden="true" />
-          <p class="text-sm text-ink-500">{{ listErrorMessage }}</p>
-          <BaseButton variant="secondary" size="sm" class="mt-3" @click="fetchDocumentList()">重新加载</BaseButton>
-        </div>
-      </div>
-
-      <!-- 空数据 -->
-      <div
-        v-else-if="!hasListItems"
-        class="flex items-center justify-center rounded-2xl border border-black/5 bg-white py-10"
-      >
-        <FontAwesomeIcon :icon="['fas', 'inbox']" class="mr-2.5 text-base text-ink-300" aria-hidden="true" />
-        <span class="text-sm text-ink-400">暂无文档数据</span>
-      </div>
-
-      <!-- 文档表格 -->
-      <template v-else>
-        <div class="overflow-x-auto rounded-2xl border border-black/5 bg-white">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-black/5 bg-ink-50 text-left text-xs font-medium text-ink-500 uppercase tracking-wider">
-                <th class="px-4 py-3 w-28">标题</th>
-                <th class="px-4 py-3 w-24">文档类型</th>
-                <th class="px-4 py-3 w-28">股票代码</th>
-                <th class="px-4 py-3 w-40">股票简称</th>
-                <th class="px-4 py-3 w-28">发布日期</th>
-                <th class="px-4 py-3 w-24">切块状态</th>
-                <th class="px-4 py-3 w-24">向量状态</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-black/5">
-              <tr
-                v-for="item in listState.items"
-                :key="item.id"
-                class="transition-colors hover:bg-ink-50/50"
-              >
-                <td class="px-4 py-3">
-                  <p class="max-w-xs truncate font-medium text-ink-800" :title="item.title">
-                    {{ item.title || '-' }}
-                  </p>
-                </td>
-                <td class="px-4 py-3">
-                  <span class="text-ink-600">{{ DOC_TYPE_LABEL_MAP[item.doc_type] || item.doc_type || '-' }}</span>
-                </td>
-                <td class="px-4 py-3 tabular-nums text-ink-600">{{ item.stock_code || '-' }}</td>
-                <td class="px-4 py-3 text-ink-600">{{ item.stock_abbr || '-' }}</td>
-                <td class="px-4 py-3 text-ink-500">{{ formatDate(item.publish_date) }}</td>
-                <td class="px-4 py-3">
-                  <StatusBadge
-                    :label="CHUNK_STATUS_MAP[item.chunk_status]?.label || `状态${item.chunk_status}`"
-                    :tone="CHUNK_STATUS_MAP[item.chunk_status]?.tone || 'neutral'"
-                  />
-                </td>
-                <td class="px-4 py-3">
-                  <StatusBadge
-                    :label="VECTOR_STATUS_MAP[item.vector_status]?.label || `状态${item.vector_status}`"
-                    :tone="VECTOR_STATUS_MAP[item.vector_status]?.tone || 'neutral'"
-                  />
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- 分页 -->
-        <div class="flex items-center justify-between rounded-2xl border border-black/5 bg-white/80 px-4 py-3">
-          <span class="text-xs text-ink-400">
-            第 {{ listState.page }}/{{ listTotalPages }} 页，共 {{ listState.total }} 条
-          </span>
-          <div class="flex items-center gap-1.5">
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              icon-only
-              icon="angles-left"
-              :disabled="listState.page <= 1"
-              @click="handleListPageChange(1)"
-            />
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              icon-only
-              icon="angle-left"
-              :disabled="listState.page <= 1"
-              @click="handleListPageChange(listState.page - 1)"
-            />
-            <span class="px-2 text-xs tabular-nums text-ink-600">{{ listState.page }}</span>
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              icon-only
-              icon="angle-right"
-              :disabled="listState.page >= listTotalPages"
-              @click="handleListPageChange(listState.page + 1)"
-            />
-            <BaseButton
-              variant="secondary"
-              size="sm"
-              icon-only
-              icon="angles-right"
-              :disabled="listState.page >= listTotalPages"
-              @click="handleListPageChange(listTotalPages)"
-            />
+          <div class="flex flex-wrap items-center gap-3">
+            <BaseButton variant="secondary" icon="rotate-right" size="sm" :loading="isRefreshingList" :disabled="isLoadingList" @click="fetchDocumentList({ silent: true })">刷新列表</BaseButton>
+            <button
+              class="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-teal-700 disabled:opacity-40"
+              :disabled="!isInitialized || listState.items.length === 0 || isChunkingAll"
+              @click="handleChunkAll"
+            >
+              <FontAwesomeIcon v-if="isChunkingAll" :icon="['fas', 'spinner']" spin class="text-xs" />
+              <FontAwesomeIcon v-else :icon="['fas', 'scissors']" class="text-xs" />
+              <span>{{ isChunkingAll ? '切块中...' : '一键切块（当前页）' }}</span>
+            </button>
           </div>
         </div>
-      </template>
-    </div>
+
+        <!-- 筛选区域 -->
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <BaseInput
+            v-model="listKeyword"
+            icon="search"
+            placeholder="搜索标题关键词..."
+            clearable
+            @keydown="handleListKeydown"
+          />
+          <BaseSelect v-model="listDocTypeFilter" :options="docTypeFilterOptions" placeholder="全部类型" />
+          <BaseSelect v-model="listChunkStatusFilter" :options="chunkStatusFilterOptions" placeholder="全部切块状态" />
+          <BaseSelect v-model="listVectorStatusFilter" :options="vectorStatusFilterOptions" placeholder="全部向量状态" />
+          <BaseButton icon="search" size="sm" @click="handleListSearch">筛选</BaseButton>
+          <BaseButton variant="ghost" size="sm" @click="handleListReset">重置</BaseButton>
+        </div>
+      </div>
+
+      <!-- 内容区 -->
+      <div class="p-5 sm:p-6">
+        <!-- 加载中 -->
+        <div
+          v-if="isLoadingList && !hasListItems"
+          class="flex flex-col items-center justify-center py-16"
+        >
+          <FontAwesomeIcon
+            :icon="['fas', 'spinner']"
+            spin
+            class="text-3xl text-accent-500"
+            aria-hidden="true"
+          />
+          <p class="mt-4 text-sm text-ink-500">正在加载文档列表...</p>
+        </div>
+
+        <!-- 错误状态 -->
+        <div
+          v-else-if="listErrorMessage && !hasListItems"
+          class="flex flex-col items-center justify-center py-16"
+        >
+          <p class="text-sm text-danger">{{ listErrorMessage }}</p>
+          <BaseButton variant="secondary" @click="fetchDocumentList()">重试</BaseButton>
+        </div>
+
+        <!-- 空状态 -->
+        <AppEmptyState
+          v-else-if="!hasListItems"
+          title="当前没有文档记录"
+          description="上传研报 PDF 文件后，文档会出现在这里并展示处理状态。"
+        />
+
+        <!-- 数据表格 -->
+        <div
+          v-else
+          class="flex flex-col overflow-hidden rounded-[28px] border border-black/5 bg-white"
+          style="height: 560px"
+        >
+          <div class="min-h-0 flex-1 overflow-auto">
+            <table class="shell-grid-table min-w-[1100px]">
+              <thead class="sticky top-0 z-10">
+                <tr>
+                  <th class="w-10">
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 rounded border-ink-300 text-emerald-600 focus:ring-emerald-500"
+                      :checked="allSelected"
+                      @change="toggleSelectAll"
+                    />
+                  </th>
+                  <th class="text-left">标题</th>
+                  <th class="text-left">文档类型</th>
+                  <th class="!text-center">股票代码</th>
+                  <th class="text-left">股票简称</th>
+                  <th class="!text-center">发布日期</th>
+                  <th class="!text-center">PDF状态</th>
+                  <th class="!text-center">切块状态</th>
+                  <th class="!text-center">向量状态</th>
+                  <th class="!text-center">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in listState.items" :key="item.id">
+                  <td>
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 rounded border-ink-300 text-emerald-600 focus:ring-emerald-500"
+                      :checked="selectedIds.has(item.id)"
+                      @change="toggleSelectOne(item.id)"
+                    />
+                  </td>
+                  <td>
+                    <p class="max-w-xs truncate text-sm font-medium text-ink-900" :title="item.title">
+                      {{ item.title || '-' }}
+                    </p>
+                  </td>
+                  <td>
+                    <span class="text-sm text-ink-600">{{ DOC_TYPE_LABEL_MAP[item.doc_type] || item.doc_type || '-' }}</span>
+                  </td>
+                  <td class="text-center">
+                    <p class="font-mono text-sm text-ink-900">{{ item.stock_code || '-' }}</p>
+                  </td>
+                  <td>
+                    <p class="text-sm text-ink-600">{{ item.stock_abbr || '-' }}</p>
+                  </td>
+                  <td class="text-center">
+                    <p class="text-sm text-ink-500">{{ formatDate(item.publish_date) }}</p>
+                  </td>
+                  <td class="text-center">
+                    <span
+                      class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                      :class="{
+                        'bg-yellow-50 text-yellow-700': METADATA_STATUS_MAP[item.metadata_status]?.tone === 'warning',
+                        'bg-green-50 text-green-700': METADATA_STATUS_MAP[item.metadata_status]?.tone === 'success',
+                        'bg-red-50 text-red-700': METADATA_STATUS_MAP[item.metadata_status]?.tone === 'danger',
+                        'bg-blue-50 text-blue-700': METADATA_STATUS_MAP[item.metadata_status]?.tone === 'accent',
+                        'bg-ink-50 text-ink-600': !METADATA_STATUS_MAP[item.metadata_status] || METADATA_STATUS_MAP[item.metadata_status]?.tone === 'neutral'
+                      }"
+                    >
+                      {{ METADATA_STATUS_MAP[item.metadata_status]?.label || `状态${item.metadata_status}` }}
+                    </span>
+                  </td>
+                  <td class="text-center">
+                    <span
+                      class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                      :class="{
+                        'bg-yellow-50 text-yellow-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'warning',
+                        'bg-green-50 text-green-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'success',
+                        'bg-red-50 text-red-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'danger',
+                        'bg-blue-50 text-blue-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'accent',
+                        'bg-ink-50 text-ink-600': !CHUNK_STATUS_MAP[item.chunk_status] || CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'neutral'
+                      }"
+                    >
+                      {{ CHUNK_STATUS_MAP[item.chunk_status]?.label || `状态${item.chunk_status}` }}
+                    </span>
+                  </td>
+                  <td class="text-center">
+                    <span
+                      class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                      :class="{
+                        'bg-yellow-50 text-yellow-700': VECTOR_STATUS_MAP[item.vector_status]?.tone === 'warning',
+                        'bg-green-50 text-green-700': VECTOR_STATUS_MAP[item.vector_status]?.tone === 'success',
+                        'bg-red-50 text-red-700': VECTOR_STATUS_MAP[item.vector_status]?.tone === 'danger',
+                        'bg-blue-50 text-blue-700': VECTOR_STATUS_MAP[item.vector_status]?.tone === 'accent',
+                        'bg-ink-50 text-ink-600': !VECTOR_STATUS_MAP[item.vector_status] || VECTOR_STATUS_MAP[item.vector_status]?.tone === 'neutral'
+                      }"
+                    >
+                      {{ VECTOR_STATUS_MAP[item.vector_status]?.label || `状态${item.vector_status}` }}
+                    </span>
+                  </td>
+                  <td class="text-center">
+                    <div class="inline-flex items-center gap-2 flex-nowrap">
+                      <input
+                        :ref="setRowFileRef(item.id)"
+                        type="file"
+                        accept=".pdf"
+                        class="hidden"
+                        @change="handleRowUploadPdf(item, $event)"
+                      />
+                      <button
+                        class="rounded-lg bg-blue-600 px-2 py-1 text-xs text-white transition-colors hover:bg-blue-700 disabled:opacity-40"
+                        :title="item.metadata_status === 1 ? '上传PDF' : item.metadata_status === 2 ? 'PDF已上传' : '还未上传'"
+                        :disabled="item.metadata_status === 2 || rowLoading[item.id]"
+                        @click="triggerRowFileInput(item.id)"
+                      >
+                        <FontAwesomeIcon
+                          v-if="rowLoading[item.id] === 'upload'"
+                          :icon="['fas', 'spinner']" spin class="text-xs"
+                        />
+                        <FontAwesomeIcon v-else :icon="['fas', 'cloud-arrow-up']" class="text-xs" />
+                        <span class="ml-1">{{ rowLoading[item.id] === 'upload' ? '' : '上传' }}</span>
+                      </button>
+                      <button
+                        class="rounded-lg bg-emerald-600 px-2 py-1 text-xs text-white transition-colors hover:bg-emerald-700 disabled:opacity-40"
+                        :title="item.metadata_status !== 2 ? '请先上传PDF' : [0, 3].includes(item.chunk_status) ? '提交切块' : (CHUNK_STATUS_MAP[item.chunk_status]?.label || '')"
+                        :disabled="item.metadata_status !== 2 || ![0, 3].includes(item.chunk_status) || rowLoading[item.id]"
+                        @click="handleRowChunk(item)"
+                      >
+                        <FontAwesomeIcon
+                          v-if="rowLoading[item.id] === 'chunk'"
+                          :icon="['fas', 'spinner']" spin class="text-xs"
+                        />
+                        <FontAwesomeIcon v-else :icon="['fas', 'scissors']" class="text-xs" />
+                        <span class="ml-1">{{ rowLoading[item.id] === 'chunk' ? '' : '切块' }}</span>
+                      </button>
+                      <button
+                        class="rounded-lg bg-violet-600 px-2 py-1 text-xs text-white transition-colors hover:bg-violet-700 disabled:opacity-40"
+                        :title="item.chunk_status !== 2 ? '请先完成切块' : item.vector_status === 0 ? '提交向量化' : (VECTOR_STATUS_MAP[item.vector_status]?.label || '')"
+                        :disabled="item.chunk_status !== 2 || rowLoading[item.id]"
+                        @click="handleRowVectorize(item)"
+                      >
+                        <FontAwesomeIcon :icon="['fas', 'brain']" class="text-xs" />
+                        <span class="ml-1">向量</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 分页 -->
+          <PaginationBar
+            v-model:page="listState.page"
+            v-model:pageSize="listState.pageSize"
+            :total="listState.total"
+            @change="fetchDocumentList"
+          />
+        </div>
+      </div>
+    </SurfacePanel>
 
     <!-- ═══ 系统初始化弹窗 ═══ -->
     <SystemInitModal

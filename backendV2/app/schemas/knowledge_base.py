@@ -16,7 +16,7 @@ class InitErrorItem(BaseModel):
     error: str = Field(description="错误描述")
 
 
-class DocumentStatsData(BaseModel):
+class DocumentStatsItem(BaseModel):
     """文档统计数据"""
 
     total: int = Field(default=0, description="文档总数")
@@ -31,7 +31,7 @@ class DocumentStatsData(BaseModel):
     )
 
 
-class ChunkStatsData(BaseModel):
+class ChunkStatsItem(BaseModel):
     """切块统计数据"""
 
     total: int = Field(0, description="切块总数")
@@ -40,11 +40,50 @@ class ChunkStatsData(BaseModel):
     )
 
 
+class ChunkDocumentItem(BaseModel):
+    """单个文档切块结果"""
+
+    document_id: int = Field(..., description="文档ID")
+    title: str = Field("", description="文档标题")
+    chunk_count: int = Field(0, description="切块数量")
+    success: bool = Field(..., description="是否成功")
+    error: str | None = Field(None, description="失败原因")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UploadDocumentItem(BaseModel):
+    """上传成功的文档项"""
+
+    document_id: int = Field(..., description="文档ID")
+    title: str = Field(..., description="文档标题")
+    file_name: str = Field(..., description="原始文件名")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UploadFailedFileItem(BaseModel):
+    """上传失败的文件项"""
+
+    file_name: str = Field(..., description="文件名")
+    error: str = Field(..., description="错误描述")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ========== 请求类（Request）==========
 # 系统初始化使用 multipart/form-data，API 层 Form 逐个声明，不需要请求类
 
 
-class KnowledgeDocumentListRequest(BaseModel):
+class ChunkDocumentsRequest(BaseModel):
+    """文档切块请求"""
+
+    document_ids: list[int] = Field(
+        default_factory=list, min_length=1, description="待切块的文档ID列表"
+    )
+
+
+class GetKnowledgeDocumentListRequest(BaseModel):
     """知识库文档列表请求"""
 
     page: int = Field(1, ge=1, description="页码")
@@ -67,7 +106,7 @@ class KnowledgeDocumentListRequest(BaseModel):
 # ========== 响应类（Response）==========
 
 
-class KnowledgeDocumentListItemResponse(BaseModel):
+class GetKnowledgeDocumentListResponse(BaseModel):
     """知识库文档列表项响应"""
 
     id: int = Field(..., description="文档ID")
@@ -89,11 +128,12 @@ class InitKnowledgeBaseResponse(BaseModel):
     success: bool = Field(description="是否成功")
     message: str = Field(description="结果消息")
     total_count: int = Field(description="总数量", default=0)
+    duplicate_count: int = Field(description="重复数量", default=0)
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class InitStatusResponse(BaseModel):
+class GetInitStatusResponse(BaseModel):
     """初始化状态响应"""
 
     initialized: bool = Field(description="是否已初始化")
@@ -104,10 +144,39 @@ class InitStatusResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class KnowledgeBaseStatsResponse(BaseModel):
+class GetKnowledgeBaseStatsResponse(BaseModel):
     """知识库统计响应"""
 
-    documents: DocumentStatsData = Field(..., description="文档统计")
-    chunks: ChunkStatsData = Field(..., description="切块统计")
+    documents: DocumentStatsItem = Field(..., description="文档统计")
+    chunks: ChunkStatsItem = Field(..., description="切块统计")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChunkDocumentsResponse(BaseModel):
+    """文档切块响应"""
+
+    total: int = Field(..., description="请求处理的文档总数")
+    success_count: int = Field(..., description="成功数")
+    failed_count: int = Field(..., description="失败数")
+    results: list[ChunkDocumentItem] = Field(
+        default_factory=list, description="逐文档切块结果"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UploadKnowledgeDocumentResponse(BaseModel):
+    """批量上传知识库文档响应"""
+
+    total: int = Field(..., description="上传文件总数")
+    success_count: int = Field(..., description="成功数")
+    failed_count: int = Field(..., description="失败数")
+    success_documents: list[UploadDocumentItem] = Field(
+        default_factory=list, description="成功上传的文档列表"
+    )
+    failed_files: list[UploadFailedFileItem] = Field(
+        default_factory=list, description="失败文件列表"
+    )
 
     model_config = ConfigDict(from_attributes=True)
