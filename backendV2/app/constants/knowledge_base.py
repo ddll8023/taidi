@@ -47,3 +47,13 @@ INDUSTRY_REPORT_COLUMN_MAP: dict[str, str] = {
 
 DOC_TYPE_RESEARCH_REPORT = "RESEARCH_REPORT"
 DOC_TYPE_INDUSTRY_REPORT = "INDUSTRY_REPORT"
+
+# DashScope 单次批量 Embedding 最大条数
+EMBEDDING_BATCH_SIZE = 25
+
+# 可重试的异常类型（网络错误、SSL 错误等）
+RETRYABLE_EXCEPTIONS = (
+    ConnectionError,
+    OSError,
+    TimeoutError,
+)

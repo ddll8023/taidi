@@ -34,9 +34,9 @@ def get_knowledge_document_list(
 ):
     """获取知识库文档列表"""
     try:
-        return success(services_knowledge_base.get_knowledge_document_list(db, body))
+        return success(data=services_knowledge_base.get_knowledge_document_list(db, body))
     except ServiceException as e:
-        return error(e.code, e.message)
+        return error(code=e.code, message=e.message)
 
 
 @router.post(
@@ -57,9 +57,47 @@ def init_knowledge_base(
 ):
     """系统初始化"""
     try:
-        return success(services_knowledge_base.init_knowledge_base(db, file, doc_type))
+        return success(data=services_knowledge_base.init_knowledge_base(db, file, doc_type))
     except ServiceException as e:
-        return error(e.code, e.message)
+        return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/vectorize",
+    response_model=ApiResponse[schemas_knowledge_base.VectorizeDocumentsResponse],
+    description="批量向量化：对已切块的文档执行Embedding并写入Chroma",
+)
+def vectorize_documents(
+    db: Annotated[Session, Depends(get_db)],
+    body: Annotated[
+        schemas_knowledge_base.VectorizeDocumentsRequest,
+        Body(..., description="向量化请求"),
+    ],
+):
+    """批量向量化知识库文档"""
+    try:
+        return success(data=services_knowledge_base.vectorize_documents(db, body))
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/search",
+    response_model=ApiResponse[schemas_knowledge_base.SearchKnowledgeResponse],
+    description="知识库语义检索（调试用）",
+)
+def search_knowledge(
+    db: Annotated[Session, Depends(get_db)],
+    body: Annotated[
+        schemas_knowledge_base.SearchKnowledgeRequest,
+        Body(..., description="检索请求"),
+    ],
+):
+    """知识库语义检索"""
+    try:
+        return success(data=services_knowledge_base.search_knowledge(db, body))
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
 
 
 @router.post(
@@ -72,9 +110,9 @@ def get_init_status(
 ):
     """查询系统初始化状态"""
     try:
-        return success(services_knowledge_base.get_init_status(db))
+        return success(data=services_knowledge_base.get_init_status(db))
     except ServiceException as e:
-        return error(e.code, e.message)
+        return error(code=e.code, message=e.message)
 
 
 @router.post(
@@ -87,9 +125,9 @@ def get_knowledge_base_stats(
 ):
     """获取知识库整体统计信息"""
     try:
-        return success(services_knowledge_base.get_knowledge_base_stats(db))
+        return success(data=services_knowledge_base.get_knowledge_base_stats(db))
     except ServiceException as e:
-        return error(e.code, e.message)
+        return error(code=e.code, message=e.message)
 
 
 @router.post(
@@ -107,10 +145,10 @@ def chunk_documents(
     """提交文档切块任务"""
     try:
         return success(
-            services_knowledge_base.chunk_documents(db, chunk_documents_request)
+            data=services_knowledge_base.chunk_documents(db, chunk_documents_request)
         )
     except ServiceException as e:
-        return error(e.code, e.message)
+        return error(code=e.code, message=e.message)
 
 
 @router.post(
@@ -125,7 +163,7 @@ def upload_knowledge_documents(
     """批量上传知识库文档PDF"""
     try:
         return success(
-            services_knowledge_base.upload_knowledge_documents(db, file_list)
+            data=services_knowledge_base.upload_knowledge_documents(db, file_list)
         )
     except ServiceException as e:
-        return error(e.code, e.message)
+        return error(code=e.code, message=e.message)

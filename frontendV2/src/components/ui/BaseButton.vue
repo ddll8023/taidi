@@ -25,11 +25,16 @@ const props = defineProps({
    * success   → 绿底白字
    * warning   → 黄底深色字
    * ghost     → 透明底，hover 浅灰
+   * amber     → 琥珀色底白字（系统初始化）
+   * dark      → 深色底白字（上传研报PDF）
+   * teal      → 青绿色底白字（切块操作）
+   * violet    → 紫罗兰底白字（向量化操作）
+   * info      → 蓝色底白字（信息/上传操作）
    */
   variant: {
     type: String,
     default: 'primary',
-    validator: (v) => ['primary', 'secondary', 'danger', 'success', 'warning', 'ghost'].includes(v)
+    validator: (v) => ['primary', 'secondary', 'danger', 'success', 'warning', 'ghost', 'amber', 'dark', 'teal', 'violet', 'info'].includes(v)
   },
 
   // 按钮尺寸
@@ -128,6 +133,31 @@ const variantClasses = {
   ghost:
     'inline-flex items-center font-medium transition-all duration-200 rounded-xl border border-transparent ' +
     'text-ink-600 hover:bg-ink-50/60 active:bg-ink-100/60 ' +
+    'disabled:cursor-not-allowed disabled:opacity-40',
+  amber:
+    'inline-flex items-center font-semibold transition-all duration-200 rounded-xl border border-transparent ' +
+    'bg-amber-600 text-white hover:bg-amber-700 active:bg-amber-800 ' +
+    'shadow-sm hover:shadow ' +
+    'disabled:cursor-not-allowed disabled:opacity-50',
+  dark:
+    'inline-flex items-center font-semibold transition-all duration-200 rounded-xl border border-transparent ' +
+    'bg-ink-900 text-white hover:bg-ink-700 active:bg-ink-800 ' +
+    'shadow-sm hover:shadow ' +
+    'disabled:cursor-not-allowed disabled:opacity-40',
+  teal:
+    'inline-flex items-center font-semibold transition-all duration-200 rounded-xl border border-transparent ' +
+    'bg-teal-600 text-white hover:bg-teal-700 active:bg-teal-800 ' +
+    'shadow-sm hover:shadow ' +
+    'disabled:cursor-not-allowed disabled:opacity-40',
+  violet:
+    'inline-flex items-center font-semibold transition-all duration-200 rounded-xl border border-transparent ' +
+    'bg-violet-600 text-white hover:bg-violet-700 active:bg-violet-800 ' +
+    'shadow-sm hover:shadow ' +
+    'disabled:cursor-not-allowed disabled:opacity-40',
+  info:
+    'inline-flex items-center font-semibold transition-all duration-200 rounded-xl border border-transparent ' +
+    'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 ' +
+    'shadow-sm hover:shadow ' +
     'disabled:cursor-not-allowed disabled:opacity-40'
 }
 

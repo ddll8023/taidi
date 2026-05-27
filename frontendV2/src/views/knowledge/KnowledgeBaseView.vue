@@ -15,7 +15,7 @@ import UploadPdfModal from '@/components/common/UploadPdfModal.vue'
 import PaginationBar from '@/components/common/PaginationBar.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
-import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, chunkDocuments, uploadKnowledgeDocuments } from '@/api/knowledgeBase'
+import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, chunkDocuments, uploadKnowledgeDocuments, vectorizeDocuments } from '@/api/knowledgeBase'
 
 // ── 常量 ──
 
@@ -31,18 +31,17 @@ const DOC_TYPE_LABEL_MAP = {
 
 // 状态码映射（与 V1 保持一致）
 const CHUNK_STATUS_MAP = {
-  0: { label: '待处理', tone: 'neutral' },
-  1: { label: '处理中', tone: 'warning' },
-  2: { label: '已完成', tone: 'success' },
-  3: { label: '失败', tone: 'danger' }
+  0: { label: '待切块', tone: 'neutral' },
+  1: { label: '切块中', tone: 'warning' },
+  2: { label: '切块完成', tone: 'success' },
+  3: { label: '切块失败', tone: 'danger' }
 }
 
 const VECTOR_STATUS_MAP = {
-  0: { label: '待处理', tone: 'neutral' },
-  1: { label: '处理中', tone: 'warning' },
-  2: { label: '已完成', tone: 'success' },
-  3: { label: '失败', tone: 'danger' },
-  4: { label: '跳过', tone: 'warning' }
+  0: { label: '未向量化', tone: 'neutral' },
+  1: { label: '向量化中', tone: 'warning' },
+  2: { label: '已向量化', tone: 'success' },
+  3: { label: '向量化失败', tone: 'danger' }
 }
 
 const METADATA_STATUS_MAP = {
@@ -134,8 +133,7 @@ const vectorizedDocuments = computed(() => {
 
 const pendingDocuments = computed(() => {
   const byChunk = stats.value.documents.by_chunk_status || {}
-  const byVec = stats.value.documents.by_vector_status || {}
-  return (byChunk[0] || 0) + (byVec[0] || 0)
+  return byChunk[0] || 0
 })
 
 const failedDocuments = computed(() => {
@@ -247,14 +245,10 @@ async function handleSystemInitSuccess() {
   await loadStats()
 }
 
-function handleUploadPdf() {
-  showUploadPdfModal.value = true
-}
-
 async function handleUploadPdfSuccess() {
   showToast('PDF上传处理完成', 'success')
-  await loadInitStatus()
   await loadStats()
+  await fetchDocumentList()
 }
 
 // ── 切块操作 ──
@@ -386,8 +380,77 @@ const handleRowChunk = async (doc) => {
   }
 }
 
-const handleRowVectorize = (doc) => {
-  showToast(`「${doc.title}」向量化功能开发中`, 'warning')
+const handleRowVectorize = async (doc) => {
+  rowLoading.value = { ...rowLoading.value, [doc.id]: 'vectorize' }
+  try {
+    const res = await vectorizeDocuments([doc.id])
+    const payload = res.data || res
+    const ok = payload.success_count > 0
+    showToast(
+      ok ? `「${doc.title}」向量化完成，${payload.results?.[0]?.chunk_count ?? 0} 块` : '向量化失败',
+      ok ? 'success' : 'error'
+    )
+    await loadStats()
+    await fetchDocumentList()
+  } catch (e) {
+    showToast(e.message || '向量化失败', 'error')
+  } finally {
+    rowLoading.value = { ...rowLoading.value, [doc.id]: null }
+  }
+}
+
+// ── 批量向量化操作 ──
+
+const isVectorizing = ref(false)
+const isVectorizingAll = ref(false)
+const vectorizeMessage = ref({ type: '', text: '' })
+
+const handleSelectedVectorize = async () => {
+  if (selectedIds.value.size === 0) return
+
+  isVectorizing.value = true
+  vectorizeMessage.value = { type: '', text: '' }
+
+  try {
+    const res = await vectorizeDocuments([...selectedIds.value])
+    const payload = res.data || res
+    const successCount = payload.success_count ?? 0
+    const failedCount = payload.failed_count ?? 0
+    vectorizeMessage.value = {
+      type: failedCount === 0 ? 'success' : 'warning',
+      text: `向量化完成：成功 ${successCount} 个，失败 ${failedCount} 个`
+    }
+    selectedIds.value = new Set()
+    await loadStats()
+    await fetchDocumentList()
+  } catch (error) {
+    vectorizeMessage.value = { type: 'error', text: error.message || '批量向量化失败' }
+  } finally {
+    isVectorizing.value = false
+  }
+}
+
+const handleVectorizeAll = async () => {
+  isVectorizingAll.value = true
+  vectorizeMessage.value = { type: '', text: '' }
+  try {
+    const ids = listState.items.map(item => item.id)
+    const res = await vectorizeDocuments(ids)
+    const payload = res.data || res
+    const successCount = payload.success_count ?? 0
+    const failedCount = payload.failed_count ?? 0
+    vectorizeMessage.value = {
+      type: failedCount === 0 ? 'success' : 'warning',
+      text: `当前页全部向量化完成：成功 ${successCount} 个，失败 ${failedCount} 个`
+    }
+    selectedIds.value = new Set()
+    await loadStats()
+    await fetchDocumentList()
+  } catch (error) {
+    vectorizeMessage.value = { type: 'error', text: error.message || '批量向量化失败' }
+  } finally {
+    isVectorizingAll.value = false
+  }
 }
 
 // ── 文档列表加载 ──
@@ -523,22 +586,9 @@ onMounted(() => {
 
     <!-- ═══ 操作按钮区 ═══ -->
     <div class="flex flex-wrap items-center gap-2 rounded-2xl border border-black/5 bg-white/80 p-3 shrink-0">
-      <button
-        class="flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
-        @click="handleSystemInit"
-      >
-        <FontAwesomeIcon :icon="['fas', 'gear']" />
-        <span>系统初始化</span>
-      </button>
+      <BaseButton variant="amber" icon="gear" @click="handleSystemInit">系统初始化</BaseButton>
 
-      <button
-        class="flex items-center gap-2 rounded-xl bg-ink-900 px-4 py-2 text-sm text-white transition-colors hover:bg-ink-700 disabled:opacity-50"
-        :disabled="!isInitialized"
-        @click="handleUploadPdf"
-      >
-        <FontAwesomeIcon :icon="['fas', 'cloud-arrow-up']" />
-        <span>上传研报PDF</span>
-      </button>
+      <BaseButton variant="dark" icon="cloud-arrow-up" :disabled="!isInitialized" @click="showUploadPdfModal = true">上传研报PDF</BaseButton>
 
       <span class="ml-auto text-xs text-ink-400">
         共 {{ totalMetadataCount }} 条元数据
@@ -568,6 +618,19 @@ onMounted(() => {
       }"
     >
       <p class="font-medium">{{ chunkMessage.text }}</p>
+    </div>
+
+    <!-- ═══ 向量化结果通知 ═══ -->
+    <div
+      v-if="vectorizeMessage.text"
+      class="shrink-0 rounded-2xl border px-4 py-3 text-sm"
+      :class="{
+        'border-green-200 bg-green-50 text-green-700': vectorizeMessage.type === 'success',
+        'border-yellow-200 bg-yellow-50 text-yellow-700': vectorizeMessage.type === 'warning',
+        'border-red-200 bg-red-50 text-red-700': vectorizeMessage.type === 'error'
+      }"
+    >
+      <p class="font-medium">{{ vectorizeMessage.text }}</p>
     </div>
 
     <!-- ═══ 统计信息仪表盘 ═══ -->
@@ -700,15 +763,8 @@ onMounted(() => {
 
           <div class="flex flex-wrap items-center gap-3">
             <BaseButton variant="secondary" icon="rotate-right" size="sm" :loading="isRefreshingList" :disabled="isLoadingList" @click="fetchDocumentList({ silent: true })">刷新列表</BaseButton>
-            <button
-              class="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-teal-700 disabled:opacity-40"
-              :disabled="!isInitialized || listState.items.length === 0 || isChunkingAll"
-              @click="handleChunkAll"
-            >
-              <FontAwesomeIcon v-if="isChunkingAll" :icon="['fas', 'spinner']" spin class="text-xs" />
-              <FontAwesomeIcon v-else :icon="['fas', 'scissors']" class="text-xs" />
-              <span>{{ isChunkingAll ? '切块中...' : '一键切块（当前页）' }}</span>
-            </button>
+            <BaseButton variant="teal" icon="scissors" size="sm" :loading="isChunkingAll" :disabled="!isInitialized || listState.items.length === 0 || isChunkingAll" @click="handleChunkAll">{{ isChunkingAll ? '切块中...' : '一键切块（当前页）' }}</BaseButton>
+            <BaseButton variant="violet" icon="brain" size="sm" :loading="isVectorizingAll" :disabled="!isInitialized || listState.items.length === 0 || isVectorizingAll" @click="handleVectorizeAll">{{ isVectorizingAll ? '向量化中...' : '一键向量化（当前页）' }}</BaseButton>
           </div>
         </div>
 
@@ -868,41 +924,33 @@ onMounted(() => {
                         class="hidden"
                         @change="handleRowUploadPdf(item, $event)"
                       />
-                      <button
-                        class="rounded-lg bg-blue-600 px-2 py-1 text-xs text-white transition-colors hover:bg-blue-700 disabled:opacity-40"
+                      <BaseButton
+                        variant="info"
+                        icon="cloud-arrow-up"
+                        size="xs"
+                        :loading="rowLoading[item.id] === 'upload'"
+                        :disabled="item.metadata_status === 2"
                         :title="item.metadata_status === 1 ? '上传PDF' : item.metadata_status === 2 ? 'PDF已上传' : '还未上传'"
-                        :disabled="item.metadata_status === 2 || rowLoading[item.id]"
                         @click="triggerRowFileInput(item.id)"
-                      >
-                        <FontAwesomeIcon
-                          v-if="rowLoading[item.id] === 'upload'"
-                          :icon="['fas', 'spinner']" spin class="text-xs"
-                        />
-                        <FontAwesomeIcon v-else :icon="['fas', 'cloud-arrow-up']" class="text-xs" />
-                        <span class="ml-1">{{ rowLoading[item.id] === 'upload' ? '' : '上传' }}</span>
-                      </button>
-                      <button
-                        class="rounded-lg bg-emerald-600 px-2 py-1 text-xs text-white transition-colors hover:bg-emerald-700 disabled:opacity-40"
+                      >上传</BaseButton>
+                      <BaseButton
+                        variant="success"
+                        icon="scissors"
+                        size="xs"
+                        :loading="rowLoading[item.id] === 'chunk'"
+                        :disabled="item.metadata_status !== 2 || ![0, 3].includes(item.chunk_status)"
                         :title="item.metadata_status !== 2 ? '请先上传PDF' : [0, 3].includes(item.chunk_status) ? '提交切块' : (CHUNK_STATUS_MAP[item.chunk_status]?.label || '')"
-                        :disabled="item.metadata_status !== 2 || ![0, 3].includes(item.chunk_status) || rowLoading[item.id]"
                         @click="handleRowChunk(item)"
-                      >
-                        <FontAwesomeIcon
-                          v-if="rowLoading[item.id] === 'chunk'"
-                          :icon="['fas', 'spinner']" spin class="text-xs"
-                        />
-                        <FontAwesomeIcon v-else :icon="['fas', 'scissors']" class="text-xs" />
-                        <span class="ml-1">{{ rowLoading[item.id] === 'chunk' ? '' : '切块' }}</span>
-                      </button>
-                      <button
-                        class="rounded-lg bg-violet-600 px-2 py-1 text-xs text-white transition-colors hover:bg-violet-700 disabled:opacity-40"
-                        :title="item.chunk_status !== 2 ? '请先完成切块' : item.vector_status === 0 ? '提交向量化' : (VECTOR_STATUS_MAP[item.vector_status]?.label || '')"
-                        :disabled="item.chunk_status !== 2 || rowLoading[item.id]"
+                      >切块</BaseButton>
+                      <BaseButton
+                        variant="violet"
+                        icon="brain"
+                        size="xs"
+                        :loading="rowLoading[item.id] === 'vectorize'"
+                        :disabled="item.chunk_status !== 2"
+                        :title="item.chunk_status !== 2 ? '请先完成切块' : [0, 3].includes(item.vector_status) ? '提交向量化' : (VECTOR_STATUS_MAP[item.vector_status]?.label || '')"
                         @click="handleRowVectorize(item)"
-                      >
-                        <FontAwesomeIcon :icon="['fas', 'brain']" class="text-xs" />
-                        <span class="ml-1">向量</span>
-                      </button>
+                      >向量</BaseButton>
                     </div>
                   </td>
                 </tr>
@@ -928,7 +976,7 @@ onMounted(() => {
       @success="handleSystemInitSuccess"
     />
 
-    <!-- ═══ 增量上传PDF弹窗 ═══ -->
+    <!-- ═══ 批量上传PDF弹窗 ═══ -->
     <UploadPdfModal
       :visible="showUploadPdfModal"
       @close="showUploadPdfModal = false"

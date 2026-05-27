@@ -65,14 +65,14 @@ def start_chat(
         logger.info(f"创建新会话: session_id={start_chat_request.session_id}")
 
     # === 构建历史上下文 ===
-    history_context_full, history_context_sql = _build_history_context(db, chat_session)
+    history_context_full, history_context_sql, history_context_intent = _build_history_context(db, chat_session)
 
     # === 步骤1: 意图识别 ===
     yield f"event: step\ndata: {json.dumps({'step': 'intent', 'message': '正在识别意图...'}, ensure_ascii=False)}\n\n"
     logger.info(f"意图识别开始: session_id={start_chat_request.session_id}")
     try:
         intent_result: dict = _identify_intent(
-            db, start_chat_request, history_context_full
+            db, start_chat_request, history_context_intent
         )
         intent_result_item = schemas_chat.IdentifyIntentResultItem.model_validate(
             intent_result
@@ -164,6 +164,13 @@ def start_chat(
     db.add(chat_message)
     db.flush()
 
+    # 加锁重新加载会话，获取最新的 messages 列表（防止并发覆盖丢失更新）
+    chat_session = db.execute(
+        select(models_chat_session.ChatSession)
+        .where(models_chat_session.ChatSession.id == start_chat_request.session_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one()
     current_messages = chat_session.messages or []
     chat_session.messages = current_messages + [chat_message.id]
     commit_or_rollback(db)
@@ -321,7 +328,12 @@ def _identify_intent(
             company_list=company_list,
         )
         if history_context:
-            system_prompt += f"\n\n{history_context}"
+            system_prompt += (
+                f"\n\n=== 历史对话上下文（仅用于理解当前问题的指代关系）===\n"
+                f"{history_context}\n"
+                f"=== 历史对话上下文结束 ===\n"
+                f"现在请根据当前用户问题输出JSON，只输出JSON，不要输出任何其他内容。"
+            )
         user_prompt = PromptTemplate.from_template(
             settings.PROMPT_CONFIG.get_chat_config["intent_parse"][
                 "user_prompt_template"
@@ -426,26 +438,31 @@ def _generate_answer_stream(
 
 
 def _build_history_context(db, chat_session):
-    """从会话消息窗口构建历史上下文字符串，返回 (完整上下文, SQL专用上下文)"""
+    """从会话消息窗口构建历史上下文字符串，返回 (完整上下文, SQL专用上下文, 意图识别上下文)"""
 
     if not chat_session.messages:
-        return "", ""
+        return "", "", ""
 
-    messages = (
+    msg_entities = (
         db.execute(
             select(models_chat_message.ChatMessage)
             .where(models_chat_message.ChatMessage.id.in_(chat_session.messages))
-            .order_by(models_chat_message.ChatMessage.id)
         )
         .scalars()
         .all()
     )
+    msg_map = {m.id: m for m in msg_entities}
+
+    # 按 chat_session.messages 列表顺序排列（保持语义时间线正确）
+    messages = [msg_map[mid] for mid in chat_session.messages if mid in msg_map]
 
     full_parts = []
     sql_parts = []
+    intent_parts = []
     for msg in messages:
         if msg.message_type == "summary":
             full_parts.append(f"[历史摘要] {msg.summary_content}")
+            intent_parts.append(f"[历史摘要] {msg.summary_content}")
         elif msg.message_type == "conversation":
             conv_text = (
                 f"用户: {msg.query}\n"
@@ -456,8 +473,9 @@ def _build_history_context(db, chat_session):
             )
             full_parts.append(conv_text)
             sql_parts.append(conv_text)
+            intent_parts.append(f"用户: {msg.query}\n回答: {msg.answer}")
 
-    return "\n\n".join(full_parts), "\n\n".join(sql_parts)
+    return "\n\n".join(full_parts), "\n\n".join(sql_parts), "\n\n".join(intent_parts)
 
 
 def _truncate_sql_result(db_result):
@@ -490,17 +508,17 @@ def _summarize_overflow(session_id: str):
         if len(messages) <= constants_chat.MAX_HISTORY_MESSAGES:
             return
 
+        # 取列表最前 2 条（不限类型，对话和摘要都算最旧信息）
+        head_ids = messages[:2]
         conv_msgs = db.scalars(
             select(models_chat_message.ChatMessage)
-            .where(
-                models_chat_message.ChatMessage.id.in_(messages),
-            )
-            .order_by(models_chat_message.ChatMessage.id)
-            .limit(2)
+            .where(models_chat_message.ChatMessage.id.in_(head_ids))
         ).all()
         if len(conv_msgs) < 2:
+            logger.info(f"列表头部不足 2 条有效消息，跳过压缩: session_id={session_id}")
             return
-        logger.info(f"开始生成摘要: {conv_msgs}")
+
+        logger.info(f"开始生成摘要: session_id={session_id}")
         summary_text = _generate_summary(conv_msgs)
         logger.info(f"摘要生成完成: session_id={session_id}")
 
@@ -512,9 +530,8 @@ def _summarize_overflow(session_id: str):
         db.add(summary_msg)
         db.flush()
 
-        conv_ids = {m.id for m in conv_msgs}
-        remaining = [mid for mid in messages if mid not in conv_ids]
-        chat_session.messages = [summary_msg.id] + remaining
+        # 用新摘要替换列表最前 2 条（构建新列表确保 SQLAlchemy 检测到变更）
+        chat_session.messages = [summary_msg.id] + messages[2:]
         commit_or_rollback(db)
         logger.info(
             f"滑动窗口已压缩: session_id={session_id} "
@@ -527,11 +544,16 @@ def _summarize_overflow(session_id: str):
 
 
 def _generate_summary(conv_msgs):
-    """调用 LLM 将对话历史压缩为摘要"""
+    """调用 LLM 将对话历史压缩为摘要（支持 conversation 和 summary 两种输入类型）"""
 
-    conversation_text = "\n\n".join(
-        [f"问题: {m.query}\n回答: {m.answer}" for m in conv_msgs]
-    )
+    parts = []
+    for m in conv_msgs:
+        if m.message_type == "conversation":
+            parts.append(f"问题: {m.query}\n回答: {m.answer}")
+        elif m.message_type == "summary":
+            parts.append(f"[历史摘要] {m.summary_content}")
+    conversation_text = "\n\n".join(parts)
+
     prompt_config = settings.PROMPT_CONFIG.get_chat_config["summarize"]
     prompt = [
         SystemMessage(content=prompt_config["system_prompt"]),

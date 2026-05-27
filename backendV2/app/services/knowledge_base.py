@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.constants import knowledge_base as constants_knowledge_base
 from app.core.config import settings
 from app.db.database import commit_or_rollback
+from app.db.chroma import get_kb_vectorstore
 from app.models import knowledge_document as models_knowledge_document
 from app.models import knowledge_chunk as models_knowledge_chunk
 from app.schemas import knowledge_base as schemas_knowledge_base
@@ -58,7 +59,7 @@ def init_knowledge_base(
             f"导入Excel异常: file={file.filename} doc_type={doc_type} error={e}",
             exc_info=True,
         )
-        raise ServiceException from e
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from e
 
     # 构造消息
     message_parts = []
@@ -270,43 +271,71 @@ def chunk_documents(
         length_function=len,
     )
 
-    for document_id in chunk_documents_request.document_ids:
-        try:
-            doc_entity = db.get(
-                models_knowledge_document.KnowledgeDocument, document_id
+    document_ids = chunk_documents_request.document_ids
+
+    # 批量查询所有文档
+    doc_map = {}
+    docs = db.scalars(
+        select(models_knowledge_document.KnowledgeDocument).where(
+            models_knowledge_document.KnowledgeDocument.id.in_(document_ids)
+        )
+    ).all()
+    for doc in docs:
+        doc_map[doc.id] = doc
+
+    # 预校验：区分有效文档与失败文档
+    valid_docs: list[models_knowledge_document.KnowledgeDocument] = []
+    for document_id in document_ids:
+        doc = doc_map.get(document_id)
+        if not doc:
+            logger.warning(f"文档不存在: document_id={document_id}")
+            results.append(
+                schemas_knowledge_base.ChunkDocumentItem(
+                    document_id=document_id,
+                    title="",
+                    chunk_count=0,
+                    success=False,
+                    error="文档不存在",
+                )
             )
-            if not doc_entity:
-                logger.warning(f"文档不存在: document_id={document_id}")
-                results.append(
-                    schemas_knowledge_base.ChunkDocumentItem(
-                        document_id=document_id,
-                        title="",
-                        chunk_count=0,
-                        success=False,
-                        error="文档不存在",
-                    )
-                )
-                failed_count += 1
-                continue
+            failed_count += 1
+            continue
 
-            if not doc_entity.source_path or not os.path.exists(doc_entity.source_path):
-                logger.warning(f"PDF源文件不存在: document_id={document_id}")
-                results.append(
-                    schemas_knowledge_base.ChunkDocumentItem(
-                        document_id=document_id,
-                        title=doc_entity.title,
-                        chunk_count=0,
-                        success=False,
-                        error="PDF源文件不存在",
-                    )
+        if not doc.source_path or not os.path.exists(doc.source_path):
+            logger.warning(f"PDF源文件不存在: document_id={document_id}")
+            results.append(
+                schemas_knowledge_base.ChunkDocumentItem(
+                    document_id=document_id,
+                    title=doc.title,
+                    chunk_count=0,
+                    success=False,
+                    error="PDF源文件不存在",
                 )
-                failed_count += 1
-                continue
+            )
+            failed_count += 1
+            continue
 
+        valid_docs.append(doc)
+
+    if not valid_docs:
+        logger.info(f"无有效文档需要切块: total={len(document_ids)}")
+        return schemas_knowledge_base.ChunkDocumentsResponse(
+            total=len(document_ids),
+            success_count=success_count,
+            failed_count=failed_count,
+            results=results,
+        )
+
+    # 批量设置切块中状态
+    for doc in valid_docs:
+        doc.chunk_status = 1
+    commit_or_rollback(db)
+
+    # 逐个文档执行切块
+    for doc_entity in valid_docs:
+        document_id = doc_entity.id
+        try:
             logger.info(f"开始切块: document_id={document_id} title={doc_entity.title}")
-
-            doc_entity.chunk_status = 1
-            commit_or_rollback(db)
 
             # 清理旧切块
             db.execute(
@@ -370,17 +399,16 @@ def chunk_documents(
                 f"切块失败: document_id={document_id} error={e}", exc_info=True
             )
             try:
-                if doc_entity:
-                    doc_entity.chunk_status = 3
-                    doc_entity.chunk_error_message = str(e)[:500]
-                    commit_or_rollback(db)
+                doc_entity.chunk_status = 3
+                doc_entity.chunk_error_message = str(e)[:500]
+                commit_or_rollback(db)
             except Exception:
                 db.rollback()
 
             results.append(
                 schemas_knowledge_base.ChunkDocumentItem(
                     document_id=document_id,
-                    title=doc_entity.title if doc_entity else "",
+                    title=doc_entity.title,
                     chunk_count=0,
                     success=False,
                     error=str(e)[:200],
@@ -522,7 +550,339 @@ def upload_knowledge_documents(db: Session, file_list: list[UploadFile]):
     )
 
 
+def vectorize_documents(
+    db: Session,
+    vectorize_documents_request: schemas_knowledge_base.VectorizeDocumentsRequest,
+):
+    """对知识库文档执行向量化"""
+    results: list[schemas_knowledge_base.VectorizeDocumentsItem] = []
+    success_count = 0
+    failed_count = 0
+
+    vectorstore = get_kb_vectorstore()
+
+    for document_id in vectorize_documents_request.document_ids:
+        try:
+            doc_entity = db.get(
+                models_knowledge_document.KnowledgeDocument, document_id
+            )
+            if not doc_entity:
+                logger.warning(f"文档不存在: document_id={document_id}")
+                results.append(
+                    schemas_knowledge_base.VectorizeDocumentsItem(
+                        document_id=document_id,
+                        title="",
+                        chunk_count=0,
+                        success=False,
+                        error="文档不存在",
+                    )
+                )
+                failed_count += 1
+                continue
+
+            if doc_entity.chunk_status != 2:
+                logger.warning(
+                    f"文档未完成切块: document_id={document_id} chunk_status={doc_entity.chunk_status}"
+                )
+                results.append(
+                    schemas_knowledge_base.VectorizeDocumentsItem(
+                        document_id=document_id,
+                        title=doc_entity.title,
+                        chunk_count=0,
+                        success=False,
+                        error="文档未完成切块，无法向量化",
+                    )
+                )
+                failed_count += 1
+                continue
+
+            logger.info(f"开始向量化: document_id={document_id} title={doc_entity.title}")
+
+            doc_entity.vector_status = 1
+            commit_or_rollback(db)
+
+            pending_chunks = db.scalars(
+                select(models_knowledge_chunk.KnowledgeChunk).where(
+                    models_knowledge_chunk.KnowledgeChunk.document_id == document_id,
+                    models_knowledge_chunk.KnowledgeChunk.vector_status.in_([0, 3]),
+                )
+            ).all()
+
+            if not pending_chunks:
+                logger.info(f"文档无待向量化的切块: document_id={document_id}")
+                doc_entity.vector_status = 2
+                commit_or_rollback(db)
+                results.append(
+                    schemas_knowledge_base.VectorizeDocumentsItem(
+                        document_id=document_id,
+                        title=doc_entity.title,
+                        chunk_count=0,
+                        success=True,
+                        error=None,
+                    )
+                )
+                success_count += 1
+                continue
+
+            for chunk in pending_chunks:
+                chunk.vector_status = 1
+            commit_or_rollback(db)
+
+            # 删除 Chroma 中该文档的旧向量
+            try:
+                vectorstore.delete(ids=[str(c.id) for c in pending_chunks])
+            except Exception:
+                pass
+
+            # 分批写入 Chroma（LangChain 内部处理 Embedding）
+            succeeded_count = 0
+            for batch_start in range(
+                0,
+                len(pending_chunks),
+                constants_knowledge_base.EMBEDDING_BATCH_SIZE,
+            ):
+                batch = pending_chunks[
+                    batch_start : batch_start
+                    + constants_knowledge_base.EMBEDDING_BATCH_SIZE
+                ]
+
+                try:
+                    vectorstore.add_texts(
+                        texts=[c.chunk_text for c in batch],
+                        metadatas=[{"document_id": c.document_id} for c in batch],
+                        ids=[str(c.id) for c in batch],
+                    )
+                    succeeded_count += len(batch)
+                except Exception as batch_err:
+                    logger.warning(f"批量写入失败，逐条重试: {batch_err}")
+                    for chunk in batch:
+                        try:
+                            vectorstore.add_texts(
+                                texts=[chunk.chunk_text],
+                                metadatas=[{"document_id": chunk.document_id}],
+                                ids=[str(chunk.id)],
+                            )
+                            succeeded_count += 1
+                        except Exception as single_err:
+                            chunk.vector_status = 3
+                            chunk.vector_error_message = str(single_err)[:2000]
+                            commit_or_rollback(db)
+                            logger.error(
+                                f"切块向量化失败: chunk_id={chunk.id} error={single_err}"
+                            )
+
+            # 标记成功的 chunk
+            succeeded_ids = set()
+            if succeeded_count > 0:
+                try:
+                    existing = vectorstore.get(ids=[str(c.id) for c in pending_chunks])
+                    succeeded_ids = {int(cid) for cid in existing["ids"]}
+                except Exception:
+                    succeeded_ids = {c.id for c in pending_chunks}
+
+            for chunk in pending_chunks:
+                if chunk.id in succeeded_ids:
+                    chunk.vector_status = 2
+                    chunk.vector_model = settings.EMBEDDING_MODEL
+                    chunk.vector_dim = settings.EMBEDDING_DIM
+            commit_or_rollback(db)
+
+            _update_document_vector_status(db, document_id)
+
+            doc_success_count = (
+                db.scalar(
+                    select(
+                        func.count(
+                            models_knowledge_chunk.KnowledgeChunk.id
+                        )
+                    ).where(
+                        models_knowledge_chunk.KnowledgeChunk.document_id
+                        == document_id,
+                        models_knowledge_chunk.KnowledgeChunk.vector_status
+                        == 2,
+                    )
+                )
+                or 0
+            )
+
+            logger.info(
+                f"向量化完成: document_id={document_id} title={doc_entity.title} "
+                f"success_chunks={doc_success_count}"
+            )
+            results.append(
+                schemas_knowledge_base.VectorizeDocumentsItem(
+                    document_id=document_id,
+                    title=doc_entity.title,
+                    chunk_count=doc_success_count,
+                    success=True,
+                    error=None,
+                )
+            )
+            success_count += 1
+
+        except Exception as e:
+            logger.error(
+                f"向量化失败: document_id={document_id} error={e}",
+                exc_info=True,
+            )
+            try:
+                if doc_entity:
+                    doc_entity.vector_status = 3
+                    doc_entity.vector_error_message = str(e)[:500]
+                    commit_or_rollback(db)
+            except Exception:
+                db.rollback()
+
+            results.append(
+                schemas_knowledge_base.VectorizeDocumentsItem(
+                    document_id=document_id,
+                    title=doc_entity.title if doc_entity else "",
+                    chunk_count=0,
+                    success=False,
+                    error=str(e)[:200],
+                )
+            )
+            failed_count += 1
+
+    logger.info(
+        f"批量向量化完成: total={len(vectorize_documents_request.document_ids)} "
+        f"success={success_count} failed={failed_count}"
+    )
+    return schemas_knowledge_base.VectorizeDocumentsResponse(
+        total=len(vectorize_documents_request.document_ids),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results,
+    )
+
+
+def search_knowledge(
+    db: Session,
+    search_request: schemas_knowledge_base.SearchKnowledgeRequest,
+):
+    """知识库语义检索"""
+    logger.info(
+        f"语义检索: query={search_request.query[:100]} top_k={search_request.top_k}"
+    )
+
+    vectorstore = get_kb_vectorstore()
+
+    try:
+        docs_with_scores = vectorstore.similarity_search_with_score(
+            query=search_request.query,
+            k=search_request.top_k,
+        )
+    except Exception as exc:
+        logger.error(f"Chroma检索异常: {exc}", exc_info=True)
+        raise ServiceException(
+            ErrorCode.AI_SERVICE_ERROR, "服务调用失败，请稍后重试"
+        ) from exc
+
+    if not docs_with_scores:
+        logger.info(f"检索无命中: query={search_request.query[:100]}")
+        return schemas_knowledge_base.SearchKnowledgeResponse(results=[])
+
+    chunk_ids = []
+    for doc, score in docs_with_scores:
+        chunk_id_str = doc.metadata.get("chunk_id")
+        if chunk_id_str is not None:
+            chunk_ids.append(int(chunk_id_str))
+
+    chunk_records = db.scalars(
+        select(models_knowledge_chunk.KnowledgeChunk).where(
+            models_knowledge_chunk.KnowledgeChunk.id.in_(chunk_ids)
+        )
+    ).all()
+    chunk_map = {c.id: c for c in chunk_records}
+
+    doc_ids = list(set(c.document_id for c in chunk_records))
+    doc_records = db.scalars(
+        select(models_knowledge_document.KnowledgeDocument).where(
+            models_knowledge_document.KnowledgeDocument.id.in_(doc_ids)
+        )
+    ).all()
+    doc_map = {d.id: d for d in doc_records}
+
+    search_results: list[schemas_knowledge_base.SearchKnowledgeItem] = []
+    for doc, score in docs_with_scores:
+        chunk_id_str = doc.metadata.get("chunk_id")
+        if chunk_id_str is None:
+            continue
+
+        chunk_id = int(chunk_id_str)
+        chunk = chunk_map.get(chunk_id)
+        if chunk is None:
+            continue
+
+        d = doc_map.get(chunk.document_id)
+
+        search_results.append(
+            schemas_knowledge_base.SearchKnowledgeItem(
+                chunk_id=chunk_id,
+                document_id=chunk.document_id,
+                page_no=chunk.page_no,
+                chunk_text=chunk.chunk_text,
+                score=float(score),
+                title=d.title if d else None,
+                source_path=d.source_path if d else None,
+                stock_code=d.stock_code if d else None,
+                stock_abbr=d.stock_abbr if d else None,
+            )
+        )
+
+    logger.info(
+        f"检索完成: query={search_request.query[:100]} "
+        f"hits={len(search_results)}"
+    )
+    return schemas_knowledge_base.SearchKnowledgeResponse(results=search_results)
+
+
 """辅助函数"""
+
+
+def _update_document_vector_status(db: Session, document_id: int):
+    """按切块向量状态汇总，更新文档级向量状态"""
+    doc = db.get(models_knowledge_document.KnowledgeDocument, document_id)
+    if not doc:
+        return
+
+    ChunkModel = models_knowledge_chunk.KnowledgeChunk
+
+    total = db.scalar(
+        select(func.count(ChunkModel.id)).where(ChunkModel.document_id == document_id)
+    )
+    if not total:
+        return
+
+    completed = db.scalar(
+        select(func.count(ChunkModel.id)).where(
+            ChunkModel.document_id == document_id,
+            ChunkModel.vector_status == 2,
+        )
+    )
+    failed = db.scalar(
+        select(func.count(ChunkModel.id)).where(
+            ChunkModel.document_id == document_id,
+            ChunkModel.vector_status == 3,
+        )
+    )
+    processing = db.scalar(
+        select(func.count(ChunkModel.id)).where(
+            ChunkModel.document_id == document_id,
+            ChunkModel.vector_status == 1,
+        )
+    )
+
+    if processing and processing > 0:
+        doc.vector_status = 1
+    elif failed and failed > 0:
+        doc.vector_status = 3
+    elif completed == total:
+        doc.vector_status = 2
+    else:
+        doc.vector_status = 0
+
+    commit_or_rollback(db)
 
 
 def _import_excel(

@@ -1,6 +1,5 @@
 from datetime import datetime
 from sqlalchemy import (
-    BigInteger,
     Column,
     DateTime,
     ForeignKey,
@@ -67,7 +66,6 @@ class KnowledgeChunk(Base):
     vector_dim = Column[int](Integer, comment="向量维度")
     vector_version = Column[str](String(100), comment="向量版本")
     vectorized_at = Column[datetime](DateTime, comment="向量化完成时间")
-    milvus_id = Column[int](BigInteger, comment="Milvus中的向量记录ID")
     created_at = Column[datetime](
         DateTime,
         server_default=func.now(),

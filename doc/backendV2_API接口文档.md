@@ -1090,6 +1090,151 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 
 ---
 
+### 4.7 批量向量化知识库文档
+
+- **POST** `/api/v1/knowledge-base/vectorize`
+- **描述**：对已切块的文档执行 Embedding 并写入 Milvus 向量数据库。同步执行，逐文档校验切块状态（`chunk_status == 2`），分批 Embedding（每批 25 条，失败时逐条重试），将向量写入 Milvus 后回写 MySQL 状态。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 位置 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- | ---- |
+| document_ids | int[] | body | 是 | 待向量化的文档 ID 列表，至少 1 个 |
+
+**请求示例**：
+```json
+{
+  "document_ids": [1, 2, 3]
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 3,
+    "success_count": 2,
+    "failed_count": 1,
+    "results": [
+      {
+        "document_id": 1,
+        "title": "贵州茅台深度研究报告",
+        "chunk_count": 15,
+        "success": true,
+        "error": null
+      },
+      {
+        "document_id": 2,
+        "title": "",
+        "chunk_count": 0,
+        "success": false,
+        "error": "文档不存在"
+      }
+    ]
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| total | int | 请求处理的文档总数 |
+| success_count | int | 向量化成功的文档数 |
+| failed_count | int | 向量化失败的文档数 |
+| results | object[] | 逐文档向量化结果列表 |
+| results[].document_id | int | 文档 ID |
+| results[].title | str | 文档标题 |
+| results[].chunk_count | int | 向量化成功的切块数量 |
+| results[].success | bool | 是否向量化成功 |
+| results[].error | str\|null | 失败原因（成功时为 null） |
+
+**向量化流程说明**：
+
+```
+提交向量化请求
+  │
+  └─ 逐文档执行（同步）：
+       ├─ 1. 校验文档存在且 chunk_status == 2（已完成切块）
+       ├─ 2. 标记 doc.vector_status = 1（向量化中）
+       ├─ 3. 查询该文档下 vector_status ∈ [0,3] 的所有切块
+       ├─ 4. 标记所有待处理切块为 vector_status = 1（处理中）
+       ├─ 5. 删除 Milvus 中该文档的旧向量
+       ├─ 6. 分批调用 Embedding 模型（25 条/批），失败时逐条重试（最多 3 次）
+       ├─ 7. 将向量写入 Milvus（知识库 Collection）
+       ├─ 8. 回查 Milvus auto_id，写入切块的 milvus_id、vector_model、vector_dim、vector_version
+       ├─ 9. 每个切块标记 vector_status = 2（成功）/ 3（失败）
+       └─ 10. 汇总更新 doc.vector_status（全部成功→2，部分失败→3，处理中→1）
+```
+
+---
+
+### 4.8 知识库语义检索
+
+- **POST** `/api/v1/knowledge-base/search`
+- **描述**：对知识库执行语义检索（调试用）。用户输入查询文本，服务端将其转换为 Embedding 向量，在 Milvus 中按余弦相似度搜索 Top-K 个最相似的切块，回表 MySQL 查询文档信息后返回结果列表。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 位置 | 必填 | 默认值 | 说明 |
+| ---- | ---- | ---- | ---- | ------ | ---- |
+| query | str | body | 是 | - | 检索文本，至少 1 字符 |
+| top_k | int | body | 否 | 5 | 返回结果数量，范围 1~50 |
+
+**请求示例**：
+```json
+{
+  "query": "贵州茅台2024年净利润预测",
+  "top_k": 5
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "results": [
+      {
+        "chunk_id": 1001,
+        "document_id": 1,
+        "page_no": 3,
+        "chunk_text": "预计贵州茅台2024年实现净利润...",
+        "score": 0.9234,
+        "title": "贵州茅台深度研究报告",
+        "source_path": "uploads/research_report/1_abc.pdf",
+        "stock_code": "600519",
+        "stock_abbr": "贵州茅台"
+      }
+    ]
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| results | object[] | 检索结果列表，按相似度降序排列 |
+| results[].chunk_id | int | 切块 ID |
+| results[].document_id | int | 所属文档 ID |
+| results[].page_no | int\|null | 源文档页码 |
+| results[].chunk_text | str | 切块文本内容 |
+| results[].score | float | 余弦相似度分数（0~1） |
+| results[].title | str\|null | 文档标题 |
+| results[].source_path | str\|null | PDF 源文件路径 |
+| results[].stock_code | str\|null | 股票代码 |
+| results[].stock_abbr | str\|null | 股票简称 |
+
+---
+
 ## 五、后端处理流程说明
 
 ### 5.1 上传建档流程

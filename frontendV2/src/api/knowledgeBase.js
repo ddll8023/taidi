@@ -1,6 +1,6 @@
 /**
  * 知识库管理 API
- * 功能描述：系统初始化（研报元数据导入）、初始化状态查询、整体统计信息、文档切块、PDF上传
+ * 功能描述：系统初始化（研报元数据导入）、初始化状态查询、整体统计信息、文档切块、PDF上传、向量化、语义检索
  */
 import request from './request'
 
@@ -71,4 +71,24 @@ export function uploadKnowledgeDocuments(files) {
     formData.append('file_list', file)
   })
   return request.post('/knowledge-base/upload', formData)
+}
+
+/**
+ * 批量向量化知识库文档
+ * @param {number[]} documentIds - 待向量化的文档ID列表
+ * @returns {Promise} { total, success_count, failed_count, results: [{ document_id, title, chunk_count, success, error }] }
+ */
+export function vectorizeDocuments(documentIds) {
+  return request.post('/knowledge-base/vectorize', { document_ids: documentIds })
+}
+
+/**
+ * 知识库语义检索（调试用）
+ * @param {Object} params - 检索参数
+ * @param {string} params.query - 检索文本
+ * @param {number} [params.top_k] - 返回结果数量（默认5，最大50）
+ * @returns {Promise} { results: [{ chunk_id, document_id, page_no, chunk_text, score, title, source_path, stock_code, stock_abbr }] }
+ */
+export function searchKnowledge(params) {
+  return request.post('/knowledge-base/search', params)
 }

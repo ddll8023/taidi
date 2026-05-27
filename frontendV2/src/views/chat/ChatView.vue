@@ -33,6 +33,7 @@ const isLoading = ref(false)
 const sessionId = ref(route.query.session_id || null)
 const copiedId = ref(null)
 const streamingContent = ref('')
+const requestStartTime = ref(null)
 const progressSteps = reactive({
   intent: { status: 'pending' },
   sql: { status: 'pending' },
@@ -64,6 +65,7 @@ const addMessage = (role, content, extra = {}) => {
     renderedHtml: role === 'assistant' ? renderMarkdown(content) : '',
     sql: extra.sql || null,
     chartType: extra.chartType || null,
+    duration: extra.duration || null,
     showSql: false,
   })
 }
@@ -125,14 +127,15 @@ const handleResult = (data) => {
 
   const answerContent = data.answer?.content || '暂无回答'
   const sql = data.sql || null
+  const duration = requestStartTime.value ? ((Date.now() - requestStartTime.value) / 1000).toFixed(1) : null
 
   if (data.answer?.image && data.answer.image.length > 0) {
     const imageHtml = data.answer.image
       .map((img) => `\n\n![图表](${img})`)
       .join('')
-    addMessage('assistant', answerContent + imageHtml, { sql })
+    addMessage('assistant', answerContent + imageHtml, { sql, duration })
   } else {
-    addMessage('assistant', answerContent, { sql })
+    addMessage('assistant', answerContent, { sql, duration })
   }
 
   isLoading.value = false
@@ -164,6 +167,7 @@ const sendMessage = async () => {
     payload.session_id = sessionId.value
   }
 
+  requestStartTime.value = Date.now()
   sendChatMessageStream(payload, handleStep, handleToken, handleResult, handleError)
 }
 
@@ -318,6 +322,17 @@ const clearConversation = () => {
               />
               {{ copiedId === msg.id ? '已复制' : '复制' }}
             </button>
+            <span
+              v-if="msg.duration"
+              class="inline-flex items-center gap-1 text-xs text-ink-400"
+            >
+              <FontAwesomeIcon
+                :icon="['fas', 'stopwatch']"
+                class="text-[0.65em]"
+                aria-hidden="true"
+              />
+              {{ msg.duration }}s
+            </span>
           </div>
         </div>
 

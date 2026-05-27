@@ -71,6 +71,30 @@ class UploadFailedFileItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class VectorizeDocumentsItem(BaseModel):
+    """单个文档向量化结果"""
+
+    document_id: int = Field(..., description="文档ID")
+    title: str = Field("", description="文档标题")
+    chunk_count: int = Field(0, description="向量化成功的切块数量")
+    success: bool = Field(..., description="是否成功")
+    error: str | None = Field(None, description="失败原因")
+
+
+class SearchKnowledgeItem(BaseModel):
+    """语义检索结果项"""
+
+    chunk_id: int = Field(..., description="切块ID")
+    document_id: int = Field(..., description="文档ID")
+    page_no: int | None = Field(None, description="源文档页码")
+    chunk_text: str = Field(..., description="切块文本")
+    score: float = Field(0.0, description="相似度分数")
+    title: str | None = Field(None, description="文档标题")
+    source_path: str | None = Field(None, description="PDF源文件路径")
+    stock_code: str | None = Field(None, description="股票代码")
+    stock_abbr: str | None = Field(None, description="股票简称")
+
+
 # ========== 请求类（Request）==========
 # 系统初始化使用 multipart/form-data，API 层 Form 逐个声明，不需要请求类
 
@@ -101,6 +125,21 @@ class GetKnowledgeDocumentListRequest(BaseModel):
         "updated_at", description="排序字段"
     )
     sort_order: Literal["desc", "asc"] | None = Field("desc", description="排序方式")
+
+
+class VectorizeDocumentsRequest(BaseModel):
+    """批量向量化请求"""
+
+    document_ids: list[int] = Field(
+        ..., min_length=1, description="待向量化的文档ID列表"
+    )
+
+
+class SearchKnowledgeRequest(BaseModel):
+    """语义检索请求"""
+
+    query: str = Field(..., min_length=1, description="检索文本")
+    top_k: int = Field(5, ge=1, le=50, description="返回结果数量")
 
 
 # ========== 响应类（Response）==========
@@ -177,6 +216,29 @@ class UploadKnowledgeDocumentResponse(BaseModel):
     )
     failed_files: list[UploadFailedFileItem] = Field(
         default_factory=list, description="失败文件列表"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VectorizeDocumentsResponse(BaseModel):
+    """批量向量化响应"""
+
+    total: int = Field(..., description="请求处理的文档总数")
+    success_count: int = Field(..., description="向量化成功的文档数")
+    failed_count: int = Field(..., description="向量化失败的文档数")
+    results: list[VectorizeDocumentsItem] = Field(
+        default_factory=list, description="逐文档向量化结果"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SearchKnowledgeResponse(BaseModel):
+    """语义检索响应"""
+
+    results: list[SearchKnowledgeItem] = Field(
+        default_factory=list, description="检索结果列表"
     )
 
     model_config = ConfigDict(from_attributes=True)

@@ -11,13 +11,24 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'success'])
 
-const stockExcelInput = ref(null)
-const industryExcelInput = ref(null)
-const stockExcelFile = ref(null)
-const industryExcelFile = ref(null)
+const excelInput = ref(null)
+const selectedFile = ref(null)
+const selectedDocType = ref('RESEARCH_REPORT')
 const isInitializing = ref(false)
-const initResult = ref(null)
-const forceReload = ref(false)
+
+// 分别记录两种类型的初始化结果
+const stockResult = ref(null)
+const industryResult = ref(null)
+
+const DOC_TYPE_OPTIONS = [
+  { value: 'RESEARCH_REPORT', label: '个股研报' },
+  { value: 'INDUSTRY_REPORT', label: '行业研报' }
+]
+
+const DOC_TYPE_LABEL = {
+  RESEARCH_REPORT: '个股研报',
+  INDUSTRY_REPORT: '行业研报'
+}
 
 watch(() => props.visible, (newVal) => {
   if (newVal) {
@@ -26,77 +37,60 @@ watch(() => props.visible, (newVal) => {
 })
 
 const resetState = () => {
-  stockExcelFile.value = null
-  industryExcelFile.value = null
+  selectedFile.value = null
+  selectedDocType.value = 'RESEARCH_REPORT'
   isInitializing.value = false
-  initResult.value = null
-  forceReload.value = false
+  stockResult.value = null
+  industryResult.value = null
 }
 
-const triggerStockExcelInput = () => {
-  stockExcelInput.value?.click()
+const triggerExcelInput = () => {
+  excelInput.value?.click()
 }
 
-const triggerIndustryExcelInput = () => {
-  industryExcelInput.value?.click()
-}
-
-const handleStockExcelSelect = (event) => {
+const handleExcelSelect = (event) => {
   const file = event.target.files?.[0]
   if (file) {
     if (!file.name.toLowerCase().endsWith('.xlsx') && !file.name.toLowerCase().endsWith('.xls')) {
       alert('请选择 Excel 文件（.xlsx 或 .xls）')
       return
     }
-    stockExcelFile.value = file
-  }
-  event.target.value = ''
-}
-
-const handleIndustryExcelSelect = (event) => {
-  const file = event.target.files?.[0]
-  if (file) {
-    if (!file.name.toLowerCase().endsWith('.xlsx') && !file.name.toLowerCase().endsWith('.xls')) {
-      alert('请选择 Excel 文件（.xlsx 或 .xls）')
-      return
-    }
-    industryExcelFile.value = file
+    selectedFile.value = file
   }
   event.target.value = ''
 }
 
 const canInit = () => {
-  return stockExcelFile.value && industryExcelFile.value && !isInitializing.value
+  return selectedFile.value && !isInitializing.value
 }
 
 const handleInit = async () => {
   if (!canInit()) return
 
   isInitializing.value = true
-  initResult.value = null
 
   try {
-    const formData = new FormData()
-    formData.append('stock_excel', stockExcelFile.value)
-    formData.append('industry_excel', industryExcelFile.value)
+    const result = await initKnowledgeBase(selectedFile.value, selectedDocType.value)
+    const data = result?.data || result
 
-    const response = await initKnowledgeBase(formData, forceReload.value)
-    const result = response?.data || response
-
-    initResult.value = result
-
-    if (result.success) {
-      emit('success')
+    if (selectedDocType.value === 'RESEARCH_REPORT') {
+      stockResult.value = data
+    } else {
+      industryResult.value = data
     }
+
+    selectedFile.value = null
+    emit('success')
   } catch (error) {
-    initResult.value = {
+    const errorResult = {
       success: false,
-      message: error.message || '初始化失败',
-      stock_metadata_count: 0,
-      industry_metadata_count: 0,
-      total_count: 0,
-      duplicates: 0,
-      errors: [{ phase: 'init', error: error.message || '未知错误' }]
+      message: error.message || '导入失败',
+      total_count: 0
+    }
+    if (selectedDocType.value === 'RESEARCH_REPORT') {
+      stockResult.value = errorResult
+    } else {
+      industryResult.value = errorResult
     }
   } finally {
     isInitializing.value = false
@@ -127,7 +121,7 @@ const formatFileSize = (bytes) => {
           <div class="flex items-center justify-between border-b border-black/5 px-6 py-5">
             <div>
               <h3 class="text-lg font-semibold text-ink-900">系统初始化</h3>
-              <p class="mt-1 text-sm text-ink-500">上传Excel元数据文件，初始化知识库文档索引</p>
+              <p class="mt-1 text-sm text-ink-500">上传 Excel 元数据文件，导入知识库文档索引</p>
             </div>
             <button
               type="button"
@@ -139,86 +133,83 @@ const formatFileSize = (bytes) => {
           </div>
 
           <div class="p-6 space-y-4">
+            <!-- 文档类型选择 -->
+            <div class="space-y-2">
+              <label class="text-sm font-medium text-ink-700">文档类型</label>
+              <div class="flex gap-2">
+                <button
+                  v-for="opt in DOC_TYPE_OPTIONS"
+                  :key="opt.value"
+                  type="button"
+                  class="flex-1 rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors"
+                  :class="selectedDocType === opt.value
+                    ? 'border-blue-300 bg-blue-50 text-blue-700'
+                    : 'border-black/5 bg-white text-ink-600 hover:bg-ink-50'"
+                  @click="selectedDocType = opt.value"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <!-- 文件选择 -->
             <div class="space-y-3">
-              <label class="text-sm font-medium text-ink-700">个股研报元数据</label>
+              <label class="text-sm font-medium text-ink-700">选择 {{ DOC_TYPE_LABEL[selectedDocType] }} Excel 文件</label>
               <div
                 class="flex items-center gap-3 rounded-xl border border-black/5 p-3 cursor-pointer hover:bg-ink-50"
-                @click="triggerStockExcelInput"
+                @click="triggerExcelInput"
               >
                 <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-500">
                   <FontAwesomeIcon :icon="['fas', 'file-excel']" class="text-lg" aria-hidden="true" />
                 </div>
                 <div class="min-w-0 flex-1">
-                  <p v-if="stockExcelFile" class="truncate text-sm font-medium text-ink-900">{{ stockExcelFile.name }}</p>
-                  <p v-else class="text-sm text-ink-400">点击选择个股研报Excel文件</p>
-                  <p v-if="stockExcelFile" class="text-xs text-ink-400">{{ formatFileSize(stockExcelFile.size) }}</p>
+                  <p v-if="selectedFile" class="truncate text-sm font-medium text-ink-900">{{ selectedFile.name }}</p>
+                  <p v-else class="text-sm text-ink-400">点击选择 Excel 文件（.xlsx / .xls）</p>
+                  <p v-if="selectedFile" class="text-xs text-ink-400">{{ formatFileSize(selectedFile.size) }}</p>
                 </div>
                 <FontAwesomeIcon :icon="['fas', 'upload']" class="text-ink-300" aria-hidden="true" />
               </div>
               <input
-                ref="stockExcelInput"
+                ref="excelInput"
                 type="file"
                 accept=".xlsx,.xls"
                 class="hidden"
-                @change="handleStockExcelSelect"
+                @change="handleExcelSelect"
               />
             </div>
 
-            <div class="space-y-3">
-              <label class="text-sm font-medium text-ink-700">行业研报元数据</label>
-              <div
-                class="flex items-center gap-3 rounded-xl border border-black/5 p-3 cursor-pointer hover:bg-ink-50"
-                @click="triggerIndustryExcelInput"
-              >
-                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-50 text-purple-500">
-                  <FontAwesomeIcon :icon="['fas', 'file-excel']" class="text-lg" aria-hidden="true" />
-                </div>
-                <div class="min-w-0 flex-1">
-                  <p v-if="industryExcelFile" class="truncate text-sm font-medium text-ink-900">{{ industryExcelFile.name }}</p>
-                  <p v-else class="text-sm text-ink-400">点击选择行业研报Excel文件</p>
-                  <p v-if="industryExcelFile" class="text-xs text-ink-400">{{ formatFileSize(industryExcelFile.size) }}</p>
-                </div>
-                <FontAwesomeIcon :icon="['fas', 'upload']" class="text-ink-300" aria-hidden="true" />
-              </div>
-              <input
-                ref="industryExcelInput"
-                type="file"
-                accept=".xlsx,.xls"
-                class="hidden"
-                @change="handleIndustryExcelSelect"
-              />
-            </div>
-
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                v-model="forceReload"
-                class="rounded border-ink-300 text-ink-900 focus:ring-ink-500"
-              />
-              <span class="text-sm text-ink-600">强制重新加载（清除已有元数据）</span>
-            </label>
-
+            <!-- 个股研报结果 -->
             <div
-              v-if="initResult"
+              v-if="stockResult"
               class="rounded-xl border p-4"
-              :class="initResult.success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'"
+              :class="stockResult.success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'"
             >
-              <p
-                class="text-sm font-medium"
-                :class="initResult.success ? 'text-green-700' : 'text-red-700'"
-              >
-                {{ initResult.message }}
-              </p>
-              <div v-if="initResult.success" class="mt-2 space-y-1">
-                <p class="text-xs text-ink-500">个股研报元数据：{{ initResult.stock_metadata_count }} 条</p>
-                <p class="text-xs text-ink-500">行业研报元数据：{{ initResult.industry_metadata_count }} 条</p>
-                <p class="text-xs text-ink-500">总计：{{ initResult.total_count }} 条（重复跳过 {{ initResult.duplicates }} 条）</p>
-              </div>
-              <div v-if="initResult.errors?.length" class="mt-2">
-                <p class="text-xs text-red-600" v-for="(err, i) in initResult.errors" :key="i">
-                  {{ err.error || err.message || JSON.stringify(err) }}
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">个股研报</span>
+                <p class="text-sm font-medium" :class="stockResult.success ? 'text-green-700' : 'text-red-700'">
+                  {{ stockResult.message }}
                 </p>
               </div>
+              <p v-if="stockResult.total_count" class="mt-1 text-xs text-ink-500">
+                导入 {{ stockResult.total_count }} 条<span v-if="stockResult.duplicate_count">，跳过重复 {{ stockResult.duplicate_count }} 条</span>
+              </p>
+            </div>
+
+            <!-- 行业研报结果 -->
+            <div
+              v-if="industryResult"
+              class="rounded-xl border p-4"
+              :class="industryResult.success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'"
+            >
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">行业研报</span>
+                <p class="text-sm font-medium" :class="industryResult.success ? 'text-green-700' : 'text-red-700'">
+                  {{ industryResult.message }}
+                </p>
+              </div>
+              <p v-if="industryResult.total_count" class="mt-1 text-xs text-ink-500">
+                导入 {{ industryResult.total_count }} 条<span v-if="industryResult.duplicate_count">，跳过重复 {{ industryResult.duplicate_count }} 条</span>
+              </p>
             </div>
           </div>
 
@@ -228,17 +219,16 @@ const formatFileSize = (bytes) => {
               class="shell-button-secondary"
               @click="handleClose"
             >
-              {{ initResult ? '关闭' : '取消' }}
+              {{ stockResult || industryResult ? '关闭' : '取消' }}
             </button>
             <button
-              v-if="!initResult"
               type="button"
               class="shell-button"
               :disabled="!canInit()"
               @click="handleInit"
             >
               <FontAwesomeIcon v-if="isInitializing" :icon="['fas', 'spinner']" spin aria-hidden="true" />
-              <span>{{ isInitializing ? '初始化中...' : '开始初始化' }}</span>
+              <span>{{ isInitializing ? '导入中...' : '开始导入' }}</span>
             </button>
           </div>
         </div>

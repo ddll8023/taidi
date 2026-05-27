@@ -56,15 +56,15 @@ class Settings(BaseSettings):
     PROMPT_CONFIG: PromptConfig = prompt_config
 
     # RAG配置
-    MILVUS_URI: str = ""
-    MILVUS_COLLECTION: str = "financial_report_embedding"
-    MILVUS_KB_COLLECTION: str = "knowledge_chunk_embedding"
+    CHROMA_PERSIST_DIR: str = "chroma_data"
+    CHROMA_KB_COLLECTION: str = "knowledge_chunk_embedding"
     CHUNK_SIZE: int = 1600
-    CHUNK_OVERLAP: int = 160
+    CHUNK_OVERLAP: int = 220
     CHUNK_SEPARATORS: list[str] = ["\n\n", "\n", "。", ". ", " ", ""]
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 
 @lru_cache()

@@ -13,7 +13,7 @@ pyyaml
 langchain_community
 langchain
 dashscope
-pymilvus
+langchain-chroma
 docx2txt
 pypdf
 mutagen
