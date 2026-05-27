@@ -1,3 +1,25 @@
+<!--
+╔══════════════════════════════════════════════════════════════════════╗
+║  DreamSeed 种梦计划 — AI创造者大赛  官方 README 模板                ║
+║                                                                      ║
+║  使用说明：                                                          ║
+║  1. 将本模板放在参赛仓库根目录 README.md 的顶部                       ║
+║  2. 头图使用 DreamField 官方公开活动图片地址                         ║
+║  3. 请保留 DREAMFIELD_README_HEADER_START / END 标识                 ║
+║  4. 分割线以下供创作者自由编写项目内容                               ║
+╚══════════════════════════════════════════════════════════════════════╝
+-->
+
+<!-- DREAMFIELD_README_HEADER_START -->
+
+<p align="center">
+  <a href="https://www.dreamfield.top">
+    <img src="https://www.dreamfield.top/dream-field/contest-readme/assets/dreamseed-readme-banner.png" alt="DreamSeed 种梦计划参赛作品" width="100%" />
+  </a>
+</p>
+
+<!-- DREAMFIELD_README_HEADER_END -->
+
 # 财报分析工作台 (Financial Reports Workbench)
 
 一个基于 AI 的财务报告分析与智能问答系统，支持财报结构化解析、智能问数、知识库管理等功能。
@@ -9,7 +31,7 @@
 - **框架**: FastAPI
 - **语言**: Python 3.12+
 - **数据库**: MySQL (SQLAlchemy ORM)
-- **向量数据库**: Milvus
+- **向量数据库**: Chroma
 - **AI/LLM**: LangChain, DashScope, OpenAI, Anthropic
 - **其他**: PyJWT, bcrypt, OSS
 
@@ -53,7 +75,7 @@
 - Python 3.12+
 - Node.js 18+
 - MySQL 8.0+
-- Milvus 向量数据库
+- Chroma 向量数据库（LangChain 封装，本地文件持久化，无需单独部署）
 
 ## 快速开始
 
@@ -135,8 +157,8 @@ code/
 
 ### 后端模块
 
-| 模块          | 说明                                   |
-| ------------- | -------------------------------------- |
+| 模块        | 说明                                   |
+| ----------- | -------------------------------------- |
 | `api/`      | RESTful API 接口定义                   |
 | `models/`   | 数据库模型定义（财报、聊天、知识库等） |
 | `services/` | 核心业务逻辑实现                       |
@@ -145,8 +167,8 @@ code/
 
 ### 前端模块
 
-| 模块            | 说明                                     |
-| --------------- | ---------------------------------------- |
+| 模块          | 说明                                     |
+| ------------- | ---------------------------------------- |
 | `views/`      | 页面组件（智能问数、财报管理、工作台等） |
 | `components/` | 通用组件（上传弹窗、状态组件、筛选栏等） |
 | `stores/`     | 状态管理（聊天、任务工作台等）           |
@@ -170,9 +192,8 @@ MYSQL_DATABASE=financial_report
 UPLOAD_DIR=uploads
 fujian2_DIR=fujian2
 
-# Milvus 配置
-MILVUS_URI="http://127.0.0.1:19530"
-MILVUS_COLLECTION="financial_report"
+# Chroma 配置
+CHROMA_PERSIST_DIR=chroma_data
 CHUNK_SIZE=1600
 CHUNK_OVERLAP=160
 
