@@ -36,7 +36,6 @@ class KnowledgeChunk(Base):
         nullable=True,
         comment="股票代码，行业研报可为空",
     )
-    page_no = Column[int](Integer, comment="源文档页码（1-based）")
     chunk_index = Column[int](
         Integer,
         nullable=False,
@@ -55,6 +54,14 @@ class KnowledgeChunk(Base):
         server_default=text("0"),
         comment="文本字符数",
     )
+    content_type = Column[str](
+        String(16),
+        nullable=False,
+        default="text",
+        server_default="text",
+        comment="内容类型：text/table",
+    )
+    section_path = Column[str](String(500), comment="章节路径")
     vector_status = Column[int](
         SmallInteger,
         nullable=False,

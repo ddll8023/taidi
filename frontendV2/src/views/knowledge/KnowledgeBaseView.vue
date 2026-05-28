@@ -15,7 +15,8 @@ import UploadPdfModal from '@/components/common/UploadPdfModal.vue'
 import PaginationBar from '@/components/common/PaginationBar.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
-import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, chunkDocuments, uploadKnowledgeDocuments, vectorizeDocuments } from '@/api/knowledgeBase'
+import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, uploadKnowledgeDocuments, parseDocuments } from '@/api/knowledgeBase'
+import MarkdownCleanerModal from '@/components/knowledge/MarkdownCleanerModal.vue'
 
 // ── 常量 ──
 
@@ -29,32 +30,23 @@ const DOC_TYPE_LABEL_MAP = {
   INDUSTRY_REPORT: '行业研报'
 }
 
-// 状态码映射（与 V1 保持一致）
-const CHUNK_STATUS_MAP = {
-  0: { label: '待切块', tone: 'neutral' },
-  1: { label: '切块中', tone: 'warning' },
-  2: { label: '切块完成', tone: 'success' },
-  3: { label: '切块失败', tone: 'danger' }
-}
-
-const VECTOR_STATUS_MAP = {
-  0: { label: '未向量化', tone: 'neutral' },
-  1: { label: '向量化中', tone: 'warning' },
-  2: { label: '已向量化', tone: 'success' },
-  3: { label: '向量化失败', tone: 'danger' }
-}
-
 const METADATA_STATUS_MAP = {
   0: { label: '未加载', tone: 'neutral' },
   1: { label: '待上传', tone: 'warning' },
   2: { label: '已上传', tone: 'success' }
 }
 
+const PARSE_STATUS_MAP = {
+  0: { label: '未解析', tone: 'neutral' },
+  1: { label: '解析中', tone: 'warning' },
+  2: { label: '解析完成', tone: 'success' },
+  3: { label: '解析失败', tone: 'danger' }
+}
+
 // ── 统计数据 ──
 
 const stats = ref({
-  documents: { total: 0, by_chunk_status: {}, by_vector_status: {}, by_doc_type: {} },
-  chunks: { total: 0, by_vector_status: {} }
+  documents: { total: 0, by_vector_status: {}, by_doc_type: {} }
 })
 
 const statsLoading = ref(false)
@@ -77,6 +69,8 @@ const importResult = ref(null)
 
 const showSystemInitModal = ref(false)
 const showUploadPdfModal = ref(false)
+const showCleanerModal = ref(false)
+const cleaningDocument = ref(null)
 
 // ── 文档列表 ──
 
@@ -89,8 +83,7 @@ const listState = reactive({
 
 const listKeyword = ref('')
 const listDocTypeFilter = ref('')
-const listChunkStatusFilter = ref('')
-const listVectorStatusFilter = ref('')
+const listParseStatusFilter = ref('')
 const isLoadingList = ref(false)
 const isRefreshingList = ref(false)
 const listErrorMessage = ref('')
@@ -101,48 +94,17 @@ const docTypeFilterOptions = [
   { value: 'INDUSTRY_REPORT', label: '行业研报' }
 ]
 
-const chunkStatusFilterOptions = [
-  { value: '', label: '全部切块状态' },
-  { value: '0', label: '待切块' },
-  { value: '1', label: '切块中' },
-  { value: '2', label: '已完成' },
-  { value: '3', label: '失败' }
-]
-
-const vectorStatusFilterOptions = [
-  { value: '', label: '全部向量状态' },
-  { value: '0', label: '未向量化' },
-  { value: '1', label: '向量化中' },
-  { value: '2', label: '已向量化' },
-  { value: '3', label: '失败' }
+const parseStatusFilterOptions = [
+  { value: '', label: '全部解析状态' },
+  { value: '0', label: '未解析' },
+  { value: '1', label: '解析中' },
+  { value: '2', label: '解析完成' },
+  { value: '3', label: '解析失败' }
 ]
 
 // ── 计算属性 ──
 
 const totalDocuments = computed(() => stats.value.documents.total)
-
-const chunkedDocuments = computed(() => {
-  const byChunk = stats.value.documents.by_chunk_status || {}
-  return (byChunk[2] || 0) + (byChunk[3] || 0)
-})
-
-const vectorizedDocuments = computed(() => {
-  const byVec = stats.value.documents.by_vector_status || {}
-  return byVec[2] || 0
-})
-
-const pendingDocuments = computed(() => {
-  const byChunk = stats.value.documents.by_chunk_status || {}
-  return byChunk[0] || 0
-})
-
-const failedDocuments = computed(() => {
-  const byChunk = stats.value.documents.by_chunk_status || {}
-  const byVec = stats.value.documents.by_vector_status || {}
-  return (byChunk[3] || 0) + (byVec[3] || 0)
-})
-
-const totalChunks = computed(() => stats.value.chunks.total)
 
 const isInitialized = computed(() => initStatus.value.initialized ?? false)
 const totalMetadataCount = computed(() => initStatus.value.total_metadata_count ?? 0)
@@ -251,12 +213,25 @@ async function handleUploadPdfSuccess() {
   await fetchDocumentList()
 }
 
+function handleCleanMarkdown(doc) {
+  cleaningDocument.value = doc
+  showCleanerModal.value = true
+}
+
+async function handleCleanSuccess() {
+  showToast('清洗结果已保存', 'success')
+  await fetchDocumentList()
+}
+
 // ── 切块操作 ──
 
 const selectedIds = ref(new Set())
-const isChunking = ref(false)
-const isChunkingAll = ref(false)
-const chunkMessage = ref({ type: '', text: '' })
+
+// ── 解析操作 ──
+
+const isParsing = ref(false)
+const isParsingAll = ref(false)
+const parseMessage = ref({ type: '', text: '' })
 
 const allSelected = computed(() => {
   return listState.items.length > 0 && selectedIds.value.size === listState.items.length
@@ -282,51 +257,72 @@ const toggleSelectOne = (id) => {
   selectedIds.value = next
 }
 
-const handleSelectedChunk = async () => {
+// ── 解析操作 ──
+
+const handleSelectedParse = async () => {
   if (selectedIds.value.size === 0) return
 
-  isChunking.value = true
-  chunkMessage.value = { type: '', text: '' }
+  isParsing.value = true
+  parseMessage.value = { type: '', text: '' }
 
   try {
-    const res = await chunkDocuments([...selectedIds.value])
+    const res = await parseDocuments([...selectedIds.value])
     const payload = res.data || res
     const successCount = payload.success_count ?? 0
     const failedCount = payload.failed_count ?? 0
-    chunkMessage.value = {
+    parseMessage.value = {
       type: failedCount === 0 ? 'success' : 'warning',
-      text: `切块完成：成功 ${successCount} 个，失败 ${failedCount} 个`
+      text: `解析完成：成功 ${successCount} 个，失败 ${failedCount} 个`
     }
     selectedIds.value = new Set()
     await loadStats()
     await fetchDocumentList()
   } catch (error) {
-    chunkMessage.value = { type: 'error', text: error.message || '切块操作失败' }
+    parseMessage.value = { type: 'error', text: error.message || '解析操作失败' }
   } finally {
-    isChunking.value = false
+    isParsing.value = false
   }
 }
 
-const handleChunkAll = async () => {
-  isChunkingAll.value = true
-  chunkMessage.value = { type: '', text: '' }
+const handleParseAll = async () => {
+  isParsingAll.value = true
+  parseMessage.value = { type: '', text: '' }
   try {
     const ids = listState.items.map(item => item.id)
-    const res = await chunkDocuments(ids)
+    const res = await parseDocuments(ids)
     const payload = res.data || res
     const successCount = payload.success_count ?? 0
     const failedCount = payload.failed_count ?? 0
-    chunkMessage.value = {
+    parseMessage.value = {
       type: failedCount === 0 ? 'success' : 'warning',
-      text: `当前页全部切块完成：成功 ${successCount} 个，失败 ${failedCount} 个`
+      text: `当前页全部解析完成：成功 ${successCount} 个，失败 ${failedCount} 个`
     }
     selectedIds.value = new Set()
     await loadStats()
     await fetchDocumentList()
   } catch (error) {
-    chunkMessage.value = { type: 'error', text: error.message || '批量切块失败' }
+    parseMessage.value = { type: 'error', text: error.message || '批量解析失败' }
   } finally {
-    isChunkingAll.value = false
+    isParsingAll.value = false
+  }
+}
+
+const handleRowParse = async (doc) => {
+  rowLoading.value = { ...rowLoading.value, [doc.id]: 'parse' }
+  try {
+    const res = await parseDocuments([doc.id])
+    const payload = res.data || res
+    const ok = payload.success_count > 0
+    showToast(
+      ok ? `「${doc.title}」解析完成` : '解析失败',
+      ok ? 'success' : 'error'
+    )
+    await loadStats()
+    await fetchDocumentList()
+  } catch (e) {
+    showToast(e.message || '解析失败', 'error')
+  } finally {
+    rowLoading.value = { ...rowLoading.value, [doc.id]: null }
   }
 }
 
@@ -361,97 +357,7 @@ const handleRowUploadPdf = async (doc, event) => {
   }
 }
 
-const handleRowChunk = async (doc) => {
-  rowLoading.value = { ...rowLoading.value, [doc.id]: 'chunk' }
-  try {
-    const res = await chunkDocuments([doc.id])
-    const payload = res.data || res
-    const ok = payload.success_count > 0
-    showToast(
-      ok ? `「${doc.title}」切块完成，${payload.results?.[0]?.chunk_count ?? 0} 块` : '切块失败',
-      ok ? 'success' : 'error'
-    )
-    await loadStats()
-    await fetchDocumentList()
-  } catch (e) {
-    showToast(e.message || '切块失败', 'error')
-  } finally {
-    rowLoading.value = { ...rowLoading.value, [doc.id]: null }
-  }
-}
 
-const handleRowVectorize = async (doc) => {
-  rowLoading.value = { ...rowLoading.value, [doc.id]: 'vectorize' }
-  try {
-    const res = await vectorizeDocuments([doc.id])
-    const payload = res.data || res
-    const ok = payload.success_count > 0
-    showToast(
-      ok ? `「${doc.title}」向量化完成，${payload.results?.[0]?.chunk_count ?? 0} 块` : '向量化失败',
-      ok ? 'success' : 'error'
-    )
-    await loadStats()
-    await fetchDocumentList()
-  } catch (e) {
-    showToast(e.message || '向量化失败', 'error')
-  } finally {
-    rowLoading.value = { ...rowLoading.value, [doc.id]: null }
-  }
-}
-
-// ── 批量向量化操作 ──
-
-const isVectorizing = ref(false)
-const isVectorizingAll = ref(false)
-const vectorizeMessage = ref({ type: '', text: '' })
-
-const handleSelectedVectorize = async () => {
-  if (selectedIds.value.size === 0) return
-
-  isVectorizing.value = true
-  vectorizeMessage.value = { type: '', text: '' }
-
-  try {
-    const res = await vectorizeDocuments([...selectedIds.value])
-    const payload = res.data || res
-    const successCount = payload.success_count ?? 0
-    const failedCount = payload.failed_count ?? 0
-    vectorizeMessage.value = {
-      type: failedCount === 0 ? 'success' : 'warning',
-      text: `向量化完成：成功 ${successCount} 个，失败 ${failedCount} 个`
-    }
-    selectedIds.value = new Set()
-    await loadStats()
-    await fetchDocumentList()
-  } catch (error) {
-    vectorizeMessage.value = { type: 'error', text: error.message || '批量向量化失败' }
-  } finally {
-    isVectorizing.value = false
-  }
-}
-
-const handleVectorizeAll = async () => {
-  isVectorizingAll.value = true
-  vectorizeMessage.value = { type: '', text: '' }
-  try {
-    const ids = listState.items.map(item => item.id)
-    const res = await vectorizeDocuments(ids)
-    const payload = res.data || res
-    const successCount = payload.success_count ?? 0
-    const failedCount = payload.failed_count ?? 0
-    vectorizeMessage.value = {
-      type: failedCount === 0 ? 'success' : 'warning',
-      text: `当前页全部向量化完成：成功 ${successCount} 个，失败 ${failedCount} 个`
-    }
-    selectedIds.value = new Set()
-    await loadStats()
-    await fetchDocumentList()
-  } catch (error) {
-    vectorizeMessage.value = { type: 'error', text: error.message || '批量向量化失败' }
-  } finally {
-    isVectorizingAll.value = false
-  }
-}
 
 // ── 文档列表加载 ──
 
@@ -481,8 +387,7 @@ const fetchDocumentList = async ({ silent = false } = {}) => {
     }
     if (listKeyword.value.trim()) params.keyword = listKeyword.value.trim()
     if (listDocTypeFilter.value) params.doc_type = listDocTypeFilter.value
-    if (listChunkStatusFilter.value !== '') params.chunk_status = Number(listChunkStatusFilter.value)
-    if (listVectorStatusFilter.value !== '') params.vector_status = Number(listVectorStatusFilter.value)
+    if (listParseStatusFilter.value !== '') params.parse_status = Number(listParseStatusFilter.value)
 
     const response = await getKnowledgeDocumentList(params)
     const payload = response?.data || response
@@ -507,8 +412,7 @@ const handleListSearch = () => {
 const handleListReset = () => {
   listKeyword.value = ''
   listDocTypeFilter.value = ''
-  listChunkStatusFilter.value = ''
-  listVectorStatusFilter.value = ''
+  listParseStatusFilter.value = ''
   listState.page = 1
   fetchDocumentList()
 }
@@ -538,7 +442,7 @@ onMounted(() => {
     <div class="flex items-center justify-between rounded-2xl border border-black/5 bg-white/80 p-4 shrink-0">
       <div>
         <h2 class="text-lg font-semibold text-ink-900">知识库管理</h2>
-        <p class="mt-1 text-sm text-ink-500">增量构建模式：初始化 → 上传PDF → 向量化</p>
+        <p class="mt-1 text-sm text-ink-500">增量构建模式：初始化 → 上传PDF → 解析 → 切块</p>
       </div>
       <div class="flex items-center gap-2">
         <span
@@ -575,13 +479,9 @@ onMounted(() => {
     </div>
 
     <!-- ═══ 统计卡片区 ═══ -->
-    <div class="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6 shrink-0">
+    <div class="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5 shrink-0">
       <MetricTile title="总文档数" :value="String(totalDocuments)" tone="neutral" />
-      <MetricTile title="已切块" :value="String(chunkedDocuments)" tone="success" />
-      <MetricTile title="已向量化" :value="String(vectorizedDocuments)" tone="success" />
-      <MetricTile title="待处理" :value="String(pendingDocuments)" tone="warning" />
-      <MetricTile title="失败" :value="String(failedDocuments)" tone="danger" />
-      <MetricTile title="总切块数" :value="String(totalChunks)" tone="neutral" />
+
     </div>
 
     <!-- ═══ 操作按钮区 ═══ -->
@@ -607,30 +507,17 @@ onMounted(() => {
       </p>
     </div>
 
-    <!-- ═══ 切块结果通知 ═══ -->
+    <!-- ═══ 解析结果通知 ═══ -->
     <div
-      v-if="chunkMessage.text"
+      v-if="parseMessage.text"
       class="shrink-0 rounded-2xl border px-4 py-3 text-sm"
       :class="{
-        'border-green-200 bg-green-50 text-green-700': chunkMessage.type === 'success',
-        'border-yellow-200 bg-yellow-50 text-yellow-700': chunkMessage.type === 'warning',
-        'border-red-200 bg-red-50 text-red-700': chunkMessage.type === 'error'
+        'border-green-200 bg-green-50 text-green-700': parseMessage.type === 'success',
+        'border-yellow-200 bg-yellow-50 text-yellow-700': parseMessage.type === 'warning',
+        'border-red-200 bg-red-50 text-red-700': parseMessage.type === 'error'
       }"
     >
-      <p class="font-medium">{{ chunkMessage.text }}</p>
-    </div>
-
-    <!-- ═══ 向量化结果通知 ═══ -->
-    <div
-      v-if="vectorizeMessage.text"
-      class="shrink-0 rounded-2xl border px-4 py-3 text-sm"
-      :class="{
-        'border-green-200 bg-green-50 text-green-700': vectorizeMessage.type === 'success',
-        'border-yellow-200 bg-yellow-50 text-yellow-700': vectorizeMessage.type === 'warning',
-        'border-red-200 bg-red-50 text-red-700': vectorizeMessage.type === 'error'
-      }"
-    >
-      <p class="font-medium">{{ vectorizeMessage.text }}</p>
+      <p class="font-medium">{{ parseMessage.text }}</p>
     </div>
 
     <!-- ═══ 统计信息仪表盘 ═══ -->
@@ -665,7 +552,7 @@ onMounted(() => {
             <h3 class="text-sm font-medium text-ink-700">文档分布</h3>
             <span class="ml-auto text-xs text-ink-400 tabular-nums">{{ stats.documents?.total ?? 0 }} 份</span>
           </div>
-          <div class="grid grid-cols-1 gap-0 divide-y divide-black/5 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          <div class="grid grid-cols-1 gap-0 divide-y divide-black/5 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
             <!-- 文档类型 -->
             <div class="px-4 py-3">
               <p class="text-xs text-ink-400 mb-2">文档类型</p>
@@ -681,67 +568,7 @@ onMounted(() => {
               </div>
               <p v-else class="text-xs text-ink-300">-</p>
             </div>
-            <!-- 切块状态 -->
-            <div class="px-4 py-3">
-              <p class="text-xs text-ink-400 mb-2">切块状态</p>
-              <div v-if="Object.keys(stats.documents?.by_chunk_status || {}).length" class="space-y-1.5">
-                <div
-                  v-for="(count, key) in stats.documents.by_chunk_status"
-                  :key="key"
-                  class="flex items-center justify-between"
-                >
-                  <StatusBadge :label="CHUNK_STATUS_MAP[key]?.label || `状态${key}`" :tone="CHUNK_STATUS_MAP[key]?.tone || 'neutral'" />
-                  <span class="text-sm font-medium tabular-nums text-ink-800">{{ count }}</span>
-                </div>
-              </div>
-              <p v-else class="text-xs text-ink-300">-</p>
-            </div>
-            <!-- 向量状态 -->
-            <div class="px-4 py-3">
-              <p class="text-xs text-ink-400 mb-2">向量状态</p>
-              <div v-if="Object.keys(stats.documents?.by_vector_status || {}).length" class="space-y-1.5">
-                <div
-                  v-for="(count, key) in stats.documents.by_vector_status"
-                  :key="key"
-                  class="flex items-center justify-between"
-                >
-                  <StatusBadge :label="VECTOR_STATUS_MAP[key]?.label || `状态${key}`" :tone="VECTOR_STATUS_MAP[key]?.tone || 'neutral'" />
-                  <span class="text-sm font-medium tabular-nums text-ink-800">{{ count }}</span>
-                </div>
-              </div>
-              <p v-else class="text-xs text-ink-300">-</p>
-            </div>
-          </div>
-        </section>
 
-        <!-- 向量化进度 -->
-        <section class="rounded-xl border border-black/5 bg-white">
-          <div class="flex items-center gap-2 border-b border-black/5 px-4 py-2.5">
-            <FontAwesomeIcon :icon="['fas', 'bolt']" class="text-xs text-ink-300" aria-hidden="true" />
-            <h3 class="text-sm font-medium text-ink-700">切块向量化进度</h3>
-            <span class="ml-auto text-xs text-ink-400 tabular-nums">{{ totalChunks }} 块</span>
-          </div>
-          <div class="px-4 py-3">
-            <div v-if="Object.keys(stats.chunks?.by_vector_status || {}).length" class="space-y-3">
-              <div
-                v-for="(count, key) in stats.chunks.by_vector_status"
-                :key="key"
-              >
-                <div class="flex items-center justify-between mb-1">
-                  <StatusBadge :label="VECTOR_STATUS_MAP[key]?.label || `状态${key}`" :tone="VECTOR_STATUS_MAP[key]?.tone || 'neutral'" />
-                  <span class="text-xs tabular-nums text-ink-400">
-                    {{ count }}（{{ totalChunks ? (count / totalChunks * 100).toFixed(1) : 0 }}%）
-                  </span>
-                </div>
-                <div class="h-1.5 w-full overflow-hidden rounded-full bg-ink-100">
-                  <div
-                    class="h-full rounded-full transition-all"
-                    :style="{ width: totalChunks ? (count / totalChunks * 100).toFixed(1) + '%' : '0%' }"
-                  ></div>
-                </div>
-              </div>
-            </div>
-            <p v-else class="py-4 text-center text-sm text-ink-300">暂无切块数据</p>
           </div>
         </section>
       </template>
@@ -756,15 +583,14 @@ onMounted(() => {
             <p class="shell-kicker">Documents</p>
             <h3 class="mt-2 text-xl font-semibold text-ink-900">文档列表</h3>
             <p class="mt-2 max-w-3xl text-sm leading-6 text-ink-600">
-              管理系统中的文档记录，支持上传 PDF、提交切块和向量化操作。
+              管理系统中的文档记录，支持上传 PDF、提交转换操作。
             </p>
             <p class="mt-4 text-sm text-ink-500">当前页 {{ listState.items.length }} 条记录</p>
           </div>
 
           <div class="flex flex-wrap items-center gap-3">
             <BaseButton variant="secondary" icon="rotate-right" size="sm" :loading="isRefreshingList" :disabled="isLoadingList" @click="fetchDocumentList({ silent: true })">刷新列表</BaseButton>
-            <BaseButton variant="teal" icon="scissors" size="sm" :loading="isChunkingAll" :disabled="!isInitialized || listState.items.length === 0 || isChunkingAll" @click="handleChunkAll">{{ isChunkingAll ? '切块中...' : '一键切块（当前页）' }}</BaseButton>
-            <BaseButton variant="violet" icon="brain" size="sm" :loading="isVectorizingAll" :disabled="!isInitialized || listState.items.length === 0 || isVectorizingAll" @click="handleVectorizeAll">{{ isVectorizingAll ? '向量化中...' : '一键向量化（当前页）' }}</BaseButton>
+            <BaseButton variant="amber" icon="file-import" size="sm" :loading="isParsingAll" :disabled="!isInitialized || listState.items.length === 0 || isParsingAll" @click="handleParseAll">{{ isParsingAll ? '解析中...' : '一键解析（当前页）' }}</BaseButton>
           </div>
         </div>
 
@@ -778,8 +604,7 @@ onMounted(() => {
             @keydown="handleListKeydown"
           />
           <BaseSelect v-model="listDocTypeFilter" :options="docTypeFilterOptions" placeholder="全部类型" />
-          <BaseSelect v-model="listChunkStatusFilter" :options="chunkStatusFilterOptions" placeholder="全部切块状态" />
-          <BaseSelect v-model="listVectorStatusFilter" :options="vectorStatusFilterOptions" placeholder="全部向量状态" />
+          <BaseSelect v-model="listParseStatusFilter" :options="parseStatusFilterOptions" placeholder="全部解析状态" />
           <BaseButton icon="search" size="sm" @click="handleListSearch">筛选</BaseButton>
           <BaseButton variant="ghost" size="sm" @click="handleListReset">重置</BaseButton>
         </div>
@@ -824,7 +649,7 @@ onMounted(() => {
           style="height: 560px"
         >
           <div class="min-h-0 flex-1 overflow-auto">
-            <table class="shell-grid-table min-w-[1100px]">
+            <table class="shell-grid-table min-w-[1300px]">
               <thead class="sticky top-0 z-10">
                 <tr>
                   <th class="w-10">
@@ -841,8 +666,7 @@ onMounted(() => {
                   <th class="text-left">股票简称</th>
                   <th class="!text-center">发布日期</th>
                   <th class="!text-center">PDF状态</th>
-                  <th class="!text-center">切块状态</th>
-                  <th class="!text-center">向量状态</th>
+                  <th class="!text-center">解析状态</th>
                   <th class="!text-center">操作</th>
                 </tr>
               </thead>
@@ -891,28 +715,13 @@ onMounted(() => {
                     <span
                       class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
                       :class="{
-                        'bg-yellow-50 text-yellow-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'warning',
-                        'bg-green-50 text-green-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'success',
-                        'bg-red-50 text-red-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'danger',
-                        'bg-blue-50 text-blue-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'accent',
-                        'bg-ink-50 text-ink-600': !CHUNK_STATUS_MAP[item.chunk_status] || CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'neutral'
+                        'bg-yellow-50 text-yellow-700': PARSE_STATUS_MAP[item.parse_status]?.tone === 'warning',
+                        'bg-green-50 text-green-700': PARSE_STATUS_MAP[item.parse_status]?.tone === 'success',
+                        'bg-red-50 text-red-700': PARSE_STATUS_MAP[item.parse_status]?.tone === 'danger',
+                        'bg-ink-50 text-ink-600': !PARSE_STATUS_MAP[item.parse_status] || PARSE_STATUS_MAP[item.parse_status]?.tone === 'neutral'
                       }"
                     >
-                      {{ CHUNK_STATUS_MAP[item.chunk_status]?.label || `状态${item.chunk_status}` }}
-                    </span>
-                  </td>
-                  <td class="text-center">
-                    <span
-                      class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-                      :class="{
-                        'bg-yellow-50 text-yellow-700': VECTOR_STATUS_MAP[item.vector_status]?.tone === 'warning',
-                        'bg-green-50 text-green-700': VECTOR_STATUS_MAP[item.vector_status]?.tone === 'success',
-                        'bg-red-50 text-red-700': VECTOR_STATUS_MAP[item.vector_status]?.tone === 'danger',
-                        'bg-blue-50 text-blue-700': VECTOR_STATUS_MAP[item.vector_status]?.tone === 'accent',
-                        'bg-ink-50 text-ink-600': !VECTOR_STATUS_MAP[item.vector_status] || VECTOR_STATUS_MAP[item.vector_status]?.tone === 'neutral'
-                      }"
-                    >
-                      {{ VECTOR_STATUS_MAP[item.vector_status]?.label || `状态${item.vector_status}` }}
+                      {{ PARSE_STATUS_MAP[item.parse_status]?.label || `状态${item.parse_status}` }}
                     </span>
                   </td>
                   <td class="text-center">
@@ -934,23 +743,23 @@ onMounted(() => {
                         @click="triggerRowFileInput(item.id)"
                       >上传</BaseButton>
                       <BaseButton
-                        variant="success"
-                        icon="scissors"
+                        variant="amber"
+                        icon="file-import"
                         size="xs"
-                        :loading="rowLoading[item.id] === 'chunk'"
-                        :disabled="item.metadata_status !== 2 || ![0, 3].includes(item.chunk_status)"
-                        :title="item.metadata_status !== 2 ? '请先上传PDF' : [0, 3].includes(item.chunk_status) ? '提交切块' : (CHUNK_STATUS_MAP[item.chunk_status]?.label || '')"
-                        @click="handleRowChunk(item)"
-                      >切块</BaseButton>
+                        :loading="rowLoading[item.id] === 'parse'"
+                        :disabled="item.metadata_status !== 2 || ![0, 3].includes(item.parse_status)"
+                        :title="item.metadata_status !== 2 ? '请先上传PDF' : [0, 3].includes(item.parse_status) ? '提交解析' : (PARSE_STATUS_MAP[item.parse_status]?.label || '')"
+                        @click="handleRowParse(item)"
+                      >解析</BaseButton>
                       <BaseButton
-                        variant="violet"
-                        icon="brain"
+                        variant="secondary"
+                        icon="broom"
                         size="xs"
-                        :loading="rowLoading[item.id] === 'vectorize'"
-                        :disabled="item.chunk_status !== 2"
-                        :title="item.chunk_status !== 2 ? '请先完成切块' : [0, 3].includes(item.vector_status) ? '提交向量化' : (VECTOR_STATUS_MAP[item.vector_status]?.label || '')"
-                        @click="handleRowVectorize(item)"
-                      >向量</BaseButton>
+                        :disabled="item.parse_status !== 2"
+                        :title="item.parse_status === 2 ? '清洗Markdown' : '请先完成解析'"
+                        @click="handleCleanMarkdown(item)"
+                      >清洗</BaseButton>
+
                     </div>
                   </td>
                 </tr>
@@ -981,6 +790,14 @@ onMounted(() => {
       :visible="showUploadPdfModal"
       @close="showUploadPdfModal = false"
       @success="handleUploadPdfSuccess"
+    />
+
+    <!-- ═══ Markdown 清洗弹窗 ═══ -->
+    <MarkdownCleanerModal
+      :visible="showCleanerModal"
+      :document="cleaningDocument"
+      @close="showCleanerModal = false"
+      @success="handleCleanSuccess"
     />
   </div>
 </template>

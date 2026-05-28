@@ -24,7 +24,7 @@ start_backend.sh
 start_frontend.sh
 
 nul
-
+.cache
 test.py
 doc/多轮对话上下文设计文档.md
 doc/PyMuPDF4LLM_PDF_to_Markdown_RAG_开发指导.md

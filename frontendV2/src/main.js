@@ -45,7 +45,10 @@ import {
   faAnglesRight,
   faChartPie,
   faBrain,
-  faCircleCheck
+  faCircleCheck,
+  faBroom,
+  faFloppyDisk,
+  faFileImport
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 
@@ -97,7 +100,10 @@ library.add(
   faAnglesRight,
   faChartPie,
   faBrain,
-  faCircleCheck
+  faCircleCheck,
+  faBroom,
+  faFloppyDisk,
+  faFileImport
 )
 
 const app = createApp(App)

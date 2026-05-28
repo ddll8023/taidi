@@ -60,7 +60,53 @@ class Settings(BaseSettings):
     CHROMA_KB_COLLECTION: str = "knowledge_chunk_embedding"
     CHUNK_SIZE: int = 1600
     CHUNK_OVERLAP: int = 220
-    CHUNK_SEPARATORS: list[str] = ["\n\n", "\n", "。", ". ", " ", ""]
+    TABLE_CHUNK_SIZE: int = 2500
+    CHUNK_SEPARATORS: list[str] = [
+        # Markdown 标题
+        "\n\n# ",
+        "\n\n## ",
+        "\n\n### ",
+        "\n\n#### ",
+        # 章节
+        "\n\nChapter ",
+        "\n\n第",
+        # 列表 / bullet
+        "\n\n- ",
+        "\n\n* ",
+        "\n\n• ",
+        "\n\n◼ ",
+        "\n\n➢ ",
+        "\n\n❑ ",
+        # 普通段落
+        "\n\n",
+        # 中文句子
+        "。",
+        "！",
+        "？",
+        "；",
+        # 英文句子
+        ". ",
+        "! ",
+        "? ",
+        "; ",
+        # 中文子句
+        "，",
+        "、",
+        "：",
+        # 英文子句
+        ", ",
+        ": ",
+        # 兜底
+        "\n",
+        " ",
+        "",
+    ]
+
+    @property
+    def KNOWLEDGE_PARSE_OUTPUT_DIR(self):
+        path = os.path.join(ROOT_DIR, self.UPLOAD_DIR, "parse_output")
+        os.makedirs(path, exist_ok=True)
+        return path
 
     class Config:
         env_file = ".env"

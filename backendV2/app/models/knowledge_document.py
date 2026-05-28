@@ -127,6 +127,15 @@ class KnowledgeDocument(Base):
     )
     vector_error_message = Column[str](Text, comment="向量化失败原因")
 
+    parse_status = Column[int](
+        SmallInteger,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+        comment="解析状态：0未解析，1解析中，2解析完成，3解析失败",
+    )
+    parse_error_message = Column[str](Text, comment="解析失败原因")
+
     created_at = Column[datetime](
         DateTime,
         server_default=func.now(),
@@ -162,5 +171,9 @@ class KnowledgeDocument(Base):
             "metadata_status",
             "chunk_status",
             "vector_status",
+        ),
+        Index(
+            "idx_knowledge_document_parse_status",
+            "parse_status",
         ),
     )

@@ -63,44 +63,6 @@ def init_knowledge_base(
 
 
 @router.post(
-    "/vectorize",
-    response_model=ApiResponse[schemas_knowledge_base.VectorizeDocumentsResponse],
-    description="批量向量化：对已切块的文档执行Embedding并写入Chroma",
-)
-def vectorize_documents(
-    db: Annotated[Session, Depends(get_db)],
-    body: Annotated[
-        schemas_knowledge_base.VectorizeDocumentsRequest,
-        Body(..., description="向量化请求"),
-    ],
-):
-    """批量向量化知识库文档"""
-    try:
-        return success(data=services_knowledge_base.vectorize_documents(db, body))
-    except ServiceException as e:
-        return error(code=e.code, message=e.message)
-
-
-@router.post(
-    "/search",
-    response_model=ApiResponse[schemas_knowledge_base.SearchKnowledgeResponse],
-    description="知识库语义检索（调试用）",
-)
-def search_knowledge(
-    db: Annotated[Session, Depends(get_db)],
-    body: Annotated[
-        schemas_knowledge_base.SearchKnowledgeRequest,
-        Body(..., description="检索请求"),
-    ],
-):
-    """知识库语义检索"""
-    try:
-        return success(data=services_knowledge_base.search_knowledge(db, body))
-    except ServiceException as e:
-        return error(code=e.code, message=e.message)
-
-
-@router.post(
     "/init-status",
     response_model=ApiResponse[schemas_knowledge_base.GetInitStatusResponse],
     description="查询系统初始化状态",
@@ -131,22 +93,39 @@ def get_knowledge_base_stats(
 
 
 @router.post(
-    "/chunk",
-    response_model=ApiResponse[schemas_knowledge_base.ChunkDocumentsResponse],
-    description="提交文档切块任务：读取PDF文本并按语义边界切块",
+    "/parse",
+    response_model=ApiResponse[schemas_knowledge_base.ParseDocumentsResponse],
+    description="批量解析文档：调用MinerU对PDF进行结构化解析",
 )
-def chunk_documents(
+def parse_documents(
     db: Annotated[Session, Depends(get_db)],
-    chunk_documents_request: Annotated[
-        schemas_knowledge_base.ChunkDocumentsRequest,
-        Body(..., description="切块请求"),
+    body: Annotated[
+        schemas_knowledge_base.ParseDocumentsRequest,
+        Body(..., description="解析请求"),
     ],
 ):
-    """提交文档切块任务"""
+    """批量解析文档"""
     try:
-        return success(
-            data=services_knowledge_base.chunk_documents(db, chunk_documents_request)
-        )
+        return success(data=services_knowledge_base.parse_documents(db, body))
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/parse-result",
+    response_model=ApiResponse[schemas_knowledge_base.GetParseResultResponse],
+    description="获取文档解析结果",
+)
+def get_parse_result(
+    db: Annotated[Session, Depends(get_db)],
+    body: Annotated[
+        schemas_knowledge_base.GetParseResultRequest,
+        Body(..., description="解析结果请求"),
+    ],
+):
+    """获取文档解析结果"""
+    try:
+        return success(data=services_knowledge_base.get_parse_result(db, body.document_id))
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 
@@ -165,5 +144,24 @@ def upload_knowledge_documents(
         return success(
             data=services_knowledge_base.upload_knowledge_documents(db, file_list)
         )
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/save-parse-result",
+    response_model=ApiResponse[schemas_knowledge_base.SaveParseResultResponse],
+    description="保存清洗后的Markdown解析结果",
+)
+def save_parse_result(
+    db: Annotated[Session, Depends(get_db)],
+    body: Annotated[
+        schemas_knowledge_base.SaveParseResultRequest,
+        Body(..., description="保存请求"),
+    ],
+):
+    """保存清洗后的Markdown"""
+    try:
+        return success(data=services_knowledge_base.save_parse_result(db, body))
     except ServiceException as e:
         return error(code=e.code, message=e.message)

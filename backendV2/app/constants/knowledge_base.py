@@ -48,6 +48,25 @@ INDUSTRY_REPORT_COLUMN_MAP: dict[str, str] = {
 DOC_TYPE_RESEARCH_REPORT = "RESEARCH_REPORT"
 DOC_TYPE_INDUSTRY_REPORT = "INDUSTRY_REPORT"
 
+# 解析状态
+PARSE_STATUS_PENDING = 0
+PARSE_STATUS_PARSING = 1
+PARSE_STATUS_COMPLETED = 2
+PARSE_STATUS_FAILED = 3
+
+# 内容类型
+CONTENT_TYPE_TEXT = "text"
+CONTENT_TYPE_TABLE = "table"
+
+# 保留的内容类型（进入切块）
+KEPT_CONTENT_TYPES = frozenset({"text", "list", "table"})
+
+# 丢弃的内容类型
+DROPPED_CONTENT_TYPES = frozenset({
+    "image", "chart", "equation", "code",
+    "header", "footer", "page_number", "aside_text", "page_footnote",
+})
+
 # DashScope 单次批量 Embedding 最大条数
 EMBEDDING_BATCH_SIZE = 25
 

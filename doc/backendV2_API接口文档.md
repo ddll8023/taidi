@@ -812,7 +812,7 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 ### 4.3 获取知识库整体统计信息
 
 - **POST** `/api/v1/knowledge-base/stats`
-- **描述**：获取知识库整体统计信息，包含文档维度和切块维度的数量统计与状态分布。
+- **描述**：获取知识库整体统计信息，包含文档数量与类型分布。
 - **Content-Type**：`application/json`
 
 无请求参数。
@@ -826,25 +826,9 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
   "data": {
     "documents": {
       "total": 5000,
-      "by_chunk_status": {
-        "0": 300,
-        "1": 4500,
-        "2": 200
-      },
-      "by_vector_status": {
-        "0": 1000,
-        "1": 4000
-      },
       "by_doc_type": {
         "RESEARCH_REPORT": 3000,
         "INDUSTRY_REPORT": 2000
-      }
-    },
-    "chunks": {
-      "total": 50000,
-      "by_vector_status": {
-        "0": 5000,
-        "1": 45000
       }
     }
   }
@@ -857,12 +841,7 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | ---- | ---- | ---- |
 | documents | object | 文档维度统计 |
 | documents.total | int | 文档总数 |
-| documents.by_chunk_status | dict | 按切块状态分组：0 待处理 / 1 已完成 / 2 失败 |
-| documents.by_vector_status | dict | 按向量状态分组：0 未向量化 / 1 已向量化 |
 | documents.by_doc_type | dict | 按文档类型分组（如 RESEARCH_REPORT、INDUSTRY_REPORT） |
-| chunks | object | 切块维度统计 |
-| chunks.total | int | 切块总数 |
-| chunks.by_vector_status | dict | 按向量状态分组：0 未向量化 / 1 已向量化 |
 
 ### 4.4 获取知识库文档列表
 
@@ -941,87 +920,7 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | vector_status | int | 向量状态：0 未向量化 / 1 向量化中 / 2 已向量化 / 3 失败 |
 | metadata_status | int | 元数据状态 |
 
-### 4.5 提交文档切块任务
-
-- **POST** `/api/v1/knowledge-base/chunk`
-- **描述**：对选中的知识库文档执行文本切块（同步执行）。逐文档读取 PDF 全文 → 递归字符分割 → 写入 `knowledge_chunk` 表，同时更新文档的切块状态。
-- **Content-Type**：`application/json`
-
-**请求体（JSON）**：
-
-| 参数 | 类型 | 必填 | 说明 |
-| ---- | ---- | ---- | ---- |
-| document_ids | int[] | 是 | 待切块的文档 ID 列表，至少 1 个 |
-
-**请求示例**：
-```json
-{
-  "document_ids": [1, 2, 3]
-}
-```
-
-**响应格式**：
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "total": 3,
-    "success_count": 2,
-    "failed_count": 1,
-    "results": [
-      {
-        "document_id": 1,
-        "title": "某某公司研报",
-        "chunk_count": 15,
-        "success": true,
-        "error": null
-      },
-      {
-        "document_id": 2,
-        "title": "",
-        "chunk_count": 0,
-        "success": false,
-        "error": "文档不存在"
-      }
-    ]
-  }
-}
-```
-
-**响应字段说明**：
-
-| 字段 | 类型 | 说明 |
-| ---- | ---- | ---- |
-| total | int | 请求处理的文档总数 |
-| success_count | int | 切块成功的文档数 |
-| failed_count | int | 切块失败的文档数 |
-| results | object[] | 逐文档切块结果列表 |
-| results[].document_id | int | 文档 ID |
-| results[].title | str | 文档标题 |
-| results[].chunk_count | int | 生成的切块数量 |
-| results[].success | bool | 是否切块成功 |
-| results[].error | str\|null | 失败原因（成功时为 null） |
-
-**切块流程说明**：
-
-```
-提交切块请求
-  │
-  └─ 逐文档执行（同步）：
-       ├─ 1. 校验文档存在且 PDF 源文件可读
-       ├─ 2. 标记 chunk_status = 1（切块中）
-       ├─ 3. 清理该文档旧切块数据
-       ├─ 4. 读取 PDF 全文（分页 + 短页合并）
-       ├─ 5. RecursiveCharacterTextSplitter 切块
-       ├─ 6. 跳过长度 < 50 字符的切块
-       ├─ 7. 批量写入 knowledge_chunk 表
-       ├─ 8. 更新 doc.chunk_count、chunk_status = 2（完成）
-       └─ 异常时：chunk_status = 3（失败） + 记录错误信息
-```
-
-### 4.6 批量上传知识库文档 PDF
+### 4.5 批量上传知识库文档 PDF
 
 - **POST** `/api/v1/knowledge-base/upload`
 - **描述**：批量上传研报 PDF 文件，按文件名（不含扩展名）匹配已存在的元数据记录，写入 PDF 源文件路径并更新 `metadata_status`。
@@ -1088,19 +987,60 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
        └─ 异常/不匹配时：记录失败原因，继续处理下一个文件
 ```
 
----
+### 4.6 保存清洗后的 Markdown 解析结果
 
-### 4.7 批量向量化知识库文档
-
-- **POST** `/api/v1/knowledge-base/vectorize`
-- **描述**：对已切块的文档执行 Embedding 并写入 Milvus 向量数据库。同步执行，逐文档校验切块状态（`chunk_status == 2`），分批 Embedding（每批 25 条，失败时逐条重试），将向量写入 Milvus 后回写 MySQL 状态。
+- **POST** `/api/v1/knowledge-base/save-parse-result`
+- **描述**：保存人工清洗后的 Markdown 内容，直接覆写 MinerU 产出的 `.md` 文件，供后续切块/向量化使用。
 - **Content-Type**：`application/json`
 
 **请求体（JSON）**：
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-| ---- | ---- | ---- | ---- | ---- |
-| document_ids | int[] | body | 是 | 待向量化的文档 ID 列表，至少 1 个 |
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| document_id | int | 是 | 文档 ID |
+| markdown_content | str | 是 | 清洗后的完整 Markdown 内容 |
+
+**请求示例**：
+```json
+{
+  "document_id": 1,
+  "markdown_content": "# 清洗后的标题\n\n清洗后的正文内容..."
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "document_id": 1,
+    "title": "某某公司研报",
+    "saved": true
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| document_id | int | 文档 ID |
+| title | str | 文档标题 |
+| saved | bool | 是否保存成功 |
+
+### 4.7 批量解析文档
+
+- **POST** `/api/v1/knowledge-base/parse`
+- **描述**：批量解析文档，调用 MinerU 对 PDF 进行结构化解析（Markdown 格式提取），支持单个或批量提交。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| document_ids | int[] | 是 | 待解析的文档 ID 列表 |
 
 **请求示例**：
 ```json
@@ -1122,17 +1062,10 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
     "results": [
       {
         "document_id": 1,
-        "title": "贵州茅台深度研究报告",
-        "chunk_count": 15,
+        "title": "某某公司研报",
         "success": true,
-        "error": null
-      },
-      {
-        "document_id": 2,
-        "title": "",
-        "chunk_count": 0,
-        "success": false,
-        "error": "文档不存在"
+        "error": null,
+        "block_count": 42
       }
     ]
   }
@@ -1144,53 +1077,31 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | 字段 | 类型 | 说明 |
 | ---- | ---- | ---- |
 | total | int | 请求处理的文档总数 |
-| success_count | int | 向量化成功的文档数 |
-| failed_count | int | 向量化失败的文档数 |
-| results | object[] | 逐文档向量化结果列表 |
+| success_count | int | 成功解析数 |
+| failed_count | int | 失败数 |
+| results | object[] | 逐文档解析结果列表 |
 | results[].document_id | int | 文档 ID |
 | results[].title | str | 文档标题 |
-| results[].chunk_count | int | 向量化成功的切块数量 |
-| results[].success | bool | 是否向量化成功 |
+| results[].success | bool | 是否成功 |
 | results[].error | str\|null | 失败原因（成功时为 null） |
+| results[].block_count | int | 标准化后的内容块数 |
 
-**向量化流程说明**：
+### 4.8 获取文档解析结果
 
-```
-提交向量化请求
-  │
-  └─ 逐文档执行（同步）：
-       ├─ 1. 校验文档存在且 chunk_status == 2（已完成切块）
-       ├─ 2. 标记 doc.vector_status = 1（向量化中）
-       ├─ 3. 查询该文档下 vector_status ∈ [0,3] 的所有切块
-       ├─ 4. 标记所有待处理切块为 vector_status = 1（处理中）
-       ├─ 5. 删除 Milvus 中该文档的旧向量
-       ├─ 6. 分批调用 Embedding 模型（25 条/批），失败时逐条重试（最多 3 次）
-       ├─ 7. 将向量写入 Milvus（知识库 Collection）
-       ├─ 8. 回查 Milvus auto_id，写入切块的 milvus_id、vector_model、vector_dim、vector_version
-       ├─ 9. 每个切块标记 vector_status = 2（成功）/ 3（失败）
-       └─ 10. 汇总更新 doc.vector_status（全部成功→2，部分失败→3，处理中→1）
-```
-
----
-
-### 4.8 知识库语义检索
-
-- **POST** `/api/v1/knowledge-base/search`
-- **描述**：对知识库执行语义检索（调试用）。用户输入查询文本，服务端将其转换为 Embedding 向量，在 Milvus 中按余弦相似度搜索 Top-K 个最相似的切块，回表 MySQL 查询文档信息后返回结果列表。
+- **POST** `/api/v1/knowledge-base/parse-result`
+- **描述**：获取单个文档的 MinerU 解析结果，返回原始 Markdown 内容。
 - **Content-Type**：`application/json`
 
 **请求体（JSON）**：
 
-| 参数 | 类型 | 位置 | 必填 | 默认值 | 说明 |
-| ---- | ---- | ---- | ---- | ------ | ---- |
-| query | str | body | 是 | - | 检索文本，至少 1 字符 |
-| top_k | int | body | 否 | 5 | 返回结果数量，范围 1~50 |
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| document_id | int | 是 | 文档 ID |
 
 **请求示例**：
 ```json
 {
-  "query": "贵州茅台2024年净利润预测",
-  "top_k": 5
+  "document_id": 1
 }
 ```
 
@@ -1201,19 +1112,10 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
   "code": 0,
   "message": "success",
   "data": {
-    "results": [
-      {
-        "chunk_id": 1001,
-        "document_id": 1,
-        "page_no": 3,
-        "chunk_text": "预计贵州茅台2024年实现净利润...",
-        "score": 0.9234,
-        "title": "贵州茅台深度研究报告",
-        "source_path": "uploads/research_report/1_abc.pdf",
-        "stock_code": "600519",
-        "stock_abbr": "贵州茅台"
-      }
-    ]
+    "document_id": 1,
+    "title": "某某公司研报",
+    "markdown_content": "# 研报标题\n\n正文内容...",
+    "page_count": 15
   }
 }
 ```
@@ -1222,16 +1124,10 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 
 | 字段 | 类型 | 说明 |
 | ---- | ---- | ---- |
-| results | object[] | 检索结果列表，按相似度降序排列 |
-| results[].chunk_id | int | 切块 ID |
-| results[].document_id | int | 所属文档 ID |
-| results[].page_no | int\|null | 源文档页码 |
-| results[].chunk_text | str | 切块文本内容 |
-| results[].score | float | 余弦相似度分数（0~1） |
-| results[].title | str\|null | 文档标题 |
-| results[].source_path | str\|null | PDF 源文件路径 |
-| results[].stock_code | str\|null | 股票代码 |
-| results[].stock_abbr | str\|null | 股票简称 |
+| document_id | int | 文档 ID |
+| title | str | 文档标题 |
+| markdown_content | str | MinerU 解析输出的原始 Markdown 内容 |
+| page_count | int | PDF 总页数 |
 
 ---
 

@@ -1,6 +1,6 @@
 /**
  * 知识库管理 API
- * 功能描述：系统初始化（研报元数据导入）、初始化状态查询、整体统计信息、文档切块、PDF上传、向量化、语义检索
+ * 功能描述：系统初始化（研报元数据导入）、初始化状态查询、整体统计信息、文档切块、PDF上传
  */
 import request from './request'
 
@@ -61,6 +61,37 @@ export function chunkDocuments(documentIds) {
 }
 
 /**
+ * 批量解析文档（MinerU结构化解析）
+ * @param {number[]} documentIds - 待解析的文档ID列表
+ * @returns {Promise} { total, success_count, failed_count, results: [{ document_id, title, success, error, block_count }] }
+ */
+export function parseDocuments(documentIds) {
+  return request.post('/knowledge-base/parse', { document_ids: documentIds })
+}
+
+/**
+ * 获取文档解析结果
+ * @param {number} documentId - 文档ID
+ * @returns {Promise} { document_id, title, markdown_content, page_count }
+ */
+export function getParseResult(documentId) {
+  return request.post('/knowledge-base/parse-result', { document_id: documentId })
+}
+
+/**
+ * 保存清洗后的Markdown解析结果
+ * @param {number} documentId - 文档ID
+ * @param {string} markdownContent - 清洗后的 Markdown 内容
+ * @returns {Promise} { document_id, title, saved }
+ */
+export function saveParseResult(documentId, markdownContent) {
+  return request.post('/knowledge-base/save-parse-result', {
+    document_id: documentId,
+    markdown_content: markdownContent
+  })
+}
+
+/**
  * 批量上传知识库文档PDF
  * @param {File[]} files - PDF 文件列表
  * @returns {Promise} { total, success_count, failed_count, success_documents: [...], failed_files: [...] }
@@ -71,24 +102,4 @@ export function uploadKnowledgeDocuments(files) {
     formData.append('file_list', file)
   })
   return request.post('/knowledge-base/upload', formData)
-}
-
-/**
- * 批量向量化知识库文档
- * @param {number[]} documentIds - 待向量化的文档ID列表
- * @returns {Promise} { total, success_count, failed_count, results: [{ document_id, title, chunk_count, success, error }] }
- */
-export function vectorizeDocuments(documentIds) {
-  return request.post('/knowledge-base/vectorize', { document_ids: documentIds })
-}
-
-/**
- * 知识库语义检索（调试用）
- * @param {Object} params - 检索参数
- * @param {string} params.query - 检索文本
- * @param {number} [params.top_k] - 返回结果数量（默认5，最大50）
- * @returns {Promise} { results: [{ chunk_id, document_id, page_no, chunk_text, score, title, source_path, stock_code, stock_abbr }] }
- */
-export function searchKnowledge(params) {
-  return request.post('/knowledge-base/search', params)
 }
