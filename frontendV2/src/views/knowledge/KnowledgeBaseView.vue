@@ -15,7 +15,7 @@ import UploadPdfModal from '@/components/common/UploadPdfModal.vue'
 import PaginationBar from '@/components/common/PaginationBar.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
-import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, uploadKnowledgeDocuments, parseDocuments, toggleCleanStatus } from '@/api/knowledgeBase'
+import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, uploadKnowledgeDocuments, parseDocuments, chunkDocuments, toggleCleanStatus } from '@/api/knowledgeBase'
 import MarkdownCleanerModal from '@/components/knowledge/MarkdownCleanerModal.vue'
 
 // ── 常量 ──
@@ -46,6 +46,20 @@ const PARSE_STATUS_MAP = {
 const CLEAN_STATUS_MAP = {
   0: { label: '未清洗', tone: 'neutral' },
   1: { label: '已清洗', tone: 'success' }
+}
+
+const CHUNK_STATUS_MAP = {
+  0: { label: '待切块', tone: 'neutral' },
+  1: { label: '切块中', tone: 'warning' },
+  2: { label: '已完成', tone: 'success' },
+  3: { label: '失败', tone: 'danger' }
+}
+
+const VECTOR_STATUS_MAP = {
+  0: { label: '未向量化', tone: 'neutral' },
+  1: { label: '向量化中', tone: 'warning' },
+  2: { label: '已向量化', tone: 'success' },
+  3: { label: '失败', tone: 'danger' }
 }
 
 // ── 统计数据 ──
@@ -90,6 +104,7 @@ const listKeyword = ref('')
 const listDocTypeFilter = ref('')
 const listParseStatusFilter = ref('')
 const listCleanStatusFilter = ref('')
+const listChunkStatusFilter = ref('')
 const isLoadingList = ref(false)
 const isRefreshingList = ref(false)
 const listErrorMessage = ref('')
@@ -112,6 +127,14 @@ const cleanStatusFilterOptions = [
   { value: '', label: '全部清洗状态' },
   { value: '0', label: '未清洗' },
   { value: '1', label: '已清洗' }
+]
+
+const chunkStatusFilterOptions = [
+  { value: '', label: '全部切块状态' },
+  { value: '0', label: '待切块' },
+  { value: '1', label: '切块中' },
+  { value: '2', label: '已完成' },
+  { value: '3', label: '失败' }
 ]
 
 // ── 计算属性 ──
@@ -248,6 +271,10 @@ async function handleUnmarkClean(item) {
 
 // ── 切块操作 ──
 
+const isChunking = ref(false)
+const isChunkingAll = ref(false)
+const chunkMessage = ref({ type: '', text: '' })
+
 const selectedIds = ref(new Set())
 
 // ── 解析操作 ──
@@ -349,6 +376,75 @@ const handleRowParse = async (doc) => {
   }
 }
 
+// ── 切块操作 ──
+
+const handleSelectedChunk = async () => {
+  if (selectedIds.value.size === 0) return
+
+  isChunking.value = true
+  chunkMessage.value = { type: '', text: '' }
+
+  try {
+    const res = await chunkDocuments([...selectedIds.value])
+    const payload = res.data || res
+    const successCount = payload.success_count ?? 0
+    const failedCount = payload.failed_count ?? 0
+    chunkMessage.value = {
+      type: failedCount === 0 ? 'success' : 'warning',
+      text: `切块完成：成功 ${successCount} 个，失败 ${failedCount} 个`
+    }
+    selectedIds.value = new Set()
+    await loadStats()
+    await fetchDocumentList()
+  } catch (error) {
+    chunkMessage.value = { type: 'error', text: error.message || '切块操作失败' }
+  } finally {
+    isChunking.value = false
+  }
+}
+
+const handleChunkAll = async () => {
+  isChunkingAll.value = true
+  chunkMessage.value = { type: '', text: '' }
+  try {
+    const ids = listState.items.map(item => item.id)
+    const res = await chunkDocuments(ids)
+    const payload = res.data || res
+    const successCount = payload.success_count ?? 0
+    const failedCount = payload.failed_count ?? 0
+    chunkMessage.value = {
+      type: failedCount === 0 ? 'success' : 'warning',
+      text: `当前页全部切块完成：成功 ${successCount} 个，失败 ${failedCount} 个`
+    }
+    selectedIds.value = new Set()
+    await loadStats()
+    await fetchDocumentList()
+  } catch (error) {
+    chunkMessage.value = { type: 'error', text: error.message || '批量切块失败' }
+  } finally {
+    isChunkingAll.value = false
+  }
+}
+
+const handleRowChunk = async (doc) => {
+  rowLoading.value = { ...rowLoading.value, [doc.id]: 'chunk' }
+  try {
+    const res = await chunkDocuments([doc.id])
+    const payload = res.data || res
+    const ok = payload.success_count > 0
+    showToast(
+      ok ? `「${doc.title}」切块完成` : '切块失败',
+      ok ? 'success' : 'error'
+    )
+    await loadStats()
+    await fetchDocumentList()
+  } catch (e) {
+    showToast(e.message || '切块失败', 'error')
+  } finally {
+    rowLoading.value = { ...rowLoading.value, [doc.id]: null }
+  }
+}
+
 // ── 行级操作 ──
 
 const rowFileInputs = ref({})
@@ -412,6 +508,7 @@ const fetchDocumentList = async ({ silent = false } = {}) => {
     if (listDocTypeFilter.value) params.doc_type = listDocTypeFilter.value
     if (listParseStatusFilter.value !== '') params.parse_status = Number(listParseStatusFilter.value)
     if (listCleanStatusFilter.value !== '') params.clean_status = Number(listCleanStatusFilter.value)
+    if (listChunkStatusFilter.value !== '') params.chunk_status = Number(listChunkStatusFilter.value)
 
     const response = await getKnowledgeDocumentList(params)
     const payload = response?.data || response
@@ -438,6 +535,7 @@ const handleListReset = () => {
   listDocTypeFilter.value = ''
   listParseStatusFilter.value = ''
   listCleanStatusFilter.value = ''
+  listChunkStatusFilter.value = ''
   listState.page = 1
   fetchDocumentList()
 }
@@ -545,6 +643,19 @@ onMounted(() => {
       <p class="font-medium">{{ parseMessage.text }}</p>
     </div>
 
+    <!-- ═══ 切块结果通知 ═══ -->
+    <div
+      v-if="chunkMessage.text"
+      class="shrink-0 rounded-2xl border px-4 py-3 text-sm"
+      :class="{
+        'border-green-200 bg-green-50 text-green-700': chunkMessage.type === 'success',
+        'border-yellow-200 bg-yellow-50 text-yellow-700': chunkMessage.type === 'warning',
+        'border-red-200 bg-red-50 text-red-700': chunkMessage.type === 'error'
+      }"
+    >
+      <p class="font-medium">{{ chunkMessage.text }}</p>
+    </div>
+
     <!-- ═══ 统计信息仪表盘 ═══ -->
     <div class="flex flex-col gap-3">
       <!-- 加载中 -->
@@ -577,7 +688,7 @@ onMounted(() => {
             <h3 class="text-sm font-medium text-ink-700">文档分布</h3>
             <span class="ml-auto text-xs text-ink-400 tabular-nums">{{ stats.documents?.total ?? 0 }} 份</span>
           </div>
-          <div class="grid grid-cols-1 gap-0 divide-y divide-black/5 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+          <div class="grid grid-cols-1 gap-0 divide-y divide-black/5 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
             <!-- 文档类型 -->
             <div class="px-4 py-3">
               <p class="text-xs text-ink-400 mb-2">文档类型</p>
@@ -588,6 +699,38 @@ onMounted(() => {
                   class="flex items-center justify-between"
                 >
                   <span class="text-sm text-ink-600">{{ DOC_TYPE_LABEL_MAP[key] || key }}</span>
+                  <span class="text-sm font-medium tabular-nums text-ink-800">{{ count }}</span>
+                </div>
+              </div>
+              <p v-else class="text-xs text-ink-300">-</p>
+            </div>
+
+            <!-- 切块状态 -->
+            <div class="px-4 py-3">
+              <p class="text-xs text-ink-400 mb-2">切块状态</p>
+              <div v-if="Object.keys(stats.documents?.by_chunk_status || {}).length" class="space-y-1.5">
+                <div
+                  v-for="(count, key) in stats.documents.by_chunk_status"
+                  :key="key"
+                  class="flex items-center justify-between"
+                >
+                  <span class="text-sm text-ink-600">{{ CHUNK_STATUS_MAP[Number(key)]?.label || `状态${key}` }}</span>
+                  <span class="text-sm font-medium tabular-nums text-ink-800">{{ count }}</span>
+                </div>
+              </div>
+              <p v-else class="text-xs text-ink-300">-</p>
+            </div>
+
+            <!-- 解析状态 -->
+            <div class="px-4 py-3">
+              <p class="text-xs text-ink-400 mb-2">解析状态</p>
+              <div v-if="Object.keys(stats.documents?.by_parse_status || {}).length" class="space-y-1.5">
+                <div
+                  v-for="(count, key) in stats.documents.by_parse_status"
+                  :key="key"
+                  class="flex items-center justify-between"
+                >
+                  <span class="text-sm text-ink-600">{{ PARSE_STATUS_MAP[Number(key)]?.label || `状态${key}` }}</span>
                   <span class="text-sm font-medium tabular-nums text-ink-800">{{ count }}</span>
                 </div>
               </div>
@@ -616,6 +759,7 @@ onMounted(() => {
           <div class="flex flex-wrap items-center gap-3">
             <BaseButton variant="secondary" icon="rotate-right" size="sm" :loading="isRefreshingList" :disabled="isLoadingList" @click="fetchDocumentList({ silent: true })">刷新列表</BaseButton>
             <BaseButton variant="amber" icon="file-import" size="sm" :loading="isParsingAll" :disabled="!isInitialized || listState.items.length === 0 || isParsingAll" @click="handleParseAll">{{ isParsingAll ? '解析中...' : '一键解析（当前页）' }}</BaseButton>
+            <BaseButton variant="success" icon="cube" size="sm" :loading="isChunkingAll" :disabled="!isInitialized || listState.items.length === 0 || isChunkingAll" @click="handleChunkAll">{{ isChunkingAll ? '切块中...' : '一键切块（当前页）' }}</BaseButton>
           </div>
         </div>
 
@@ -631,6 +775,7 @@ onMounted(() => {
           <BaseSelect v-model="listDocTypeFilter" :options="docTypeFilterOptions" placeholder="全部类型" />
           <BaseSelect v-model="listParseStatusFilter" :options="parseStatusFilterOptions" placeholder="全部解析状态" />
           <BaseSelect v-model="listCleanStatusFilter" :options="cleanStatusFilterOptions" placeholder="全部清洗状态" />
+          <BaseSelect v-model="listChunkStatusFilter" :options="chunkStatusFilterOptions" placeholder="全部切块状态" />
           <BaseButton icon="search" size="sm" @click="handleListSearch">筛选</BaseButton>
           <BaseButton variant="ghost" size="sm" @click="handleListReset">重置</BaseButton>
         </div>
@@ -675,7 +820,7 @@ onMounted(() => {
           style="height: 560px"
         >
           <div class="min-h-0 flex-1 overflow-auto">
-            <table class="shell-grid-table min-w-[1300px]">
+            <table class="shell-grid-table min-w-[1400px]">
               <thead class="sticky top-0 z-10">
                 <tr>
                   <th class="w-10">
@@ -693,6 +838,7 @@ onMounted(() => {
                   <th class="!text-center">发布日期</th>
                   <th class="!text-center">PDF状态</th>
                   <th class="!text-center">解析状态</th>
+                  <th class="!text-center">切块状态</th>
                   <th class="!text-center">操作</th>
                 </tr>
               </thead>
@@ -751,6 +897,19 @@ onMounted(() => {
                     </span>
                   </td>
                   <td class="text-center">
+                    <span
+                      class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                      :class="{
+                        'bg-yellow-50 text-yellow-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'warning',
+                        'bg-green-50 text-green-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'success',
+                        'bg-red-50 text-red-700': CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'danger',
+                        'bg-ink-50 text-ink-600': !CHUNK_STATUS_MAP[item.chunk_status] || CHUNK_STATUS_MAP[item.chunk_status]?.tone === 'neutral'
+                      }"
+                    >
+                      {{ CHUNK_STATUS_MAP[item.chunk_status]?.label || `状态${item.chunk_status}` }}
+                    </span>
+                  </td>
+                  <td class="text-center">
                     <div class="inline-flex items-center gap-2 flex-nowrap">
                       <input
                         :ref="setRowFileRef(item.id)"
@@ -785,6 +944,15 @@ onMounted(() => {
                         :title="item.parse_status === 2 ? '清洗Markdown' : '请先完成解析'"
                         @click="handleCleanMarkdown(item)"
                       >清洗</BaseButton>
+                      <BaseButton
+                        variant="success"
+                        icon="cube"
+                        size="xs"
+                        :loading="rowLoading[item.id] === 'chunk'"
+                        :disabled="item.clean_status !== 1"
+                        :title="item.clean_status !== 1 ? '请先完成清洗' : '提交切块（支持重新切块）'"
+                        @click="handleRowChunk(item)"
+                      >切块</BaseButton>
 
                     </div>
                   </td>

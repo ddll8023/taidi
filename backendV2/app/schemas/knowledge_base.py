@@ -16,6 +16,46 @@ class InitErrorItem(BaseModel):
     error: str = Field(description="错误描述")
 
 
+class KnowledgeDocumentImportItem(BaseModel):
+    """Excel 行数据导入中间结构（用于 _import_excel 构造 ORM 实体）"""
+
+    # 基础字段
+    metadata_status: int = Field(default=1, description="元数据状态")
+    title: str | None = Field(None, description="文档标题")
+    org_code: str | None = Field(None, description="券商编码")
+    org_name: str | None = Field(None, description="券商全称")
+    publish_date: date | None = Field(None, description="发布日期")
+    researcher: str | None = Field(None, description="研究员姓名")
+    industry_name: str | None = Field(None, description="行���名称")
+    em_rating_name: str | None = Field(None, description="当前评级名称")
+    last_em_rating_name: str | None = Field(None, description="上次评级名称")
+    s_rating_name: str | None = Field(None, description="国际评级名称")
+    s_rating_code: str | None = Field(None, description="国际评级编码")
+
+    # 个股研报字段
+    stock_code: str | None = Field(None, description="股票代码")
+    stock_abbr: str | None = Field(None, description="股票简称")
+    predict_next_two_year_eps: str | None = Field(None, description="预测未来两年EPS")
+    predict_next_two_year_pe: str | None = Field(None, description="预测未来两年PE")
+    predict_next_year_eps: str | None = Field(None, description="预测下一年EPS")
+    predict_next_year_pe: str | None = Field(None, description="预测下一年PE")
+    predict_this_year_eps: str | None = Field(None, description="预测本年度EPS")
+    predict_this_year_pe: str | None = Field(None, description="预测本年度PE")
+    predict_last_year_eps: str | None = Field(None, description="预测上一年EPS")
+    predict_last_year_pe: str | None = Field(None, description="预测上一年PE")
+    indv_is_new: str | None = Field(None, description="是否为新标的")
+    new_listing_date: str | None = Field(None, description="上市日期")
+    new_purchase_date: str | None = Field(None, description="申购日期")
+    new_issue_price: str | None = Field(None, description="发行价格")
+    new_pe_issue_a: str | None = Field(None, description="发行市盈率")
+    indv_aim_price_t: str | None = Field(None, description="目标价上限")
+    indv_aim_price_l: str | None = Field(None, description="目标价下限")
+    market: str | None = Field(None, description="交易所(市场)")
+
+    # 行业研报字段
+    org_S_Name: str | None = Field(None, description="券商简称(行业研报)")
+
+
 class DocumentStatsItem(BaseModel):
     """文档统计数据"""
 
@@ -229,3 +269,32 @@ class ToggleCleanStatusResponse(BaseModel):
     document_id: int = Field(..., description="文档ID")
     title: str = Field("", description="文档标题")
     clean_status: int = Field(0, description="切换后的清洗状态")
+
+
+class ChunkDocumentsRequest(BaseModel):
+    """文档切块请求"""
+
+    document_ids: list[int] = Field(
+        ..., min_length=1, description="待切块的文档ID列表"
+    )
+
+
+class ChunkDocumentsItem(BaseModel):
+    """单个文档切块结果"""
+
+    document_id: int = Field(..., description="文档ID")
+    title: str = Field("", description="文档标题")
+    success: bool = Field(..., description="是否成功")
+    chunk_count: int = Field(0, description="切块数量")
+    error: str | None = Field(None, description="失败原因")
+
+
+class ChunkDocumentsResponse(BaseModel):
+    """批量切块响应"""
+
+    total: int = Field(..., description="请求处理的文档总数")
+    success_count: int = Field(0, description="成功数")
+    failed_count: int = Field(0, description="失败数")
+    results: list[ChunkDocumentsItem] = Field(
+        default_factory=list, description="逐文档切块结果"
+    )

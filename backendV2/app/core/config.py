@@ -58,9 +58,8 @@ class Settings(BaseSettings):
     # RAG配置
     CHROMA_PERSIST_DIR: str = "chroma_data"
     CHROMA_KB_COLLECTION: str = "knowledge_chunk_embedding"
-    CHUNK_SIZE: int = 1600
-    CHUNK_OVERLAP: int = 220
-    TABLE_CHUNK_SIZE: int = 2500
+    CHUNK_SIZE: int = 2000
+    CHUNK_OVERLAP: int = 250
     CHUNK_SEPARATORS: list[str] = [
         # Markdown 标题
         "\n\n# ",
@@ -101,6 +100,8 @@ class Settings(BaseSettings):
         " ",
         "",
     ]
+    # 文本切块最小有效字符数，低于此值的切块会被丢弃以避免检索噪音
+    CHUNK_MIN_CHARS: int = 50
 
     @property
     def KNOWLEDGE_PARSE_OUTPUT_DIR(self):

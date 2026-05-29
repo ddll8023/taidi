@@ -186,3 +186,22 @@ def toggle_clean_status(
         )
     except ServiceException as e:
         return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/chunk",
+    response_model=ApiResponse[schemas_knowledge_base.ChunkDocumentsResponse],
+    description="批量切块：对清洗后的文档执行Markdown文本段落分段和表格标注提取",
+)
+def chunk_documents(
+    db: Annotated[Session, Depends(get_db)],
+    body: Annotated[
+        schemas_knowledge_base.ChunkDocumentsRequest,
+        Body(..., description="切块请求"),
+    ],
+):
+    """批量切块"""
+    try:
+        return success(data=services_knowledge_base.chunk_documents(db, body))
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)

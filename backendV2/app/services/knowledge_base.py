@@ -11,6 +11,7 @@ from app.utils.mineru import run_mineru_parse
 
 import pandas as pd
 from fastapi import UploadFile
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,7 @@ from app.constants import knowledge_base as constants_knowledge_base
 from app.core.config import settings
 from app.db.database import commit_or_rollback
 from app.models import knowledge_document as models_knowledge_document
+from app.models import knowledge_chunk as models_knowledge_chunk
 from app.schemas import knowledge_base as schemas_knowledge_base
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.utils.exception import ServiceException
@@ -398,8 +400,6 @@ def parse_documents(
             models_knowledge_document.KnowledgeDocument.id.in_(document_ids)
         )
     ).all()
-    for doc in docs:
-        doc.parse_status = constants_knowledge_base.PARSE_STATUS_PARSING
 
     commit_or_rollback(db)
 
@@ -408,6 +408,9 @@ def parse_documents(
         document_id = doc_entity.id
         try:
             logger.info(f"开始转换: document_id={document_id} title={doc_entity.title}")
+
+            doc_entity.parse_status = constants_knowledge_base.PARSE_STATUS_PARSING
+            commit_or_rollback(db)
 
             output_dir = _get_parse_output_dir(document_id, doc_entity.title)
             os.makedirs(output_dir, exist_ok=True)
@@ -469,25 +472,20 @@ def parse_documents(
 def get_parse_result(db: Session, document_id: int):
     """获取单个文档的解析结果"""
     logger.info(f"查询解析结果: document_id={document_id}")
-    doc_entity = db.scalar(
-        select(models_knowledge_document.KnowledgeDocument).where(
-            models_knowledge_document.KnowledgeDocument.id == document_id
-        )
-    )
+    doc_entity = db.get(models_knowledge_document.KnowledgeDocument, document_id)
     if not doc_entity:
         raise ServiceException(ErrorCode.PARAM_ERROR, "文档不存在")
 
     output_dir = _get_parse_output_dir(document_id, doc_entity.title)
 
+    # 检查是否存在转换结果文件
     md_files = list(Path(output_dir).rglob("*.md"))
     if not md_files:
         raise ServiceException(ErrorCode.PARAM_ERROR, "该文档尚未转换")
 
     markdown_content = md_files[0].read_text(encoding="utf-8")
 
-    logger.info(
-        f"转换结果查询完成: document_id={document_id}"
-    )
+    logger.info(f"转换结果查询完成: document_id={document_id}")
     return schemas_knowledge_base.GetParseResultResponse(
         document_id=document_id,
         title=doc_entity.title,
@@ -502,10 +500,8 @@ def save_parse_result(
     """保存清洗后的Markdown到解析结果文件"""
     logger.info(f"保存清洗结果: document_id={request.document_id}")
 
-    doc_entity = db.scalar(
-        select(models_knowledge_document.KnowledgeDocument).where(
-            models_knowledge_document.KnowledgeDocument.id == request.document_id
-        )
+    doc_entity = db.get(
+        models_knowledge_document.KnowledgeDocument, request.document_id
     )
     if not doc_entity:
         raise ServiceException(ErrorCode.PARAM_ERROR, "文档不存在")
@@ -513,19 +509,19 @@ def save_parse_result(
     output_dir = _get_parse_output_dir(request.document_id, doc_entity.title)
     md_files = list(Path(output_dir).rglob("*.md"))
     if not md_files:
+        logger.error(f"未找到转换结果文件: document_id={request.document_id}")
         raise ServiceException(ErrorCode.PARAM_ERROR, "该文档尚未转换，无法保存")
 
     target_path = md_files[0]
     try:
         target_path.write_text(request.markdown_content, encoding="utf-8")
     except Exception as e:
-        logger.error(f"写入Markdown文件失败: path={target_path} error={e}", exc_info=True)
+        logger.error(
+            f"写入Markdown文件失败: path={target_path} error={e}", exc_info=True
+        )
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "保存清洗结果失败")
 
-    # 无论当前清洗状态如何，覆盖保存后标记为已清洗
-    if doc_entity.clean_status != constants_knowledge_base.CLEAN_STATUS_DONE:
-        doc_entity.clean_status = constants_knowledge_base.CLEAN_STATUS_DONE
-        commit_or_rollback(db)
+    commit_or_rollback(db)
 
     logger.info(f"清洗结果保存成功: document_id={request.document_id}")
     return schemas_knowledge_base.SaveParseResultResponse(
@@ -539,11 +535,7 @@ def save_parse_result(
 def toggle_clean_status(db: Session, document_id: int):
     """切换文档清洗标记"""
     logger.info(f"切换清洗标记: document_id={document_id}")
-    doc_entity = db.scalar(
-        select(models_knowledge_document.KnowledgeDocument).where(
-            models_knowledge_document.KnowledgeDocument.id == document_id
-        )
-    )
+    doc_entity = db.get(models_knowledge_document.KnowledgeDocument, document_id)
     if not doc_entity:
         raise ServiceException(ErrorCode.PARAM_ERROR, "文档不存在")
 
@@ -554,7 +546,9 @@ def toggle_clean_status(db: Session, document_id: int):
     )
     commit_or_rollback(db)
 
-    logger.info(f"清洗标记已切换: document_id={document_id} clean_status={doc_entity.clean_status}")
+    logger.info(
+        f"清洗标记已切换: document_id={document_id} clean_status={doc_entity.clean_status}"
+    )
     return schemas_knowledge_base.ToggleCleanStatusResponse(
         document_id=document_id,
         title=doc_entity.title,
@@ -562,12 +556,205 @@ def toggle_clean_status(db: Session, document_id: int):
     )
 
 
+def chunk_documents(
+    db: Session,
+    request: schemas_knowledge_base.ChunkDocumentsRequest,
+):
+    """批量清洗后文档切块"""
+    logger.info(f"收到批量切块请求: document_ids={request.document_ids}")
+    results: list[schemas_knowledge_base.ChunkDocumentsItem] = []
+    success_count = 0
+    failed_count = 0
+    document_ids = request.document_ids
+
+    docs = db.scalars(
+        select(models_knowledge_document.KnowledgeDocument).where(
+            models_knowledge_document.KnowledgeDocument.id.in_(document_ids)
+        )
+    ).all()
+
+    for doc in docs:
+        doc_entity = doc
+        try:
+            doc_entity.chunk_status = constants_knowledge_base.CHUNK_STATUS_CHUNKING
+            commit_or_rollback(db)
+
+            chunk_count = _chunk_single_document(db, doc_entity)
+
+            doc_entity.chunk_status = constants_knowledge_base.CHUNK_STATUS_COMPLETED
+            doc_entity.chunk_count = chunk_count
+            doc_entity.chunk_error_message = None
+            commit_or_rollback(db)
+
+            logger.info(
+                f"切块完成: document_id={doc_entity.id} chunk_count={chunk_count}"
+            )
+            results.append(
+                schemas_knowledge_base.ChunkDocumentsItem(
+                    document_id=doc_entity.id,
+                    title=doc_entity.title,
+                    success=True,
+                    chunk_count=chunk_count,
+                )
+            )
+            success_count += 1
+
+        except Exception as e:
+            logger.error(
+                f"切块失败: document_id={doc_entity.id} error={e}", exc_info=True
+            )
+            try:
+                doc_entity.chunk_status = constants_knowledge_base.CHUNK_STATUS_FAILED
+                doc_entity.chunk_error_message = str(e)[:500]
+                commit_or_rollback(db)
+            except Exception:
+                db.rollback()
+
+            results.append(
+                schemas_knowledge_base.ChunkDocumentsItem(
+                    document_id=doc_entity.id,
+                    title=doc_entity.title,
+                    success=False,
+                    error=str(e)[:200],
+                )
+            )
+            failed_count += 1
+
+    logger.info(
+        f"批量切块完成: total={len(document_ids)} success={success_count} failed={failed_count}"
+    )
+    return schemas_knowledge_base.ChunkDocumentsResponse(
+        total=len(document_ids),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results,
+    )
+
+
 """辅助函数"""
 
 
-def _get_parse_output_dir(document_id: int, title: str) -> str:
+def _str_or_none(value):
+    """将 pandas/native 值转为 str|None，清理 nan/none/空字符串"""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if s.lower() in ("nan", "none", ""):
+        return None
+    return s
+
+
+def _get_parse_output_dir(document_id: int, title: str):
     """获取文档解析输出目录（统一入口）"""
     return os.path.join(settings.KNOWLEDGE_PARSE_OUTPUT_DIR, f"{document_id}_{title}")
+
+
+def _chunk_single_document(db: Session, doc_entity):
+    """对单个清洗后文档执行切块：提取表格块，剩余Markdown全文用RecursiveCharacterTextSplitter切分"""
+    output_dir = _get_parse_output_dir(doc_entity.id, doc_entity.title)
+    md_files = list(Path(output_dir).rglob("*.md"))
+    if not md_files:
+        logger.error(f"未找到转换结果文件，无法切块: document_id={doc_entity.id}")
+        raise ServiceException(ErrorCode.PARAM_ERROR, "该文档尚未转换，无法切块")
+    md = md_files[0].read_text(encoding="utf-8")
+
+    # 删除已有切块（幂等）
+    existing = select(models_knowledge_chunk.KnowledgeChunk).where(
+        models_knowledge_chunk.KnowledgeChunk.document_id == doc_entity.id,
+    )
+    for old_chunk in db.scalars(existing):
+        db.delete(old_chunk)
+    commit_or_rollback(db)
+
+    # 用正则一次性提取表格标注区域并移除（re.DOTALL 使 . 匹配换行）
+    table_pattern = re.compile(
+        r"<!--\s*table:\s*(.+?)\s*-->(.*?)<!--\s*endtable\s*-->",
+        re.DOTALL,
+    )
+
+    chunks: list[models_knowledge_chunk.KnowledgeChunk] = []
+
+    # 逐个提取表格块
+    for match in table_pattern.finditer(md):
+        table_desc = match.group(1).strip()
+        table_raw = match.group(2).strip()
+        chunk = _make_chunk(
+            doc_entity,
+            len(chunks),
+            table_desc,
+            content_type=constants_knowledge_base.CONTENT_TYPE_TABLE,
+            section_type=constants_knowledge_base.SECTION_TYPE_TABLE_DESC,
+            heading_text="",
+            table_content=table_raw,
+        )
+        chunks.append(chunk)
+
+    # 移除所有表格标注区域，剩余纯文本过分割器
+    clean_text = table_pattern.sub("", md).strip()
+    if clean_text:
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=settings.CHUNK_SIZE,
+            chunk_overlap=settings.CHUNK_OVERLAP,
+            separators=settings.CHUNK_SEPARATORS,
+            add_start_index=False,
+        )
+        for segment in text_splitter.split_text(clean_text):
+            segment = segment.strip()
+            if not segment:
+                continue
+            # 丢弃过短的切块，避免检索噪音
+            if len(segment) < settings.CHUNK_MIN_CHARS:
+                continue
+            chunk = _make_chunk(
+                doc_entity,
+                len(chunks),
+                segment,
+                content_type=constants_knowledge_base.CONTENT_TYPE_TEXT,
+                section_type=constants_knowledge_base.SECTION_TYPE_PARAGRAPH,
+                heading_text="",
+            )
+            chunks.append(chunk)
+
+    # 批量写入
+    if chunks:
+        db.add_all(chunks)
+        commit_or_rollback(db)
+
+    return len(chunks)
+
+
+def _make_chunk(
+    doc_entity,
+    chunk_index: int,
+    text: str,
+    content_type: str,
+    section_type: str,
+    heading_text: str,
+    table_content: str | None = None,
+):
+    """构造单个KnowledgeChunk实体"""
+    text_bytes = text.encode("utf-8")
+    # 表格类型：哈希包含说明文字和表格内容，确保内容完整一致性
+    if table_content:
+        table_bytes = table_content.encode("utf-8")
+        chunk_hash = hashlib.sha256(text_bytes + table_bytes).hexdigest()
+    else:
+        chunk_hash = hashlib.sha256(text_bytes).hexdigest()
+    stock_code = getattr(doc_entity, "stock_code", None) or ""
+
+    return models_knowledge_chunk.KnowledgeChunk(
+        document_id=doc_entity.id,
+        doc_type=doc_entity.doc_type,
+        stock_code=stock_code,
+        chunk_index=chunk_index,
+        chunk_text=text,
+        table_content=table_content,
+        chunk_hash=chunk_hash,
+        char_count=len(text),
+        content_type=content_type,
+        section_type=section_type,
+        heading_text=heading_text,
+    )
 
 
 def _import_excel(
@@ -627,11 +814,12 @@ def _import_excel(
     logger.info(f"开始逐行处理: file={filename} doc_type={doc_type}")
     for row_idx, row in enumerate(data):
         try:
-            data = {}
-            data["metadata_status"] = 1
+            import_data = schemas_knowledge_base.KnowledgeDocumentImportItem(
+                metadata_status=1,
+            )
 
-            data["title"] = str(row.get(column_map.get("title"), "")).strip()
-            if not data["title"]:
+            raw_title = str(row.get(column_map.get("title"), "")).strip()
+            if not raw_title:
                 logger.warning(f"行{row_idx + 2}标题为空，跳过")
                 errors.append(
                     schemas_knowledge_base.InitErrorItem(
@@ -639,107 +827,106 @@ def _import_excel(
                     )
                 )
                 continue
+            import_data.title = raw_title
 
-            if data["title"] in existing_titles:
+            if import_data.title in existing_titles:
                 duplicate_count += 1
-                logger.info(f"行{row_idx + 2}文档已存在，跳过: title={data['title']}")
+                logger.info(
+                    f"行{row_idx + 2}文档已存在，跳过: title={import_data.title}"
+                )
                 continue
-            data["org_code"] = str(row.get(column_map.get("org_code"), "")).strip()
-            data["org_name"] = str(row.get(column_map.get("org_name"), "")).strip()
-            data["publish_date"] = pd.to_datetime(
+
+            import_data.org_code = _str_or_none(row.get(column_map.get("org_code")))
+            import_data.org_name = _str_or_none(row.get(column_map.get("org_name")))
+            import_data.publish_date = pd.to_datetime(
                 row.get(column_map.get("publish_date"), "")
             ).date()
-            data["researcher"] = str(row.get(column_map.get("researcher"), "")).strip()
-            data["industry_name"] = str(
-                row.get(column_map.get("industry_name"), "")
-            ).strip()
-            data["em_rating_name"] = str(
-                row.get(column_map.get("em_rating_name"), "")
-            ).strip()
-            data["last_em_rating_name"] = str(
-                row.get(column_map.get("last_em_rating_name"), "")
-            ).strip()
-            data["s_rating_name"] = str(
-                row.get(column_map.get("s_rating_name"), "")
-            ).strip()
-            data["s_rating_code"] = str(
-                row.get(column_map.get("s_rating_code"), "")
-            ).strip()
+            import_data.researcher = _str_or_none(row.get(column_map.get("researcher")))
+            import_data.industry_name = _str_or_none(
+                row.get(column_map.get("industry_name"))
+            )
+            import_data.em_rating_name = _str_or_none(
+                row.get(column_map.get("em_rating_name"))
+            )
+            import_data.last_em_rating_name = _str_or_none(
+                row.get(column_map.get("last_em_rating_name"))
+            )
+            import_data.s_rating_name = _str_or_none(
+                row.get(column_map.get("s_rating_name"))
+            )
+            import_data.s_rating_code = _str_or_none(
+                row.get(column_map.get("s_rating_code"))
+            )
 
             if doc_type == constants_knowledge_base.DOC_TYPE_RESEARCH_REPORT:
-                data["stock_code"] = (
-                    str(row.get(column_map.get("stock_code"), "")).strip().zfill(6)
+                import_data.stock_code = (
+                    _str_or_none(row.get(column_map.get("stock_code"))) or ""
+                ).zfill(6)
+                import_data.stock_abbr = _str_or_none(
+                    row.get(column_map.get("stock_abbr"))
                 )
-                data["stock_abbr"] = str(
-                    row.get(column_map.get("stock_abbr"), "")
-                ).strip()
-                data["predict_next_two_year_eps"] = str(
-                    row.get(column_map.get("predict_next_two_year_eps"), "")
-                ).strip()
-                data["predict_next_two_year_pe"] = str(
-                    row.get(column_map.get("predict_next_two_year_pe"), "")
-                ).strip()
-                data["predict_next_year_eps"] = str(
-                    row.get(column_map.get("predict_next_year_eps"), "")
-                ).strip()
-                data["predict_next_year_pe"] = str(
-                    row.get(column_map.get("predict_next_year_pe"), "")
-                ).strip()
-                data["predict_this_year_eps"] = str(
-                    row.get(column_map.get("predict_this_year_eps"), "")
-                ).strip()
-                data["predict_this_year_pe"] = str(
-                    row.get(column_map.get("predict_this_year_pe"), "")
-                ).strip()
-                data["predict_last_year_eps"] = str(
-                    row.get(column_map.get("predict_last_year_eps"), "")
-                ).strip()
-                data["predict_last_year_pe"] = str(
-                    row.get(column_map.get("predict_last_year_pe"), "")
-                ).strip()
-                data["indv_is_new"] = str(
-                    row.get(column_map.get("indv_is_new"), "")
-                ).strip()
-                data["new_listing_date"] = str(
-                    row.get(column_map.get("new_listing_date"), "")
-                ).strip()
-                data["new_purchase_date"] = str(
-                    row.get(column_map.get("new_purchase_date"), "")
-                ).strip()
-                data["new_issue_price"] = str(
-                    row.get(column_map.get("new_issue_price"), "")
-                ).strip()
-                data["new_pe_issue_a"] = str(
-                    row.get(column_map.get("new_pe_issue_a"), "")
-                ).strip()
-                data["indv_aim_price_t"] = str(
-                    row.get(column_map.get("indv_aim_price_t"), "")
-                ).strip()
-                data["indv_aim_price_l"] = str(
-                    row.get(column_map.get("indv_aim_price_l"), "")
-                ).strip()
-                data["market"] = str(row.get(column_map.get("market"), "")).strip()
-
-                for k in list(data):
-                    v = data[k]
-                    if isinstance(v, str) and v.lower() in ("nan", "none", ""):
-                        data[k] = None
+                import_data.predict_next_two_year_eps = _str_or_none(
+                    row.get(column_map.get("predict_next_two_year_eps"))
+                )
+                import_data.predict_next_two_year_pe = _str_or_none(
+                    row.get(column_map.get("predict_next_two_year_pe"))
+                )
+                import_data.predict_next_year_eps = _str_or_none(
+                    row.get(column_map.get("predict_next_year_eps"))
+                )
+                import_data.predict_next_year_pe = _str_or_none(
+                    row.get(column_map.get("predict_next_year_pe"))
+                )
+                import_data.predict_this_year_eps = _str_or_none(
+                    row.get(column_map.get("predict_this_year_eps"))
+                )
+                import_data.predict_this_year_pe = _str_or_none(
+                    row.get(column_map.get("predict_this_year_pe"))
+                )
+                import_data.predict_last_year_eps = _str_or_none(
+                    row.get(column_map.get("predict_last_year_eps"))
+                )
+                import_data.predict_last_year_pe = _str_or_none(
+                    row.get(column_map.get("predict_last_year_pe"))
+                )
+                import_data.indv_is_new = _str_or_none(
+                    row.get(column_map.get("indv_is_new"))
+                )
+                import_data.new_listing_date = _str_or_none(
+                    row.get(column_map.get("new_listing_date"))
+                )
+                import_data.new_purchase_date = _str_or_none(
+                    row.get(column_map.get("new_purchase_date"))
+                )
+                import_data.new_issue_price = _str_or_none(
+                    row.get(column_map.get("new_issue_price"))
+                )
+                import_data.new_pe_issue_a = _str_or_none(
+                    row.get(column_map.get("new_pe_issue_a"))
+                )
+                import_data.indv_aim_price_t = _str_or_none(
+                    row.get(column_map.get("indv_aim_price_t"))
+                )
+                import_data.indv_aim_price_l = _str_or_none(
+                    row.get(column_map.get("indv_aim_price_l"))
+                )
+                import_data.market = _str_or_none(row.get(column_map.get("market")))
 
                 entity = models_knowledge_document.KnowledgeDocument(
-                    **data, doc_type=doc_type
+                    **import_data.model_dump(), doc_type=doc_type
                 )
 
             if doc_type == constants_knowledge_base.DOC_TYPE_INDUSTRY_REPORT:
-                data["org_S_Name"] = str(
-                    row.get(column_map.get("org_S_Name"), "")
-                ).strip()
+                import_data.org_S_Name = _str_or_none(
+                    row.get(column_map.get("org_S_Name"))
+                )
 
                 entity = models_knowledge_document.KnowledgeDocument(
-                    **data, doc_type=doc_type
+                    **import_data.model_dump(), doc_type=doc_type
                 )
 
             entities_to_add.append(entity)
-            existing_titles.add(data["title"])
+            existing_titles.add(import_data.title)
 
         except Exception as exc:
             logger.error(f"行{row_idx + 2}处理失败: {exc}", exc_info=True)

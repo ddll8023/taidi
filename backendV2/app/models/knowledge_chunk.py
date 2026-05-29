@@ -41,7 +41,8 @@ class KnowledgeChunk(Base):
         nullable=False,
         comment="切块序号（同一文档内从0递增）",
     )
-    chunk_text = Column[str](Text, nullable=False, comment="切块文本内容")
+    chunk_text = Column[str](Text, nullable=False, comment="切块文本内容（文本段落/表格说明文本，用于向量化）")
+    table_content = Column[str](Text, comment="表格原始Markdown内容（仅content_type=table时有值，不作为向量化输入）")
     chunk_hash = Column[str](
         String(64),
         nullable=False,
@@ -61,7 +62,15 @@ class KnowledgeChunk(Base):
         server_default="text",
         comment="内容类型：text/table",
     )
-    section_path = Column[str](String(500), comment="章节路径")
+    section_path = Column[str](String(500), comment="章节路径（如：1.2.3 / 行业分析/市场竞争）")
+    section_type = Column[str](
+        String(16),
+        nullable=False,
+        default="paragraph",
+        server_default="paragraph",
+        comment="段落类型：paragraph/table_desc/heading",
+    )
+    heading_text = Column[str](String(500), comment="所属章节标题（如：2.1 行业市场规模）")
     vector_status = Column[int](
         SmallInteger,
         nullable=False,

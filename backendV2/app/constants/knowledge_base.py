@@ -65,6 +65,17 @@ CONTENT_TYPE_TABLE = "table"
 # 保留的内容类型（进入切块）
 KEPT_CONTENT_TYPES = frozenset({"text", "list", "table"})
 
+# 切块状态
+CHUNK_STATUS_PENDING = 0
+CHUNK_STATUS_CHUNKING = 1
+CHUNK_STATUS_COMPLETED = 2
+CHUNK_STATUS_FAILED = 3
+
+# 段落类型
+SECTION_TYPE_PARAGRAPH = "paragraph"
+SECTION_TYPE_TABLE_DESC = "table_desc"
+SECTION_TYPE_HEADING = "heading"
+
 # 丢弃的内容类型
 DROPPED_CONTENT_TYPES = frozenset({
     "image", "chart", "equation", "code",
