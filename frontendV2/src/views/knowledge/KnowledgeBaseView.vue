@@ -15,7 +15,7 @@ import UploadPdfModal from '@/components/common/UploadPdfModal.vue'
 import PaginationBar from '@/components/common/PaginationBar.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
-import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, uploadKnowledgeDocuments, parseDocuments, unmarkCleanStatus } from '@/api/knowledgeBase'
+import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, uploadKnowledgeDocuments, parseDocuments, toggleCleanStatus } from '@/api/knowledgeBase'
 import MarkdownCleanerModal from '@/components/knowledge/MarkdownCleanerModal.vue'
 
 // ── 常量 ──
@@ -238,7 +238,7 @@ async function handleCleanSuccess() {
 async function handleUnmarkClean(item) {
   if (!confirm(`确定解除「${item.title}」的清洗标记？解除后可以重新编辑和保存。`)) return
   try {
-    await unmarkCleanStatus(item.id)
+    await toggleCleanStatus(item.id)
     showToast('清洗标记已解除', 'success')
     await fetchDocumentList()
   } catch (e) {

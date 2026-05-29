@@ -181,7 +181,6 @@ class GetParseResultResponse(BaseModel):
     document_id: int = Field(..., description="文档ID")
     title: str = Field(..., description="文档标题")
     markdown_content: str = Field("", description="原始 Markdown 内容")
-    page_count: int = Field(0, description="PDF 总页数")
 
     model_config = ConfigDict(from_attributes=True)
 

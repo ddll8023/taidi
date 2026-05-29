@@ -11,8 +11,6 @@ from app.utils.mineru import run_mineru_parse
 
 import pandas as pd
 from fastapi import UploadFile
-from pypdf import PdfReader
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -422,9 +420,6 @@ def parse_documents(
                 run_mineru_parse(doc_entity.source_path, output_dir)
                 logger.info(f"MinerU转换完成: document_id={document_id}")
 
-            page_count = len(PdfReader(doc_entity.source_path).pages)
-            doc_entity.page_count = page_count
-
             doc_entity.parse_status = constants_knowledge_base.PARSE_STATUS_COMPLETED
             doc_entity.parse_error_message = None
             commit_or_rollback(db)
@@ -497,7 +492,6 @@ def get_parse_result(db: Session, document_id: int):
         document_id=document_id,
         title=doc_entity.title,
         markdown_content=markdown_content,
-        page_count=doc_entity.page_count or 0,
     )
 
 

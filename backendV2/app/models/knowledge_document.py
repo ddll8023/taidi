@@ -98,7 +98,6 @@ class KnowledgeDocument(Base):
         nullable=True,
         comment="关联财报主表ID（仅FINANCIAL_REPORT类型）",
     )
-    page_count = Column[int](Integer, comment="PDF总页数")
     chunk_count = Column[int](
         Integer,
         nullable=False,
