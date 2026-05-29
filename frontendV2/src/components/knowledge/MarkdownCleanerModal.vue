@@ -7,7 +7,7 @@
  *           在选中区域前后插入 `<!-- table: xxx -->` 和 `<!-- endtable -->` 包裹标志
  */
 import { ref, computed, watch } from 'vue'
-import { getParseResult, saveParseResult } from '@/api/knowledgeBase'
+import { getParseResult, saveParseResult, toggleCleanStatus } from '@/api/knowledgeBase'
 import { renderMarkdown } from '@/utils/markdown'
 
 const props = defineProps({
@@ -31,6 +31,7 @@ const errorMessage = ref('')
 const markdownContent = ref('')
 const documentTitle = ref('')
 const documentId = ref(0)
+const documentCleanStatus = ref(0)
 const saveMessage = ref({ type: '', text: '' })
 const textareaRef = ref(null)
 
@@ -100,6 +101,7 @@ async function loadParseResult() {
     markdownContent.value = payload.markdown_content || ''
     documentTitle.value = payload.title || ''
     documentId.value = payload.document_id || props.document.id
+    documentCleanStatus.value = props.document.clean_status ?? 0
   } catch (e) {
     errorMessage.value = e.message || '加载解析结果失败'
   } finally {
@@ -180,6 +182,7 @@ async function handleSave() {
 
   try {
     await saveParseResult(documentId.value, markdownContent.value)
+    documentCleanStatus.value = 1
     saveMessage.value = { type: 'success', text: '清洗结果已保存' }
   } catch (e) {
     saveMessage.value = { type: 'error', text: e.message || '保存失败' }
@@ -191,6 +194,18 @@ async function handleSave() {
 function handleClose() {
   annotateDescription.value = ''
   emit('close')
+}
+
+async function handleToggleClean() {
+  try {
+    await toggleCleanStatus(documentId.value)
+    documentCleanStatus.value = documentCleanStatus.value === 1 ? 0 : 1
+    const label = documentCleanStatus.value === 1 ? '已标记为已清洗' : '已解除清洗标记'
+    saveMessage.value = { type: 'success', text: label }
+    setTimeout(() => { saveMessage.value = { type: '', text: '' } }, 2000)
+  } catch (e) {
+    saveMessage.value = { type: 'error', text: e.message || '操作失败' }
+  }
 }
 </script>
 
@@ -219,6 +234,10 @@ function handleClose() {
           </div>
           <div class="flex items-center gap-2">
             <span class="text-xs text-ink-400">ID: {{ documentId }}</span>
+            <span
+              v-if="documentCleanStatus === 1"
+              class="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 border border-green-200"
+            >已清洗</span>
             <button
               class="flex h-7 w-7 items-center justify-center rounded-lg text-ink-400 hover:bg-black/5 hover:text-ink-600"
               @click="handleClose"
@@ -335,6 +354,15 @@ function handleClose() {
               @click="handleClose"
             >
               取消
+            </button>
+            <button
+              class="rounded-xl border bg-white px-4 py-1.5 text-sm font-medium hover:bg-black/5"
+              :class="documentCleanStatus === 1
+                ? 'border-red-200 text-red-600 hover:bg-red-50'
+                : 'border-emerald-200 text-emerald-600 hover:bg-emerald-50'"
+              @click="handleToggleClean"
+            >
+              {{ documentCleanStatus === 1 ? '解除清洗标记' : '标记为已清洗' }}
             </button>
             <button
               class="rounded-xl bg-accent-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:cursor-not-allowed disabled:opacity-50"

@@ -136,6 +136,14 @@ class KnowledgeDocument(Base):
     )
     parse_error_message = Column[str](Text, comment="解析失败原因")
 
+    clean_status = Column[int](
+        SmallInteger,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+        comment="清洗状态：0未清洗，1已清洗",
+    )
+
     created_at = Column[datetime](
         DateTime,
         server_default=func.now(),

@@ -859,6 +859,8 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | doc_type | str | 否 | null | 文档类型筛选（`RESEARCH_REPORT` / `INDUSTRY_REPORT`） |
 | stock_code | str | 否 | null | 股票代码筛选（6位） |
 | chunk_status | int | 否 | null | 切块状态筛选：0 待切块 / 1 切块中 / 2 完成 / 3 失败 |
+| parse_status | int | 否 | null | 解析状态筛选：0 未解析 / 1 解析中 / 2 完成 / 3 失败 |
+| clean_status | int | 否 | null | 清洗状态筛选：0 未清洗 / 1 已清洗 |
 | vector_status | int | 否 | null | 向量状态筛选：0 未向量化 / 1 向量化中 / 2 已向量化 / 3 失败 |
 | sort_by | str | 否 | `updated_at` | 排序字段：`created_at` / `updated_at` |
 | sort_order | str | 否 | `desc` | 排序方式：`desc` / `asc` |
@@ -918,6 +920,9 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | publish_date | str | 发布日期 |
 | chunk_status | int | 切块状态：0 待切块 / 1 切块中 / 2 完成 / 3 失败 |
 | vector_status | int | 向量状态：0 未向量化 / 1 向量化中 / 2 已向量化 / 3 失败 |
+| parse_status | int | 解析状态：0 未解析 / 1 解析中 / 2 完成 / 3 失败 |
+| parse_error_message | str\|null | 解析失败原因 |
+| clean_status | int | 清洗状态：0 未清洗 / 1 已清洗 |
 | metadata_status | int | 元数据状态 |
 
 ### 4.5 批量上传知识库文档 PDF
@@ -1029,8 +1034,52 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | document_id | int | 文档 ID |
 | title | str | 文档标题 |
 | saved | bool | 是否保存成功 |
+| clean_status | int | 清洗后状态：0 未清洗 / 1 已清洗 |
 
-### 4.7 批量解析文档
+### 4.7 切换文档清洗标记
+
+- **POST** `/api/v1/knowledge-base/toggle-clean`
+- **描述**：切换文档的已清洗标记。当前为「已清洗」则切换为「未清洗」，当前为「未清洗」则切换为「已清洗」。切换后可在列表页按清洗状态筛选。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| document_id | int | 是 | 文档 ID |
+
+**请求示例**：
+```json
+{
+  "document_id": 1
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "document_id": 1,
+    "title": "某某公司研报",
+    "clean_status": 1
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| document_id | int | 文档 ID |
+| title | str | 文档标题 |
+| clean_status | int | 切换后的清洗状态：0 未清洗 / 1 已清洗 |
+
+---
+
+### 4.8 批量解析文档
 
 - **POST** `/api/v1/knowledge-base/parse`
 - **描述**：批量解析文档，调用 MinerU 对 PDF 进行结构化解析（Markdown 格式提取），支持单个或批量提交。
@@ -1086,7 +1135,7 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | results[].error | str\|null | 失败原因（成功时为 null） |
 | results[].block_count | int | 标准化后的内容块数 |
 
-### 4.8 获取文档解析结果
+### 4.9 获取文档解析结果
 
 - **POST** `/api/v1/knowledge-base/parse-result`
 - **描述**：获取单个文档的 MinerU 解析结果，返回原始 Markdown 内容。

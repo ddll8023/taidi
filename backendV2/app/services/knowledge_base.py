@@ -203,6 +203,12 @@ def get_knowledge_document_list(
             == get_knowledge_document_list_request.parse_status
         )
 
+    if get_knowledge_document_list_request.clean_status is not None:
+        base_stmt = base_stmt.where(
+            models_knowledge_document.KnowledgeDocument.clean_status
+            == get_knowledge_document_list_request.clean_status
+        )
+
     if get_knowledge_document_list_request.vector_status is not None:
         base_stmt = base_stmt.where(
             models_knowledge_document.KnowledgeDocument.vector_status
@@ -422,7 +428,6 @@ def parse_documents(
             doc_entity.parse_status = constants_knowledge_base.PARSE_STATUS_COMPLETED
             doc_entity.parse_error_message = None
             commit_or_rollback(db)
-
             logger.info(f"转换完成: document_id={document_id}")
             results.append(
                 schemas_knowledge_base.ParseDocumentsItem(
@@ -523,11 +528,43 @@ def save_parse_result(
         logger.error(f"写入Markdown文件失败: path={target_path} error={e}", exc_info=True)
         raise ServiceException(ErrorCode.INTERNAL_ERROR, "保存清洗结果失败")
 
+    # 无论当前清洗状态如何，覆盖保存后标记为已清洗
+    if doc_entity.clean_status != constants_knowledge_base.CLEAN_STATUS_DONE:
+        doc_entity.clean_status = constants_knowledge_base.CLEAN_STATUS_DONE
+        commit_or_rollback(db)
+
     logger.info(f"清洗结果保存成功: document_id={request.document_id}")
     return schemas_knowledge_base.SaveParseResultResponse(
         document_id=request.document_id,
         title=doc_entity.title,
         saved=True,
+        clean_status=doc_entity.clean_status,
+    )
+
+
+def toggle_clean_status(db: Session, document_id: int):
+    """切换文档清洗标记"""
+    logger.info(f"切换清洗标记: document_id={document_id}")
+    doc_entity = db.scalar(
+        select(models_knowledge_document.KnowledgeDocument).where(
+            models_knowledge_document.KnowledgeDocument.id == document_id
+        )
+    )
+    if not doc_entity:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "文档不存在")
+
+    doc_entity.clean_status = (
+        constants_knowledge_base.CLEAN_STATUS_PENDING
+        if doc_entity.clean_status == constants_knowledge_base.CLEAN_STATUS_DONE
+        else constants_knowledge_base.CLEAN_STATUS_DONE
+    )
+    commit_or_rollback(db)
+
+    logger.info(f"清洗标记已切换: document_id={document_id} clean_status={doc_entity.clean_status}")
+    return schemas_knowledge_base.ToggleCleanStatusResponse(
+        document_id=document_id,
+        title=doc_entity.title,
+        clean_status=doc_entity.clean_status,
     )
 
 

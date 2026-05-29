@@ -165,3 +165,24 @@ def save_parse_result(
         return success(data=services_knowledge_base.save_parse_result(db, body))
     except ServiceException as e:
         return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/toggle-clean",
+    response_model=ApiResponse[schemas_knowledge_base.ToggleCleanStatusResponse],
+    description="切换文档清洗标记（已清洗↔未清洗）",
+)
+def toggle_clean_status(
+    db: Annotated[Session, Depends(get_db)],
+    body: Annotated[
+        schemas_knowledge_base.ToggleCleanStatusRequest,
+        Body(..., description="切换清洗标记请求"),
+    ],
+):
+    """切换清洗标记"""
+    try:
+        return success(
+            data=services_knowledge_base.toggle_clean_status(db, body.document_id)
+        )
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)

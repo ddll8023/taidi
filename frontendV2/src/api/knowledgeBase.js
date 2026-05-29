@@ -92,6 +92,15 @@ export function saveParseResult(documentId, markdownContent) {
 }
 
 /**
+ * 切换文档清洗标记（已清洗↔未清洗）
+ * @param {number} documentId - 文档ID
+ * @returns {Promise} { document_id, title, clean_status }
+ */
+export function toggleCleanStatus(documentId) {
+  return request.post('/knowledge-base/toggle-clean', { document_id: documentId })
+}
+
+/**
  * 批量上传知识库文档PDF
  * @param {File[]} files - PDF 文件列表
  * @returns {Promise} { total, success_count, failed_count, success_documents: [...], failed_files: [...] }

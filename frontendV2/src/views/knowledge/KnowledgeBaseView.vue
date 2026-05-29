@@ -15,7 +15,7 @@ import UploadPdfModal from '@/components/common/UploadPdfModal.vue'
 import PaginationBar from '@/components/common/PaginationBar.vue'
 import SurfacePanel from '@/components/ui/SurfacePanel.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
-import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, uploadKnowledgeDocuments, parseDocuments } from '@/api/knowledgeBase'
+import { initKnowledgeBase, getInitStatus, getKnowledgeBaseStats, getKnowledgeDocumentList, uploadKnowledgeDocuments, parseDocuments, unmarkCleanStatus } from '@/api/knowledgeBase'
 import MarkdownCleanerModal from '@/components/knowledge/MarkdownCleanerModal.vue'
 
 // ── 常量 ──
@@ -41,6 +41,11 @@ const PARSE_STATUS_MAP = {
   1: { label: '解析中', tone: 'warning' },
   2: { label: '解析完成', tone: 'success' },
   3: { label: '解析失败', tone: 'danger' }
+}
+
+const CLEAN_STATUS_MAP = {
+  0: { label: '未清洗', tone: 'neutral' },
+  1: { label: '已清洗', tone: 'success' }
 }
 
 // ── 统计数据 ──
@@ -84,6 +89,7 @@ const listState = reactive({
 const listKeyword = ref('')
 const listDocTypeFilter = ref('')
 const listParseStatusFilter = ref('')
+const listCleanStatusFilter = ref('')
 const isLoadingList = ref(false)
 const isRefreshingList = ref(false)
 const listErrorMessage = ref('')
@@ -100,6 +106,12 @@ const parseStatusFilterOptions = [
   { value: '1', label: '解析中' },
   { value: '2', label: '解析完成' },
   { value: '3', label: '解析失败' }
+]
+
+const cleanStatusFilterOptions = [
+  { value: '', label: '全部清洗状态' },
+  { value: '0', label: '未清洗' },
+  { value: '1', label: '已清洗' }
 ]
 
 // ── 计算属性 ──
@@ -221,6 +233,17 @@ function handleCleanMarkdown(doc) {
 async function handleCleanSuccess() {
   showToast('清洗结果已保存', 'success')
   await fetchDocumentList()
+}
+
+async function handleUnmarkClean(item) {
+  if (!confirm(`确定解除「${item.title}」的清洗标记？解除后可以重新编辑和保存。`)) return
+  try {
+    await unmarkCleanStatus(item.id)
+    showToast('清洗标记已解除', 'success')
+    await fetchDocumentList()
+  } catch (e) {
+    showToast(e.message || '解除失败', 'error')
+  }
 }
 
 // ── 切块操作 ──
@@ -388,6 +411,7 @@ const fetchDocumentList = async ({ silent = false } = {}) => {
     if (listKeyword.value.trim()) params.keyword = listKeyword.value.trim()
     if (listDocTypeFilter.value) params.doc_type = listDocTypeFilter.value
     if (listParseStatusFilter.value !== '') params.parse_status = Number(listParseStatusFilter.value)
+    if (listCleanStatusFilter.value !== '') params.clean_status = Number(listCleanStatusFilter.value)
 
     const response = await getKnowledgeDocumentList(params)
     const payload = response?.data || response
@@ -413,6 +437,7 @@ const handleListReset = () => {
   listKeyword.value = ''
   listDocTypeFilter.value = ''
   listParseStatusFilter.value = ''
+  listCleanStatusFilter.value = ''
   listState.page = 1
   fetchDocumentList()
 }
@@ -605,6 +630,7 @@ onMounted(() => {
           />
           <BaseSelect v-model="listDocTypeFilter" :options="docTypeFilterOptions" placeholder="全部类型" />
           <BaseSelect v-model="listParseStatusFilter" :options="parseStatusFilterOptions" placeholder="全部解析状态" />
+          <BaseSelect v-model="listCleanStatusFilter" :options="cleanStatusFilterOptions" placeholder="全部清洗状态" />
           <BaseButton icon="search" size="sm" @click="handleListSearch">筛选</BaseButton>
           <BaseButton variant="ghost" size="sm" @click="handleListReset">重置</BaseButton>
         </div>
