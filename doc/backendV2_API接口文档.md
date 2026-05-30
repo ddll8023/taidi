@@ -431,7 +431,7 @@
 
 ### 3.2 SSE 事件流
 
-服务端按顺序推送以下事件，客户端通过 `EventSource` 或 `fetch + ReadableStream` 读取：
+服务端按顺序推送以下事件，客户端通过 `fetch + ReadableStream` 读取。流程根据意图决策动态分支：始终执行「意图识别 → 综合分析」，中间按需插入 SQL 查询路径和/或 RAG 知识库检索路径。
 
 #### event: step — 进度事件
 
@@ -442,6 +442,7 @@ data: {"step": "intent", "message": "正在识别意图..."}
 event: step
 data: {"step": "intent_done", "message": "意图识别完成"}
 
+-- 以下为 SQL 路径（仅当 need_sql_query=true 时触发）--
 event: step
 data: {"step": "sql", "message": "正在生成查询语句..."}
 
@@ -454,6 +455,14 @@ data: {"step": "query", "message": "正在查询数据..."}
 event: step
 data: {"step": "query_done", "message": "数据查询完成"}
 
+-- 以下为 RAG 路径（仅当 need_rag_search=true 时触发）--
+event: step
+data: {"step": "rag", "message": "正在检索知识库..."}
+
+event: step
+data: {"step": "rag_done", "message": "知识库检索完成，找到10条相关内容"}
+
+-- 综合分析始终执行 --
 event: step
 data: {"step": "answer", "message": "正在综合分析生成回答..."}
 
@@ -463,7 +472,7 @@ data: {"step": "answer_done", "message": "回答生成完成"}
 
 | 字段 | 类型 | 说明 |
 | ---- | ---- | ---- |
-| step | str | 步骤标识：intent / intent_done / sql / sql_done / query / query_done / answer / answer_done |
+| step | str | 步骤标识：intent / intent_done / sql / sql_done / query / query_done / rag / rag_done / answer / answer_done |
 | message | str | 可读的进度描述 |
 
 #### event: token — 回答 token 事件
@@ -521,10 +530,19 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
   │                              ├─ 创建/加载会话
   │  ← event: step(intent) ─────┤
   │  ← event: step(intent_done) ─┤  意图识别（LLM）
-  │  ← event: step(sql) ────────┤
-  │  ← event: step(sql_done) ───┤  生成 SQL（LLM）
-  │  ← event: step(query) ──────┤
-  │  ← event: step(query_done) ──┤  执行查询
+  │                              │
+  │      ┌─ need_sql=true ───────┤
+  │      ├─ event: step(sql) ────┤
+  │      ├─ event: step(sql_done)┤  生成 SQL（LLM）
+  │      ├─ event: step(query) ──┤
+  │      ├─ event: step(query_done)┤ 执行查询
+  │      └─ need_sql=false ─────┤  跳过 SQL
+  │                              │
+  │      ┌─ need_rag=true ──────┤
+  │      ├─ event: step(rag) ───┤
+  │      ├─ event: step(rag_done)┤  RAG 知识库检索
+  │      └─ need_rag=false ────┤  跳过 RAG
+  │                              │
   │  ← event: step(answer) ─────┤
   │  ← event: token (逐段) ─────┤  流式生成回答（LLM stream）
   │  ← event: step(answer_done) ─┤
@@ -719,7 +737,8 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
   "data": {
     "success": true,
     "message": "导入成功",
-    "total_count": 5000
+    "total_count": 5000,
+    "duplicate_count": 0
   }
 }
 ```
@@ -728,6 +747,7 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | ---- | ---- | ---- |
 | success | bool | 是否成功 |
 | message | str | 结果消息（含失败条数提示） |
+| duplicate_count | int | 重复数量 |
 | total_count | int | 导入的总记录数 |
 
 **个股研报 Excel 列映射**：
@@ -812,7 +832,7 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 ### 4.3 获取知识库整体统计信息
 
 - **POST** `/api/v1/knowledge-base/stats`
-- **描述**：获取知识库整体统计信息，包含文档数量与类型分布。
+- **描述**：获取知识库整体统计信息，包含文档数量、类型分布、切块状态、向量状态和解析状态统计。
 - **Content-Type**：`application/json`
 
 无请求参数。
@@ -829,6 +849,20 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
       "by_doc_type": {
         "RESEARCH_REPORT": 3000,
         "INDUSTRY_REPORT": 2000
+      },
+      "by_chunk_status": {
+        "待切块": 2000,
+        "完成": 2800,
+        "失败": 200
+      },
+      "by_vector_status": {
+        "未向量化": 3000,
+        "已向量化": 2000
+      },
+      "by_parse_status": {
+        "未解析": 2500,
+        "完成": 2300,
+        "失败": 200
       }
     }
   }
@@ -842,6 +876,9 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | documents | object | 文档维度统计 |
 | documents.total | int | 文档总数 |
 | documents.by_doc_type | dict | 按文档类型分组（如 RESEARCH_REPORT、INDUSTRY_REPORT） |
+| documents.by_chunk_status | dict | 按切块状态分组统计 |
+| documents.by_vector_status | dict | 按向量状态分组统计 |
+| documents.by_parse_status | dict | 按解析状态分组统计 |
 
 ### 4.4 获取知识库文档列表
 
@@ -1163,8 +1200,7 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
   "data": {
     "document_id": 1,
     "title": "某某公司研报",
-    "markdown_content": "# 研报标题\n\n正文内容...",
-    "page_count": 15
+    "markdown_content": "# 研报标题\n\n正文内容..."
   }
 }
 ```
@@ -1176,7 +1212,188 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | document_id | int | 文档 ID |
 | title | str | 文档标题 |
 | markdown_content | str | MinerU 解析输出的原始 Markdown 内容 |
-| page_count | int | PDF 总页数 |
+
+---
+
+### 4.10 批量切块
+
+- **POST** `/api/v1/knowledge-base/chunk`
+- **描述**：对清洗后的文档执行 Markdown 文本段落分段和表格标注提取，支持单个或批量提交。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| document_ids | int[] | 是 | 待切块的文档 ID 列表 |
+
+**请求示例**：
+```json
+{
+  "document_ids": [1, 2, 3]
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 3,
+    "success_count": 2,
+    "failed_count": 1,
+    "results": [
+      {
+        "document_id": 1,
+        "title": "某某公司研报",
+        "success": true,
+        "chunk_count": 42,
+        "error": null
+      }
+    ]
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| total | int | 请求处理的文档总数 |
+| success_count | int | 成功切块数 |
+| failed_count | int | 失败数 |
+| results | object[] | 逐文档切块结果列表 |
+| results[].document_id | int | 文档 ID |
+| results[].title | str | 文档标题 |
+| results[].success | bool | 是否成功 |
+| results[].chunk_count | int | 切块数量 |
+| results[].error | str\|null | 失败原因（成功时为 null） |
+
+---
+
+### 4.11 批量向量化
+
+- **POST** `/api/v1/knowledge-base/vectorize`
+- **描述**：对已切块的文档执行 Embedding 并写入向量数据库（Chroma），支持单个或批量提交。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| document_ids | int[] | 是 | 待向量化的文档 ID 列表 |
+
+**请求示例**：
+```json
+{
+  "document_ids": [1, 2, 3]
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 3,
+    "success_count": 2,
+    "failed_count": 1,
+    "results": [
+      {
+        "document_id": 1,
+        "title": "某某公司研报",
+        "success": true,
+        "chunk_count": 42,
+        "error": null
+      }
+    ]
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| total | int | 请求处理的文档总数 |
+| success_count | int | 成功向量化数 |
+| failed_count | int | 失败数 |
+| results | object[] | 逐文档向量化结果列表 |
+| results[].document_id | int | 文档 ID |
+| results[].title | str | 文档标题 |
+| results[].success | bool | 是否成功 |
+| results[].chunk_count | int | 向量化的切块数量 |
+| results[].error | str\|null | 失败原因（成功时为 null） |
+
+### 4.12 语义检索
+
+- **POST** `/api/v1/knowledge-base/search`
+- **描述**：知识库语义检索，支持按股票代码和行业名称过滤。当指定股票代码时，自动推定所属行业补全行业研报检索。
+- **Content-Type**：`application/json`
+
+**请求体（JSON）**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+| ---- | ---- | ---- | ------ | ---- |
+| query | str | 是 | - | 检索查询语句 |
+| stock_codes | str[] | 否 | null | 股票代码列表（用于过滤个股研报） |
+| industry_names | str[] | 否 | null | 行业名称列表（用于过滤行业研报） |
+| top_k | int | 否 | 10 | 返回结果数量 |
+
+**请求示例**：
+```json
+{
+  "query": "新能源汽车市场前景分析",
+  "stock_codes": ["600519"],
+  "industry_names": ["汽车"],
+  "top_k": 10
+}
+```
+
+**响应格式**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "query": "新能源汽车市场前景分析",
+    "total": 5,
+    "results": [
+      {
+        "document_id": 1,
+        "chunk_index": 3,
+        "chunk_text": "新能源汽车市场在2024年继续保持高速增长...",
+        "score": 0.92,
+        "doc_type": "INDUSTRY_REPORT",
+        "stock_code": null,
+        "stock_abbr": null,
+        "industry_name": "汽车"
+      }
+    ]
+  }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| query | str | 检索查询语句 |
+| total | int | 返回结果数量 |
+| results | object[] | 检索结果列表 |
+| results[].document_id | int | 文档 ID |
+| results[].chunk_index | int | 切块索引 |
+| results[].chunk_text | str | 文本内容 |
+| results[].score | float | 相关度分数（0~1） |
+| results[].doc_type | str | 文档类型：RESEARCH_REPORT / INDUSTRY_REPORT |
+| results[].stock_code | str\|null | 股票代码（个股研报有值） |
+| results[].stock_abbr | str\|null | 股票简称 |
+| results[].industry_name | str\|null | 行业名称 |
 
 ---
 

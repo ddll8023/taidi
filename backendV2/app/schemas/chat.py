@@ -9,7 +9,7 @@ class IdentifyIntentResultItem(BaseModel):
     """识别意图结果项"""
 
     companys: list[dict] | None = Field(
-        default_factory=list, description="识别到的公司"
+        default_factory=list, description="识别到的公司（供SQL查询用）"
     )
     metrics: list[dict] | None = Field(default_factory=list, description="识别到的指标")
     time_range: list[dict] | None = Field(
@@ -19,6 +19,14 @@ class IdentifyIntentResultItem(BaseModel):
     confidence: float = Field(0.0, description="置信度")
     continuity_config: dict | None = Field(
         default_factory=dict, description="连续性配置"
+    )
+    need_sql_query: bool = Field(False, description="是否需要SQL查询MySQL财报")
+    need_rag_search: bool = Field(False, description="是否需要RAG检索知识库研报")
+    rag_companys: list[dict] | None = Field(
+        None, description="RAG检索公司列表（从上下文继承）"
+    )
+    rag_industrys: list[str] | None = Field(
+        None, description="RAG检索行业名称列表"
     )
 
     model_config = ConfigDict(from_attributes=True)
@@ -32,6 +40,7 @@ class ChatMessageItem(BaseModel):
     answer: str | None = Field(None, description="回答")
     sql_query: str | None = Field(None, description="生成的SQL")
     sql_result: list | None = Field(None, description="SQL执行结果")
+    rag_result: list | None = Field(None, description="RAG检索结果")
     intent_result: dict | None = Field(None, description="意图解析结果")
     created_at: datetime = Field(..., description="创建时间")
 

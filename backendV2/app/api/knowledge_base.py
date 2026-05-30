@@ -16,6 +16,7 @@ from app.schemas.common import ApiResponse, PaginatedResponse
 from app.utils.exception import ServiceException
 from app.services import knowledge_base as services_knowledge_base
 from app.schemas import knowledge_base as schemas_knowledge_base
+from app.schemas import chat as schemas_chat
 
 router = APIRouter(prefix="/api/v1/knowledge-base", tags=["知识库管理"])
 
@@ -203,5 +204,43 @@ def chunk_documents(
     """批量切块"""
     try:
         return success(data=services_knowledge_base.chunk_documents(db, body))
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/vectorize",
+    response_model=ApiResponse[schemas_knowledge_base.VectorizeDocumentsResponse],
+    description="批量向量化：对已切块的文档执行Embedding并写入向量数据库",
+)
+def vectorize_documents(
+    db: Annotated[Session, Depends(get_db)],
+    body: Annotated[
+        schemas_knowledge_base.VectorizeDocumentsRequest,
+        Body(..., description="向量化请求"),
+    ],
+):
+    """批量向量化"""
+    try:
+        return success(data=services_knowledge_base.vectorize_documents(db, body))
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
+
+
+@router.post(
+    "/search",
+    response_model=ApiResponse[schemas_knowledge_base.SearchKnowledgeResponse],
+    description="知识库语义检索，支持个股代码和行业名称过滤",
+)
+def search_knowledge(
+    db: Annotated[Session, Depends(get_db)],
+    body: Annotated[
+        schemas_knowledge_base.SearchKnowledgeRequest,
+        Body(..., description="检索请求"),
+    ],
+):
+    """知识库检索"""
+    try:
+        return success(data=services_knowledge_base.search_knowledge(db, body))
     except ServiceException as e:
         return error(code=e.code, message=e.message)

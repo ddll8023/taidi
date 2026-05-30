@@ -18,13 +18,19 @@ import { renderMarkdown } from '@/utils/markdown'
 // ── 步骤配置 ──
 
 const STEP_CONFIG = {
-  intent: { label: '意图识别', icon: 'brain' },
-  sql: { label: '生成查询语句', icon: 'database' },
-  query: { label: '查询数据', icon: 'magnifying-glass' },
-  answer: { label: '综合分析', icon: 'wand-magic-sparkles' },
+  intent: { label: '意图识别', icon: 'brain', group: 'base' },
+  sql: { label: 'SQL 生成', icon: 'database', group: 'sql' },
+  query: { label: '数据查询', icon: 'magnifying-glass', group: 'sql' },
+  rag: { label: '知识库检索', icon: 'microchip', group: 'rag' },
+  answer: { label: '综合分析', icon: 'wand-magic-sparkles', group: 'base' },
 }
 
-const STEP_ORDER = ['intent', 'sql', 'query', 'answer']
+const STEP_ORDER = ['intent', 'sql', 'query', 'rag', 'answer']
+
+const STEP_GROUP_CONFIG = {
+  sql: { label: '财报数据查询', color: 'accent' },
+  rag: { label: '研报知识库检索', color: 'emerald' },
+}
 
 // ── 左侧：会话列表状态 ──
 
@@ -73,11 +79,25 @@ const progressSteps = reactive({
   intent: { status: 'pending' },
   sql: { status: 'pending' },
   query: { status: 'pending' },
+  rag: { status: 'pending' },
   answer: { status: 'pending' },
 })
 
 const hasMessages = computed(() => messages.length > 0)
 const canSend = computed(() => currentInput.value.trim().length > 0 && !isLoading.value)
+
+const activeGroups = computed(() => {
+  const groups = new Set()
+  STEP_ORDER.forEach((key) => {
+    if (progressSteps[key].status !== 'pending') {
+      groups.add(STEP_CONFIG[key].group)
+    }
+  })
+  const active = []
+  if (groups.has('sql')) active.push('sql')
+  if (groups.has('rag')) active.push('rag')
+  return active
+})
 
 const progressMessage = computed(() => {
   const active = STEP_ORDER.find((key) => progressSteps[key].status === 'active')
@@ -366,7 +386,7 @@ onMounted(() => {
           </p>
           <div class="mt-4 flex flex-wrap gap-2">
             <button
-              v-for="suggestion in ['贵州茅台2023年净利润', '营收排名前10的公司', '对比五粮液和茅台']"
+              v-for="suggestion in ['贵州茅台2023年净利润', '营收排名前10的公司', '对比五粮液和茅台', '新能源汽车行业研报']"
               :key="suggestion"
               class="rounded-lg border border-black/10 px-3 py-1.5 text-xs text-ink-500 transition-colors hover:border-accent-200 hover:bg-accent-50 hover:text-accent-600"
               @click="currentInput = suggestion"
@@ -431,9 +451,10 @@ onMounted(() => {
             <FontAwesomeIcon :icon="['fas', 'robot']" class="text-sm text-ink-600" aria-hidden="true" />
           </div>
           <div class="min-w-[200px] rounded-2xl border border-black/5 bg-white px-4 py-3">
-            <div class="flex flex-col gap-2.5">
+            <div class="flex flex-col gap-3">
+              <!-- 基础步（intent / answer） -->
               <div
-                v-for="(stepKey) in STEP_ORDER"
+                v-for="stepKey in STEP_ORDER.filter(k => STEP_CONFIG[k].group === 'base')"
                 :key="stepKey"
                 class="flex items-center gap-2"
                 :class="progressSteps[stepKey].status === 'active' ? 'text-accent-600' : progressSteps[stepKey].status === 'done' ? 'text-green-600' : 'text-ink-300'"
@@ -455,6 +476,71 @@ onMounted(() => {
                   <span class="block h-2 w-2 rounded-full border border-current"></span>
                 </div>
                 <span class="text-xs font-medium">{{ STEP_CONFIG[stepKey].label }}</span>
+              </div>
+
+              <!-- SQL 组 -->
+              <div v-if="activeGroups.includes('sql')">
+                <div class="mb-1.5 flex items-center gap-1.5">
+                  <span class="h-px flex-1 bg-accent-200"></span>
+                  <span class="text-[10px] font-medium uppercase tracking-wider text-accent-500">{{ STEP_GROUP_CONFIG.sql.label }}</span>
+                  <span class="h-px flex-1 bg-accent-200"></span>
+                </div>
+                <div
+                  v-for="stepKey in ['sql', 'query']"
+                  :key="stepKey"
+                  class="flex items-center gap-2"
+                  :class="progressSteps[stepKey].status === 'active' ? 'text-accent-600' : progressSteps[stepKey].status === 'done' ? 'text-green-600' : 'text-ink-300'"
+                >
+                  <FontAwesomeIcon
+                    v-if="progressSteps[stepKey].status === 'done'"
+                    :icon="['fas', 'circle-check']"
+                    class="w-4 text-xs"
+                    aria-hidden="true"
+                  />
+                  <FontAwesomeIcon
+                    v-else-if="progressSteps[stepKey].status === 'active'"
+                    :icon="['fas', 'spinner']"
+                    spin
+                    class="w-4 text-xs"
+                    aria-hidden="true"
+                  />
+                  <div v-else class="flex w-4 items-center justify-center">
+                    <span class="block h-2 w-2 rounded-full border border-current"></span>
+                  </div>
+                  <span class="text-xs font-medium">{{ STEP_CONFIG[stepKey].label }}</span>
+                </div>
+              </div>
+
+              <!-- RAG 组 -->
+              <div v-if="activeGroups.includes('rag')">
+                <div class="mb-1.5 flex items-center gap-1.5">
+                  <span class="h-px flex-1 bg-emerald-200"></span>
+                  <span class="text-[10px] font-medium uppercase tracking-wider text-emerald-600">{{ STEP_GROUP_CONFIG.rag.label }}</span>
+                  <span class="h-px flex-1 bg-emerald-200"></span>
+                </div>
+                <div
+                  class="flex items-center gap-2"
+                  :class="progressSteps['rag'].status === 'active' ? 'text-emerald-600' : progressSteps['rag'].status === 'done' ? 'text-green-600' : 'text-ink-300'"
+                >
+                  <FontAwesomeIcon
+                    v-if="progressSteps['rag'].status === 'done'"
+                    :icon="['fas', 'circle-check']"
+                    class="w-4 text-xs"
+                    aria-hidden="true"
+                  />
+                  <FontAwesomeIcon
+                    v-else-if="progressSteps['rag'].status === 'active'"
+                    :icon="['fas', 'spinner']"
+                    spin
+                    class="w-4 text-xs"
+                    aria-hidden="true"
+                  />
+                  <div v-else class="flex w-4 items-center justify-center">
+                    <span class="block h-2 w-2 rounded-full border border-current"></span>
+                  </div>
+                  <FontAwesomeIcon :icon="['fas', 'microchip']" class="w-3.5 text-[0.65em]" aria-hidden="true" />
+                  <span class="text-xs font-medium">{{ STEP_CONFIG['rag'].label }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -494,7 +580,7 @@ onMounted(() => {
           />
         </div>
         <p class="mt-2 text-xs text-ink-400">
-          支持查询：净利润、营业收入、总资产等财务指标，支持同比/环比分析、排名对比
+          支持查询：净利润、营业收入、总资产等财务指标，支持同比/环比分析、排名对比、研报知识库检索
         </p>
       </div>
     </SurfacePanel>

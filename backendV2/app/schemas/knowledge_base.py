@@ -9,6 +9,41 @@ from pydantic import BaseModel, Field, ConfigDict
 # ========== 辅助类（Support）==========
 
 
+class SearchKnowledgeItem(BaseModel):
+    """检索结果项"""
+
+    document_id: int = Field(..., description="文档ID")
+    chunk_index: int = Field(..., description="切块序号")
+    chunk_text: str = Field(..., description="切块文本内容")
+    score: float = Field(..., description="相关性分数")
+    doc_type: str = Field(..., description="文档类型")
+    stock_code: str | None = Field(None, description="股票代码")
+    stock_abbr: str | None = Field(None, description="股票简称")
+    industry_name: str | None = Field(None, description="行业名称")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VectorizeDocumentsItem(BaseModel):
+    """单个文档向量化结果"""
+
+    document_id: int = Field(..., description="文档ID")
+    title: str = Field("", description="文档标题")
+    success: bool = Field(..., description="是否成功")
+    chunk_count: int = Field(0, description="向量化的块数")
+    error: str | None = Field(None, description="失败原因")
+
+
+class ChunkDocumentsItem(BaseModel):
+    """单个文档切块结果"""
+
+    document_id: int = Field(..., description="文档ID")
+    title: str = Field("", description="文档标题")
+    success: bool = Field(..., description="是否成功")
+    chunk_count: int = Field(0, description="切块数量")
+    error: str | None = Field(None, description="失败原因")
+
+
 class InitErrorItem(BaseModel):
     """初始化错误项"""
 
@@ -147,6 +182,23 @@ class GetKnowledgeDocumentListRequest(BaseModel):
         "updated_at", description="排序字段"
     )
     sort_order: Literal["desc", "asc"] | None = Field("desc", description="排序方式")
+
+
+class VectorizeDocumentsRequest(BaseModel):
+    """文档向量化请求"""
+
+    document_ids: list[int] = Field(
+        ..., min_length=1, description="待向量化的文档ID列表"
+    )
+
+
+class SearchKnowledgeRequest(BaseModel):
+    """知识库检索请求"""
+
+    query: str = Field(..., min_length=1, description="检索查询文本")
+    stock_codes: list[str] | None = Field(None, description="个股代码列表（过滤用）")
+    industry_names: list[str] | None = Field(None, description="行业名称列表（过滤用）")
+    top_k: int = Field(10, ge=1, le=50, description="返回结果数量")
 
 
 # ========== 响应类（Response）==========
@@ -298,3 +350,28 @@ class ChunkDocumentsResponse(BaseModel):
     results: list[ChunkDocumentsItem] = Field(
         default_factory=list, description="逐文档切块结果"
     )
+
+
+class VectorizeDocumentsResponse(BaseModel):
+    """批量向量化响应"""
+
+    total: int = Field(..., description="请求处理的文档总数")
+    success_count: int = Field(0, description="成功数")
+    failed_count: int = Field(0, description="失败数")
+    results: list[VectorizeDocumentsItem] = Field(
+        default_factory=list, description="逐文档向量化结果"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SearchKnowledgeResponse(BaseModel):
+    """知识库检索响应"""
+
+    query: str = Field(..., description="检索查询")
+    total: int = Field(0, description="结果数量")
+    results: list[SearchKnowledgeItem] = Field(
+        default_factory=list, description="检索结果列表"
+    )
+
+    model_config = ConfigDict(from_attributes=True)

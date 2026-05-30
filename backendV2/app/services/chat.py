@@ -16,11 +16,14 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.database import get_background_db_session, commit_or_rollback
 from app.constants import chat as constants_chat
+from app.constants import knowledge_base as constants_knowledge_base
 from app.models import company_basic_info as models_company_basic_info
 from app.models import chat_message as models_chat_message
 from app.models import chat_session as models_chat_session
 from app.schemas import chat as schemas_chat
+from app.schemas import knowledge_base as schemas_knowledge_base
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
+from app.services import knowledge_base as services_knowledge_base
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 from app.utils.model_factory import get_model
@@ -89,52 +92,130 @@ def start_chat(
         yield f"event: error\ndata: {json.dumps({'code': e.code, 'message': e.message}, ensure_ascii=False)}\n\n"
         return
 
-    # === 步骤2: 生成SQL ===
-    yield f"event: step\ndata: {json.dumps({'step': 'sql', 'message': '正在生成查询语句...'}, ensure_ascii=False)}\n\n"
-    logger.info(f"生成SQL语句开始: session_id={start_chat_request.session_id}")
-    try:
-        sql_statement: str = _generate_sql_statement(
-            db, intent_result_item, history_context_sql
-        )
-        logger.info(
-            f"生成SQL语句完成: session_id={start_chat_request.session_id} "
-            f"sql={sql_statement}"
-        )
-        yield f"event: step\ndata: {json.dumps({'step': 'sql_done', 'message': '查询语句生成完成'}, ensure_ascii=False)}\n\n"
-    except ServiceException as e:
-        logger.error(
-            f"生成SQL语句失败: session_id={start_chat_request.session_id} error={e}"
-        )
-        yield f"event: error\ndata: {json.dumps({'code': e.code, 'message': e.message}, ensure_ascii=False)}\n\n"
-        return
+    # 根据意图决定是否执行SQL查询和RAG检索
+    db_result = []
+    rag_results = []
 
-    # === 步骤3: 执行SQL ===
-    yield f"event: step\ndata: {json.dumps({'step': 'query', 'message': '正在查询数据...'}, ensure_ascii=False)}\n\n"
-    logger.info(f"执行SQL语句开始: session_id={start_chat_request.session_id}")
-    try:
-        db_result = db.execute(text(sql_statement)).all()
+    need_sql = intent_result_item.need_sql_query
+    need_rag = intent_result_item.need_rag_search
+    logger.info(
+        f"意图决策结果: session_id={start_chat_request.session_id} "
+        f"need_sql={need_sql} need_rag={need_rag} "
+        f"rag_companys={intent_result_item.rag_companys} "
+        f"rag_industrys={intent_result_item.rag_industrys}"
+    )
+
+    if not need_sql and not need_rag:
         logger.info(
-            f"执行SQL语句完成: session_id={start_chat_request.session_id} "
-            f"result_count={len(db_result)}"
+            f"纯文本对话（无需SQL和RAG）: session_id={start_chat_request.session_id}"
         )
-        yield f"event: step\ndata: {json.dumps({'step': 'query_done', 'message': '数据查询完成'}, ensure_ascii=False)}\n\n"
-    except Exception as e:
-        logger.error(
-            f"执行SQL语句失败: session_id={start_chat_request.session_id} error={e}"
+
+    # === 步骤2: SQL查询（如需）===
+    if intent_result_item.need_sql_query:
+        yield f"event: step\ndata: {json.dumps({'step': 'sql', 'message': '正在生成查询语句...'}, ensure_ascii=False)}\n\n"
+        logger.info(f"生成SQL语句开始: session_id={start_chat_request.session_id}")
+        try:
+            sql_statement: str = _generate_sql_statement(
+                db, intent_result_item, history_context_sql
+            )
+            logger.info(
+                f"生成SQL语句完成: session_id={start_chat_request.session_id} "
+                f"sql={sql_statement}"
+            )
+            yield f"event: step\ndata: {json.dumps({'step': 'sql_done', 'message': '查询语句生成完成'}, ensure_ascii=False)}\n\n"
+        except ServiceException as e:
+            logger.error(
+                f"生成SQL语句失败: session_id={start_chat_request.session_id} error={e}"
+            )
+            yield f"event: error\ndata: {json.dumps({'code': e.code, 'message': e.message}, ensure_ascii=False)}\n\n"
+            return
+
+        yield f"event: step\ndata: {json.dumps({'step': 'query', 'message': '正在查询数据...'}, ensure_ascii=False)}\n\n"
+        logger.info(f"执行SQL语句开始: session_id={start_chat_request.session_id}")
+        try:
+            db_result = db.execute(text(sql_statement)).all()
+            logger.info(
+                f"执行SQL语句完成: session_id={start_chat_request.session_id} "
+                f"result_count={len(db_result)}"
+            )
+            yield f"event: step\ndata: {json.dumps({'step': 'query_done', 'message': '数据查询完成'}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(
+                f"执行SQL语句失败: session_id={start_chat_request.session_id} error={e}"
+            )
+            yield f"event: error\ndata: {json.dumps({'code': ErrorCode.AI_SERVICE_ERROR, 'message': '执行SQL语句失败'}, ensure_ascii=False)}\n\n"
+            return
+    else:
+        sql_statement = ""
+        logger.info(
+            f"跳过SQL查询（意图判定无需SQL）: session_id={start_chat_request.session_id}"
         )
-        yield f"event: error\ndata: {json.dumps({'code': ErrorCode.AI_SERVICE_ERROR, 'message': '执行SQL语句失败'}, ensure_ascii=False)}\n\n"
-        return
+
+    # === 步骤3: RAG检索（如需）===
+    if need_rag:
+        yield f"event: step\ndata: {json.dumps({'step': 'rag', 'message': '正在检索知识库...'}, ensure_ascii=False)}\n\n"
+        logger.info(f"RAG检索开始: session_id={start_chat_request.session_id}")
+        try:
+            stock_codes = None
+            if intent_result_item.rag_companys:
+                stock_codes = [
+                    c.get("stock_code")
+                    for c in intent_result_item.rag_companys
+                    if c.get("stock_code")
+                ]
+                logger.info(
+                    f"RAG个股过滤: session_id={start_chat_request.session_id} stock_codes={stock_codes}"
+                )
+            if intent_result_item.rag_industrys:
+                logger.info(
+                    f"RAG行业过滤: session_id={start_chat_request.session_id} industry_names={intent_result_item.rag_industrys}"
+                )
+            search_request = schemas_knowledge_base.SearchKnowledgeRequest(
+                query=start_chat_request.question,
+                stock_codes=stock_codes or None,
+                industry_names=intent_result_item.rag_industrys or None,
+                top_k=10,
+            )
+            rag_response = services_knowledge_base.search_knowledge(db, search_request)
+            rag_results = rag_response.results
+            logger.info(
+                f"RAG检索完成: session_id={start_chat_request.session_id} "
+                f"results={len(rag_results)}"
+            )
+            if rag_results:
+                logger.info(
+                    f"RAG检索结果预览: session_id={start_chat_request.session_id} "
+                    f"top_scores={[round(r.score, 3) for r in rag_results[:3]]} "
+                    f"top_docs={[r.document_id for r in rag_results[:3]]}"
+                )
+            yield f"event: step\ndata: {json.dumps({'step': 'rag_done', 'message': f'知识库检索完成，找到{len(rag_results)}条相关内容'}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(
+                f"RAG检索失败: session_id={start_chat_request.session_id} error={e}",
+                exc_info=True,
+            )
+            yield f"event: step\ndata: {json.dumps({'step': 'rag_done', 'message': '知识库检索失败，跳过'}, ensure_ascii=False)}\n\n"
+    else:
+        logger.info(
+            f"跳过RAG检索（意图判定无需RAG）: session_id={start_chat_request.session_id}"
+        )
 
     # === 步骤4: 生成回答 ===
     yield f"event: step\ndata: {json.dumps({'step': 'answer', 'message': '正在综合分析生成回答...'}, ensure_ascii=False)}\n\n"
-    logger.info(f"生成回答开始: session_id={start_chat_request.session_id}")
+    logger.info(
+        f"生成回答开始: session_id={start_chat_request.session_id} "
+        f"has_sql_result={bool(db_result)} sql_rows={len(db_result) if db_result else 0} "
+        f"has_rag_result={bool(rag_results)} rag_count={len(rag_results) if rag_results else 0} "
+        f"has_history={bool(history_context_full)}"
+    )
     try:
         answer_parts = []
         for token in _generate_answer_stream(
             start_chat_request,
             intent_result_item,
-            list(db_result),
+            list(db_result) if db_result else [],
             history_context_full,
+            rag_results=rag_results if rag_results else None,
         ):
             answer_parts.append(token)
             yield f"event: token\ndata: {json.dumps({'content': token}, ensure_ascii=False)}\n\n"
@@ -149,14 +230,15 @@ def start_chat(
         return
 
     # === 持久化本轮消息 ===
-    sql_result_for_storage = _truncate_sql_result(db_result)
+    sql_result_for_storage = _truncate_sql_result(db_result) if db_result else None
     chat_message = models_chat_message.ChatMessage(
         session_id=start_chat_request.session_id,
         message_type="conversation",
         query=start_chat_request.question,
         intent_result=intent_result_item.model_dump(),
-        sql_query=sql_statement,
+        sql_query=sql_statement or None,
         sql_result=sql_result_for_storage,
+        rag_result=[r.model_dump() for r in rag_results] if rag_results else None,
         answer=answer,
         created_at=datetime.now(),
         answer_at=datetime.now(),
@@ -183,7 +265,13 @@ def start_chat(
     background_tasks.add_task(_summarize_overflow, start_chat_request.session_id)
 
     # === 推送最终结果 ===
-    yield f"event: result\ndata: {json.dumps({'session_id': start_chat_request.session_id, 'answer': {'content': answer}, 'sql': sql_statement}, ensure_ascii=False)}\n\n"
+    result_data = {
+        "session_id": start_chat_request.session_id,
+        "answer": {"content": answer},
+    }
+    if sql_statement:
+        result_data["sql"] = sql_statement
+    yield f"event: result\ndata: {json.dumps(result_data, ensure_ascii=False)}\n\n"
 
 
 def get_chat_list(
@@ -401,11 +489,12 @@ def _generate_answer_stream(
     intent_result_item: schemas_chat.IdentifyIntentResultItem,
     query_result: list,
     history_context: str = "",
+    rag_results: list | None = None,
 ):
     """流式生成回答，逐 token 返回"""
     logger.info(
         f"生成回答入口: intent={intent_result_item.model_dump_json()} "
-        f"query_result={query_result}"
+        f"query_result={query_result} rag_results_count={len(rag_results) if rag_results else 0}"
     )
     try:
         system_prompt = settings.PROMPT_CONFIG.get_chat_config["answer_build"][
@@ -420,6 +509,15 @@ def _generate_answer_stream(
             query_result=str(query_result),
             intent_json=intent_result_item.model_dump_json(),
         )
+
+        # 拼接RAG检索结果
+        if rag_results:
+            rag_context = "\n\n=== 知识库检索结果 ===\n"
+            for i, r in enumerate(rag_results, 1):
+                rag_context += f"\n[{i}] (相关度:{r.score:.2f}) {r.chunk_text[:500]}"
+            rag_context += "\n\n=== 知识库检索结果结束 ==="
+            user_prompt += rag_context
+
         if history_context:
             user_prompt += f"\n\n历史对话上下文：\n{history_context}"
         prompt = [
@@ -430,7 +528,6 @@ def _generate_answer_stream(
         logger.info(f"开始流式生成回答")
         for chunk in model.stream(prompt):
             if chunk.content:
-                # print(chunk.content, end="", flush=True)
                 yield chunk.content
     except Exception as e:
         logger.error(f"生成回答失败: {e}")

@@ -17,6 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.constants import knowledge_base as constants_knowledge_base
 from app.core.config import settings
+from app.db.chroma import (
+    add_texts_to_kb,
+    delete_by_filter as chroma_delete_by_filter,
+    search_kb as chroma_search_kb,
+)
 from app.db.database import commit_or_rollback
 from app.models import knowledge_document as models_knowledge_document
 from app.models import knowledge_chunk as models_knowledge_chunk
@@ -25,6 +30,7 @@ from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.utils.exception import ServiceException
 from app.utils.file import save_file
 from app.utils.logger_config import setup_logger
+from app.models import company_basic_info as models_company_basic_info
 
 logger = setup_logger(__name__)
 
@@ -573,6 +579,21 @@ def chunk_documents(
         )
     ).all()
 
+    # 统一将所有文档标记为"向量化中"
+    for doc in docs:
+        doc.vector_status = constants_knowledge_base.VECTOR_STATUS_VECTORIZING
+    # 统一更新 chunk 状态为向量化中
+    db.execute(
+        models_knowledge_chunk.KnowledgeChunk.__table__.update()
+        .where(
+            models_knowledge_chunk.KnowledgeChunk.document_id.in_(document_ids),
+            models_knowledge_chunk.KnowledgeChunk.vector_status
+            == constants_knowledge_base.VECTOR_STATUS_PENDING,
+        )
+        .values(vector_status=constants_knowledge_base.VECTOR_STATUS_VECTORIZING)
+    )
+    commit_or_rollback(db)
+
     for doc in docs:
         doc_entity = doc
         try:
@@ -631,6 +652,147 @@ def chunk_documents(
     )
 
 
+def vectorize_documents(
+    db: Session,
+    request: schemas_knowledge_base.VectorizeDocumentsRequest,
+):
+    """批量文档向量化"""
+    logger.info(f"收到批量向量化请求: document_ids={request.document_ids}")
+    results: list[schemas_knowledge_base.VectorizeDocumentsItem] = []
+    success_count = 0
+    failed_count = 0
+    document_ids = request.document_ids
+
+    docs = db.scalars(
+        select(models_knowledge_document.KnowledgeDocument).where(
+            models_knowledge_document.KnowledgeDocument.id.in_(document_ids)
+        )
+    ).all()
+
+    # 统一将所有文档标记为"向量化中"
+    for doc in docs:
+        doc.vector_status = constants_knowledge_base.VECTOR_STATUS_VECTORIZING
+    # 统一更新 chunk 状态为向量化中
+    db.execute(
+        models_knowledge_chunk.KnowledgeChunk.__table__.update()
+        .where(
+            models_knowledge_chunk.KnowledgeChunk.document_id.in_(document_ids),
+            models_knowledge_chunk.KnowledgeChunk.vector_status
+            == constants_knowledge_base.VECTOR_STATUS_PENDING,
+        )
+        .values(vector_status=constants_knowledge_base.VECTOR_STATUS_VECTORIZING)
+    )
+    commit_or_rollback(db)
+
+    for doc in docs:
+        try:
+            chunk_count = _vectorize_single_document(db, doc)
+
+            logger.info(f"向量化完成: document_id={doc.id} chunk_count={chunk_count}")
+            results.append(
+                schemas_knowledge_base.VectorizeDocumentsItem(
+                    document_id=doc.id,
+                    title=doc.title,
+                    success=True,
+                    chunk_count=chunk_count,
+                )
+            )
+            success_count += 1
+
+        except Exception as e:
+            logger.error(f"向量化失败: document_id={doc.id} error={e}", exc_info=True)
+            try:
+                doc.vector_status = constants_knowledge_base.VECTOR_STATUS_FAILED
+                commit_or_rollback(db)
+            except Exception:
+                db.rollback()
+
+            results.append(
+                schemas_knowledge_base.VectorizeDocumentsItem(
+                    document_id=doc.id,
+                    title=doc.title,
+                    success=False,
+                    error=str(e)[:200],
+                )
+            )
+            failed_count += 1
+
+    logger.info(
+        f"批量向量化完成: total={len(document_ids)} success={success_count} failed={failed_count}"
+    )
+    return schemas_knowledge_base.VectorizeDocumentsResponse(
+        total=len(document_ids),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results,
+    )
+
+
+def search_knowledge(
+    db: Session,
+    request: schemas_knowledge_base.SearchKnowledgeRequest,
+):
+    """知识库语义检索（分路检索 + 合并重排序）"""
+    logger.info(f"收到检索请求: query={request.query[:50]}")
+
+    all_results = []
+
+    # 路1：个股研报
+    if request.stock_codes:
+        for stock_code in request.stock_codes:
+            chunk_results = chroma_search_kb(
+                request.query,
+                filter_dict={
+                    "doc_type": constants_knowledge_base.DOC_TYPE_RESEARCH_REPORT,
+                    "stock_code": stock_code,
+                },
+                k=request.top_k,
+            )
+            all_results.extend(_format_chroma_results(chunk_results))
+
+        # 自动推定行业：公司同行业则补行业研报
+        if not request.industry_names:
+            _auto_append_industry_search(db, request, all_results)
+
+    # 路2：行业研报（显式指定）
+    if request.industry_names:
+        for industry in request.industry_names:
+            chunk_results = chroma_search_kb(
+                request.query,
+                filter_dict={
+                    "doc_type": constants_knowledge_base.DOC_TYPE_INDUSTRY_REPORT,
+                    "industry_name": industry,
+                },
+                k=request.top_k,
+            )
+            all_results.extend(_format_chroma_results(chunk_results))
+
+    # 路3：全量搜索（无过滤条件）
+    if not request.stock_codes and not request.industry_names:
+        chunk_results = chroma_search_kb(request.query, k=request.top_k)
+        all_results = _format_chroma_results(chunk_results)
+
+    # 合并去重 + 按 score 降序
+    seen = set()
+    deduped = []
+    for item in sorted(all_results, key=lambda x: x["score"], reverse=True):
+        dedup_key = (item["document_id"], item["chunk_index"])
+        if dedup_key not in seen:
+            seen.add(dedup_key)
+            deduped.append(item)
+
+    top_results: list[dict] = deduped[: request.top_k]
+
+    logger.info(f"检索完成: query={request.query[:50]} results={len(top_results)}")
+    return schemas_knowledge_base.SearchKnowledgeResponse(
+        query=request.query,
+        total=len(top_results),
+        results=[
+            schemas_knowledge_base.SearchKnowledgeItem(**item) for item in top_results
+        ],
+    )
+
+
 """辅助函数"""
 
 
@@ -647,6 +809,125 @@ def _str_or_none(value):
 def _get_parse_output_dir(document_id: int, title: str):
     """获取文档解析输出目录（统一入口）"""
     return os.path.join(settings.KNOWLEDGE_PARSE_OUTPUT_DIR, f"{document_id}_{title}")
+
+
+def _vectorize_single_document(db: Session, doc_entity):
+    """对单个文档的所有chunk执行向量化"""
+    chunk_entities = db.scalars(
+        select(models_knowledge_chunk.KnowledgeChunk).where(
+            models_knowledge_chunk.KnowledgeChunk.document_id == doc_entity.id,
+            models_knowledge_chunk.KnowledgeChunk.vector_status
+            == constants_knowledge_base.VECTOR_STATUS_VECTORIZING,
+        )
+    ).all()
+
+    if not chunk_entities:
+        logger.info(f"无需向量化: document_id={doc_entity.id}")
+        return 0
+
+    # 清除 Chroma 中该文档的旧向量（幂等）
+    chroma_delete_by_filter({"document_id": doc_entity.id})
+
+    texts = []
+    metadatas = []
+    ids = []
+    industry_name = getattr(doc_entity, "industry_name", None) or ""
+
+    for chunk in chunk_entities:
+        texts.append(chunk.chunk_text)
+        metadatas.append(
+            {
+                "document_id": doc_entity.id,
+                "chunk_index": chunk.chunk_index,
+                "doc_type": doc_entity.doc_type,
+                "stock_code": chunk.stock_code or "",
+                "stock_abbr": getattr(doc_entity, "stock_abbr", None) or "",
+                "industry_name": industry_name,
+                "content_type": chunk.content_type,
+            }
+        )
+        ids.append(chunk.chunk_hash)
+
+    # 分片批量写入 Chroma
+    batch_size = constants_knowledge_base.EMBEDDING_BATCH_SIZE
+    total_chunks = len(texts)
+    for i in range(0, total_chunks, batch_size):
+        batch_end = min(i + batch_size, total_chunks)
+        add_texts_to_kb(
+            texts=texts[i:batch_end],
+            metadatas=metadatas[i:batch_end],
+            ids=ids[i:batch_end],
+        )
+
+    # 更新每个 chunk 的向量化状态
+    for chunk in chunk_entities:
+        chunk.vector_status = constants_knowledge_base.VECTOR_STATUS_COMPLETED
+        chunk.vector_model = settings.EMBEDDING_MODEL
+        chunk.vector_dim = settings.EMBEDDING_DIM
+
+    # 更新文档的向量化状态
+    doc_entity.vector_status = constants_knowledge_base.VECTOR_STATUS_COMPLETED
+    commit_or_rollback(db)
+
+    logger.info(f"向量化完成: document_id={doc_entity.id} chunks={total_chunks}")
+    return total_chunks
+
+
+def _format_chroma_results(chunk_results: list) -> list[dict]:
+    """将 Chroma 搜索结果格式化为统一 dict 列表"""
+    formatted = []
+    for doc, score in chunk_results:
+        formatted.append(
+            {
+                "document_id": doc.metadata.get("document_id", 0),
+                "chunk_index": doc.metadata.get("chunk_index", 0),
+                "chunk_text": doc.page_content,
+                "score": float(score),
+                "doc_type": doc.metadata.get("doc_type", ""),
+                "stock_code": doc.metadata.get("stock_code", None),
+                "stock_abbr": doc.metadata.get("stock_abbr", None),
+                "industry_name": doc.metadata.get("industry_name", None),
+            }
+        )
+    return formatted
+
+
+def _auto_append_industry_search(
+    db: Session,
+    request: schemas_knowledge_base.SearchKnowledgeRequest,
+    current_results: list,
+):
+    """自动推定行业：如果所有公司属于同一行业，补行业研报检索"""
+    if not request.stock_codes or request.industry_names:
+        return
+
+    company_rows = db.execute(
+        select(
+            models_company_basic_info.CompanyBasicInfo.stock_code,
+            models_company_basic_info.CompanyBasicInfo.csrc_industry,
+        ).where(
+            models_company_basic_info.CompanyBasicInfo.stock_code.in_(
+                request.stock_codes
+            )
+        )
+    ).all()
+
+    industries = {r.stock_code: r.csrc_industry for r in company_rows}
+    unique_industries = set(industries.values())
+
+    if len(unique_industries) != 1:
+        return
+
+    industry = unique_industries.pop()
+    chunk_results = chroma_search_kb(
+        request.query,
+        filter_dict={
+            "doc_type": constants_knowledge_base.DOC_TYPE_INDUSTRY_REPORT,
+            "industry_name": industry,
+        },
+        k=request.top_k,
+    )
+    current_results.extend(_format_chroma_results(chunk_results))
 
 
 def _chunk_single_document(db: Session, doc_entity):

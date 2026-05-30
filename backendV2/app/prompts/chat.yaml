@@ -117,7 +117,11 @@ intent_parse:
       "time_range": [{{"report_year": 年份, "report_period": "Q1/HY/Q3/FY"}}],
       "query_type": "single_value/trend/comparison/ranking/continuity",
       "confidence": 0.0到1.0,
-      "continuity_config": {{"period_count": N, "condition": "条件描述", "start_period": {{"report_year": 年份, "report_period": "Q1/HY/Q3/FY"}}, "end_period": {{"report_year": 年份, "report_period": "Q1/HY/Q3/FY"}}}}
+      "continuity_config": {{"period_count": N, "condition": "条件描述", "start_period": {{"report_year": 年份, "report_period": "Q1/HY/Q3/FY"}}, "end_period": {{"report_year": 年份, "report_period": "Q1/HY/Q3/FY"}}}},
+      "need_sql_query": true/false,
+      "need_rag_search": true/false,
+      "rag_companys": [{{"value": "公司A", "stock_code": "000001"}}]或[],
+      "rag_industrys": ["行业名称"]或[]
     }}
 
     规则：
@@ -144,7 +148,20 @@ intent_parse:
        - time_range默认填排序口径时间
        - ranking_time_range填排序口径时间
        - calculation_time_range填计算口径时间
-    12. 只输出JSON，不要解释
+    12. need_sql_query和need_rag_search字段：
+       - need_sql_query: 如果问题涉及结构化的财务数据查询（净利润、营收、现金流等表中的字段），设为true；否则false
+       - need_rag_search: 如果问题涉及研报中的分析、观点、趋势、行业评价、公司分析等非结构化内容，设为true；否则false
+       - 两者可同时为true（如"结合财报数据，分析某公司某指标变化原因"）
+    13. rag_companys字段（仅在need_rag_search=true时有意义）：
+       - 从历史上下文继承：如果当前问题用"它/该/其/这个"等指代词指代之前提到的公司，rag_companys应继承历史中的相关公司
+       - 如果当前问题明确提到了新的公司，以当前问题为准
+       - 如果未指代任何人或公司且无上下文，设为空列表
+    14. rag_industrys字段（仅在need_rag_search=true时有意义）：
+       - 如果问题明确提到行业名称，直接填入
+       - 如果问题只提到公司但意图涉及行业或竞品分析，也建议填入公司所属行业
+       - 多个行业使用列表
+       - 可同时填入多个行业（如"车企"和"白酒"同时出现时）
+    15. 只输出JSON，不要解释
 
   user_prompt_template: |
     用户问题：{question}
