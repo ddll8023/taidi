@@ -1,74 +1,97 @@
-<!--
-╔══════════════════════════════════════════════════════════════════════╗
-║  DreamSeed 种梦计划 — AI创造者大赛  官方 README 模板                ║
-║                                                                      ║
-║  使用说明：                                                          ║
-║  1. 将本模板放在参赛仓库根目录 README.md 的顶部                       ║
-║  2. 头图使用 DreamField 官方公开活动图片地址                         ║
-║  3. 请保留 DREAMFIELD_README_HEADER_START / END 标识                 ║
-║  4. 分割线以下供创作者自由编写项目内容                               ║
-╚══════════════════════════════════════════════════════════════════════╝
--->
-
-<!-- DREAMFIELD_README_HEADER_START -->
-
-<p align="center">
-  <a href="https://www.dreamfield.top">
-    <img src="https://www.dreamfield.top/dream-field/contest-readme/assets/dreamseed-readme-banner.png" alt="DreamSeed 种梦计划参赛作品" width="100%" />
-  </a>
-</p>
-
-<!-- DREAMFIELD_README_HEADER_END -->
-
 # 财报分析工作台 (Financial Reports Workbench)
 
-一个基于 AI 的财务报告分析与智能问答系统，支持财报结构化解析、智能问数、知识库管理等功能。
+> **2026年（第14届）"泰迪杯"数据挖掘挑战赛 — B题：上市公司财报"智能问数"助手**
+
+一个基于 AI 的财务报告分析与智能问答系统，支持**财报结构化解析**、**智能问数**、**知识库管理**等功能。系统将非结构化财报 PDF 转化为结构化财务数据，支持自然语言驱动的数据查询和基于语义检索的深度分析。
+
+---
 
 ## 技术栈
 
 ### 后端
 
-- **框架**: FastAPI
-- **语言**: Python 3.12+
-- **数据库**: MySQL (SQLAlchemy ORM)
-- **向量数据库**: Chroma
-- **AI/LLM**: LangChain, DashScope, OpenAI, Anthropic
-- **其他**: PyJWT, bcrypt, OSS
+| 类别 | 技术 |
+|------|------|
+| 框架 | FastAPI + Uvicorn |
+| 语言 | Python 3.12+ |
+| 数据库 | MySQL (PyMySQL) + SQLAlchemy ORM |
+| 向量数据库 | Chroma (LangChain 封装，本地文件持久化) |
+| AI / LLM | LangChain, DashScope, OpenAI, Anthropic |
+| 数据校验 | Pydantic / Pydantic Settings |
+| 认证授权 | PyJWT + bcrypt + cryptography |
+| 文件解析 | docx2txt, PyPDF, openpyxl, mutagen, python-pptx, MinerU |
+| 对象存储 | Alibaba Cloud OSS (oss2) |
+| 数据处理 | Pandas, Matplotlib, scikit-learn |
+| 深度学习 | PyTorch, Transformers, PaddlePaddle |
+| 包管理 | uv |
 
 ### 前端
 
-- **框架**: Vue 3
-- **构建工具**: Vite
-- **状态管理**: Pinia
-- **路由**: Vue Router
-- **样式**: Tailwind CSS
-- **HTTP 客户端**: Axios
+| 类别 | 技术 |
+|------|------|
+| 框架 | Vue 3 |
+| 构建工具 | Vite (端口 7388，代理 7389) |
+| 状态管理 | Pinia |
+| 路由 | Vue Router 4 |
+| HTTP 客户端 | Axios |
+| CSS 框架 | Tailwind CSS + Tailwind Typography |
+| 图标 | Font Awesome (vue-fontawesome) |
+| Markdown | marked + DOMPurify |
+
+---
 
 ## 主要功能
 
-### 1. 财报管理
+### 1. 公司主数据管理
 
-- 财报文件上传与解析
-- 结构化数据抽取（资产负债表、利润表、现金流量表等）
-- 财报数据查询与可视化
+- 从 Excel 导入上市公司基础信息（股票代码、简称、行业分类等）
+- 支持增量导入，已存在的记录自动更新
+- 作为财报身份解析的主数据源
 
-### 2. 智能问数
+### 2. 财报数据构建
 
-- 基于自然语言的财报数据查询
-- AI 驱动的智能问答
-- 查询结果图表生成
-- 会话历史管理
+- PDF 文件单文件/批量上传与本地存储
+- 自动解析财报身份（股票代码、年份、报告期、报告类型）
+- LLM 智能抽取四张财务报表（资产负债表、利润表、现金流量表、核心业绩指标表）
+- 四层校验（结构 → 字段 → 类型 → 业务）后 UPSERT 入库
+- 支持后台异步并发解析（最多 3 并发）
 
-### 3. 知识库管理
+### 3. 智能问数
 
-- 文档上传与管理
-- 文档切块与向量化
-- 基于向量检索的知识问答
+- 自然语言驱动的财务数据查询对话
+- 意图解析（公司、指标、时间范围三槽位）+ 多轮上下文继承
+- SQL 自动生成（确定性模板 + LLM 回退）
+- 支持 9 种派生指标计算（同比、环比、复合增长率、占比等）
+- 四层 SQL 安全校验
+- 查询结果可视化图表 + Markdown 渲染
+- SSE 流式推送（步骤/Token/结果/错误事件）
+- 会话历史管理（列表、详情、删除）
 
-### 4. 任务工作台
+### 4. 知识库管理
 
-- **任务二**: 批量问答处理
-- **任务三**: 问题规划、执行与验证
+- 系统初始化：从 Excel 批量导入研报元数据
+- 增量 PDF 上传：按文件名匹配元数据，文本提取与按页切块
+- Markdown 清洗编辑器：双栏编辑预览，保存覆写
+- 文档切块（固定大小 1600 字符，重叠度 160 字符）
+- 批量向量化：通过 Embedding API 将切块转为向量写入 Chroma
+- 语义检索：查询文本向量化 → Chroma 相似度搜索 → 返回证据片段
+- 三级状态管理（元数据状态 → 切块状态 → 向量化状态）
+
+### 5. 深度研究（任务三）
+
+- 问题分析与执行规划：LLM 分析后拆解为多步骤执行计划
+- 6 种步骤类型：SQL 查询、派生指标计算、知识库检索、聚合统计、结果校验、答案组装
+- 程序化派生指标计算（资产负债率、毛利率等），确保数值精度
+- 四层结果校验（完整性 → 一致性 → 合理性 → 引用有效性）
+- 导出时重新执行完整流程，确保结果反映最新数据
+
+### 6. 任务二批量执行
+
+- 从 Excel 导入题目列表并初始化工作台
+- 单题/批量/全量自动回答，复用智能问数完整链路
+- 结果导出为标准化 Excel
+
+---
 
 ## 环境要求
 
@@ -77,108 +100,87 @@
 - MySQL 8.0+
 - Chroma 向量数据库（LangChain 封装，本地文件持久化，无需单独部署）
 
+---
+
 ## 快速开始
 
 ### 后端安装与运行
 
 ```bash
-# 进入后端目录
-cd backend
+# 进入后端目录（V2）
+cd backendV2
 
 # 创建虚拟环境并激活
 python -m venv .venv
 .venv\Scripts\activate  # Windows
 # source .venv/bin/activate  # Linux/Mac
 
-# 安装依赖
-pip install -r requirements.txt
+# 安装依赖（推荐使用 uv）
+uv pip install -r requirements.txt
 
-# 配置环境变量（创建 .env 文件）
-# 配置数据库连接、API密钥等
+# 配置环境变量
+# 编辑 .env 文件，配置数据库连接、API 密钥等
 
 # 启动服务
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 7389
 ```
 
 ### 前端安装与运行
 
 ```bash
-# 进入前端目录
-cd frontend
+# 进入前端目录（V2）
+cd frontendV2
 
 # 安装依赖
 npm install
 
-# 启动开发服务器
+# 启动开发服务器（端口 7388，自动代理 /api 到 7389）
 npm run dev
 
 # 构建生产版本
 npm run build
 ```
 
-## 项目结构
+### 访问系统
 
-```
-code/
-├── backend/                 # 后端代码
-│   ├── app/
-│   │   ├── api/            # API 路由层
-│   │   ├── config/         # 配置文件
-│   │   ├── core/           # 核心配置
-│   │   ├── db/             # 数据库连接
-│   │   ├── models/         # ORM 模型
-│   │   ├── schemas/        # Pydantic 模型
-│   │   ├── services/       # 业务逻辑层
-│   │   ├── utils/          # 工具函数
-│   │   └── main.py         # 应用入口
-│   ├── requirements.txt    # Python 依赖
-│   └── pyproject.toml      # 项目配置
-│
-├── frontend/               # 前端代码
-│   ├── src/
-│   │   ├── api/           # API 接口封装
-│   │   ├── components/    # Vue 组件
-│   │   ├── composables/   # 组合式函数
-│   │   ├── router/        # 路由配置
-│   │   ├── stores/        # Pinia 状态管理
-│   │   ├── utils/         # 工具函数
-│   │   ├── views/         # 页面视图
-│   │   └── main.js        # 应用入口
-│   ├── package.json       # NPM 配置
-│   └── vite.config.js     # Vite 配置
-│
-└── doc/                    # 项目文档
-    └── 项目结构文档.md
-```
+- 前端页面：http://localhost:7388
+- API 服务：http://localhost:7389
+- API 文档：http://localhost:7389/docs
 
-详细的项目结构说明请参阅 [项目结构文档](./doc/项目结构文档.md)。
+
+
+---
+
+
 
 ## 核心模块说明
 
-### 后端模块
+### 数据构建链路
 
-| 模块        | 说明                                   |
-| ----------- | -------------------------------------- |
-| `api/`      | RESTful API 接口定义                   |
-| `models/`   | 数据库模型定义（财报、聊天、知识库等） |
-| `services/` | 核心业务逻辑实现                       |
-| `schemas/`  | 请求/响应数据模型定义                  |
-| `config/`   | 提示词配置与结构化抽取规则             |
+```
+公司主数据导入 → 财报 PDF 上传 → 身份解析与建档 → LLM 结构化抽取 → 四层校验 → 事实表入库
+```
 
-### 前端模块
+### 智能查询链路
 
-| 模块          | 说明                                     |
-| ------------- | ---------------------------------------- |
-| `views/`      | 页面组件（智能问数、财报管理、工作台等） |
-| `components/` | 通用组件（上传弹窗、状态组件、筛选栏等） |
-| `stores/`     | 状态管理（聊天、任务工作台等）           |
-| `api/`        | 后端接口封装                             |
+```
+自然语言问题 → 指代消解与意图解析 → 槽位检查（完整则 SQL 生成，缺失则追问）→ SQL 安全校验 → 执行查询 → 图表生成与回答
+```
+
+### 模块依赖关系
+
+- **公司主数据管理** → **财报数据构建** → **智能问数** / **知识库管理**
+- **智能问数** → **任务二批量执行**
+- **知识库管理** → **深度研究（任务三）**
+- **智能问数** + **知识库管理** → **深度研究**
+
+---
 
 ## 配置说明
 
 ### 后端配置
 
-在 `backend/` 目录下创建 `.env` 文件：
+在 `backendV2/` 目录下的 `.env` 文件中配置：
 
 ```env
 # 数据库配置
@@ -190,20 +192,25 @@ MYSQL_DATABASE=financial_report
 
 # 文件存储配置
 UPLOAD_DIR=uploads
-fujian2_DIR=fujian2
+FUJIAN2_DIR=fujian2
 
-# Chroma 配置
+# Chroma 向量数据库配置
 CHROMA_PERSIST_DIR=chroma_data
 CHUNK_SIZE=1600
 CHUNK_OVERLAP=160
 
-# 模型配置
-CHAT_BASE_URL=适配openai的API地址
+# AI 模型配置
+CHAT_BASE_URL=适配 OpenAI API 的地址
 CHAT_MODEL=对话模型名称
-CHAT_API_KEY=对话模型API密钥
+CHAT_API_KEY=对话模型 API 密钥
 EMBEDDING_MODEL=嵌入模型名称
 EMBEDDING_DIM=1024
-EMBEDDING_API_KEY=嵌入模型API密钥
+EMBEDDING_API_KEY=嵌入模型 API 密钥
 
-
+# 阿里云 OSS 配置（可选）
+OSS_ACCESS_KEY_ID=your_key_id
+OSS_ACCESS_KEY_SECRET=your_key_secret
+OSS_BUCKET_NAME=your_bucket
+OSS_ENDPOINT=your_endpoint
 ```
+
