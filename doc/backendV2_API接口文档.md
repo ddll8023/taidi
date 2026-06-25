@@ -493,14 +493,15 @@ data: {"content": "**747.34亿元**。"}
 
 ```text
 event: result
-data: {"session_id": "550e8400-e29b-41d4-a716-446655440000", "answer": {"content": "贵州茅台2023年净利润为**747.34亿元**。"}, "sql": "SELECT net_profit FROM income_sheet WHERE stock_code='600519' AND report_year=2023 AND report_period='FY'"}
+data: {"session_id": "550e8400-e29b-41d4-a716-446655440000", "answer": {"content": "贵州茅台2023年净利润为**747.34亿元**。"}, "sql": "SELECT net_profit FROM income_sheet WHERE stock_code='600519' AND report_year=2023 AND report_period='FY'", "thinkingRounds": [{"thinking": "用户想查询贵州茅台2023年净利润，我需要先确认股票代码...", "tools": ["query_financial_data_tool"]}, {"thinking": "数据已返回，净利润为747.34亿元...", "tools": []}]}
 ```
 
 | 字段 | 类型 | 说明 |
 | ---- | ---- | ---- |
 | session_id | str | 会话 ID（UUID），多轮对话后续请求需携带 |
 | answer.content | str | 完整回答文本（Markdown 格式） |
-| sql | str | 生成的 SQL 语句 |
+| sql | str\|null | 生成的 SQL 语句 |
+| thinkingRounds | object[]\|null | 推理轮次列表，每轮包含 `thinking`（推理文本）和 `tools`（调用的工具名列表） |
 
 #### event: error — 错误事件
 
@@ -668,6 +669,7 @@ data: {"code": 4001, "message": "生成SQL语句失败"}
 | messages[].sql_query | str | 生成的 SQL 查询语句 |
 | messages[].sql_result | object[] | SQL 执行结果（截断至 100 行） |
 | messages[].intent_result | object | 意图识别结果（公司、指标、时间等） |
+| messages[].thinking_rounds | object[]\|null | 推理轮次列表（同 SSE result 事件的 thinkingRounds），每轮包含 `thinking`（推理文本）和 `tools`（调用的工具名列表） |
 | messages[].created_at | str | 消息创建时间 |
 | created_at | str | 会话创建时间 |
 | updated_at | str | 会话更新时间 |

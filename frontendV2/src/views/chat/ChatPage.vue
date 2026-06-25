@@ -222,7 +222,11 @@ const selectSession = async (session) => {
         addMessage('user', msg.query)
       }
       if (msg.answer) {
-        addMessage('assistant', msg.answer, { sql: msg.sql_query || null })
+        const rounds = (msg.thinking_rounds || []).map(r => ({ ...r, expanded: false }))
+        addMessage('assistant', msg.answer, {
+          sql: msg.sql_query || null,
+          thinkingRounds: rounds.length > 0 ? rounds : null,
+        })
       }
     }
     await scrollToBottom()

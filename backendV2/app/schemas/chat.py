@@ -41,6 +41,7 @@ class ChatMessageItem(BaseModel):
     sql_query: str | None = Field(None, description="生成的SQL")
     sql_result: list | None = Field(None, description="SQL执行结果")
     rag_result: list | None = Field(None, description="RAG检索结果")
+    thinking_rounds: list | None = Field(None, description="推理轮次列表（thinking + tools）")
     intent_result: dict | None = Field(None, description="意图解析结果")
     created_at: datetime = Field(..., description="创建时间")
 

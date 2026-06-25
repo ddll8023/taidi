@@ -34,6 +34,7 @@ class ChatMessage(Base):
     sql_query = Column[str](Text, comment="生成的 SQL")
     sql_result = Column[list](JSON, comment="SQL 执行结果")
     rag_result = Column[list](JSON, comment="RAG 检索结果")
+    thinking_rounds = Column[list](JSON, comment="推理轮次列表，包含每轮的思考文本和工具名")
     answer = Column[str](Text, comment="回答")
     created_at = Column[datetime](
         DateTime, server_default=func.now(), comment="创建时间"

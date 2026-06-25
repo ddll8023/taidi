@@ -193,6 +193,7 @@ def start_chat(
         sql_query=final_sql or None,
         sql_result=None,
         rag_result=None,
+        thinking_rounds=thinking_rounds if thinking_rounds else None,
         answer=answer,
         created_at=datetime.now(),
         answer_at=datetime.now(),

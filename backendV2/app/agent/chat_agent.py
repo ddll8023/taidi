@@ -133,10 +133,15 @@ def build_chat_graph():
 
             if has_tool_calls:
                 response = AIMessage(
-                    content=full_content, tool_calls=list(full_msg.tool_calls)
+                    content=full_content,
+                    tool_calls=list(full_msg.tool_calls),
+                    additional_kwargs=full_msg.additional_kwargs,
                 )
             else:
-                response = AIMessage(content=full_content)
+                response = AIMessage(
+                    content=full_content,
+                    additional_kwargs=full_msg.additional_kwargs,
+                )
         except Exception as e:
             logger.error(f"LLM 推理调用失败: {e}", exc_info=True)
             return {
