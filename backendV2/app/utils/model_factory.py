@@ -3,8 +3,9 @@ import logging
 from functools import lru_cache
 
 from langchain_anthropic import ChatAnthropic
-from langchain_openai import ChatOpenAI
 from langchain_community.embeddings import DashScopeEmbeddings
+from langchain_deepseek import ChatDeepSeek
+from langchain_openai import ChatOpenAI
 
 from app.core.config import settings
 
@@ -29,7 +30,28 @@ class ModelFactory:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ):
-        if settings.CHAT_PROVIDER == "openai":
+        provider = settings.CHAT_PROVIDER.lower()
+
+        if provider == "deepseek":
+            return ChatDeepSeek(
+                model=settings.CHAT_MODEL,
+                api_key=settings.CHAT_API_KEY,
+                base_url=settings.CHAT_BASE_URL,
+                max_tokens=(
+                    self.default_chat_max_tokens if max_tokens is None else max_tokens
+                ),
+                temperature=(
+                    self.default_chat_temperature
+                    if temperature is None
+                    else temperature
+                ),
+                model_kwargs={
+                    "extra_body": {
+                        "thinking": {"type": "enabled"}
+                    }
+                },
+            )
+        elif provider == "openai":
             return ChatOpenAI(
                 model=settings.CHAT_MODEL,
                 api_key=settings.CHAT_API_KEY,
@@ -43,7 +65,7 @@ class ModelFactory:
                     else temperature
                 ),
             )
-        elif settings.CHAT_PROVIDER == "anthropic":
+        elif provider == "anthropic":
             return ChatAnthropic(
                 model=settings.CHAT_MODEL,
                 api_key=settings.CHAT_API_KEY,

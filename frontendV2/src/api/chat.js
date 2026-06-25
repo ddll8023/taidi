@@ -1,26 +1,34 @@
 /**
  * 智能问数 API
- * 功能描述：对话消息接口、会话列表查询
+ * 功能描述：对话消息接口（ReAct Agent SSE 流式）、会话列表查询
  */
 import request from "./request";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 
 /**
- * 发送对话消息（SSE 流式）
- * 通过回调逐步推送进度事件，最终返回完整结果
+ * 发送对话消息（SSE 流式，ReAct Agent 驱动）
+ * 事件类型：
+ *   - reasoning_token: LLM 流式推理 token（首个创建轮次，后续追加）
+ *   - tool_call:       LLM 决定调用工具
+ *   - token:           流式 token
+ *   - result:          最终完整结果（含 thinkingRounds）
+ *   - error:           错误信息
+ *
  * @param {Object} params - 请求参数
  * @param {string} [params.session_id] - 会话ID（新对话不传）
  * @param {string} params.question - 用户问题
- * @param {Function} onStep - 步骤回调(data: {step, message})
+ * @param {Function} onReasoningToken - 流式推理 token 回调(data: {content})
+ * @param {Function} onToolCall - 工具调用回调(data: {tool})
  * @param {Function} onToken - 流式 token 回调(data: {content})
- * @param {Function} onResult - 结果回调(data: {session_id, answer, sql})
+ * @param {Function} onResult - 结果回调(data: {session_id, answer, sql, thinkingRounds})
  * @param {Function} onError - 错误回调(data: {code?, message})
  * @returns {Promise<void>}
  */
 export function sendChatMessageStream(
   params,
-  onStep,
+  onReasoningToken,
+  onToolCall,
   onToken,
   onResult,
   onError,
@@ -70,8 +78,12 @@ export function sendChatMessageStream(
           try {
             const data = JSON.parse(dataStr);
 
-            if (eventType === "step" && onStep) {
-              onStep(data);
+            if (eventType === "reasoning_token" && onReasoningToken) {
+              onReasoningToken(data);
+              // 让出微任务队列，允许 Vue 刷新 DOM
+              await new Promise(resolve => setTimeout(resolve, 0));
+            } else if (eventType === "tool_call" && onToolCall) {
+              onToolCall(data);
             } else if (eventType === "token" && onToken) {
               onToken(data);
             } else if (eventType === "result" && onResult) {

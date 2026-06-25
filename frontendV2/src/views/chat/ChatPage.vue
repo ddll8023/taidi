@@ -15,23 +15,6 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { sendChatMessageStream, getChatList, getChatDetail, deleteChatSession } from '@/api/chat'
 import { renderMarkdown } from '@/utils/markdown'
 
-// ── 步骤配置 ──
-
-const STEP_CONFIG = {
-  intent: { label: '意图识别', icon: 'brain', group: 'base' },
-  sql: { label: 'SQL 生成', icon: 'database', group: 'sql' },
-  query: { label: '数据查询', icon: 'magnifying-glass', group: 'sql' },
-  rag: { label: '知识库检索', icon: 'microchip', group: 'rag' },
-  answer: { label: '综合分析', icon: 'wand-magic-sparkles', group: 'base' },
-}
-
-const STEP_ORDER = ['intent', 'sql', 'query', 'rag', 'answer']
-
-const STEP_GROUP_CONFIG = {
-  sql: { label: '财报数据查询', color: 'accent' },
-  rag: { label: '研报知识库检索', color: 'emerald' },
-}
-
 // ── 左侧：会话列表状态 ──
 
 const sessions = reactive({
@@ -75,46 +58,38 @@ const isLoading = ref(false)
 const sessionId = ref(null)
 const copiedId = ref(null)
 const streamingContent = ref('')
-const progressSteps = reactive({
-  intent: { status: 'pending' },
-  sql: { status: 'pending' },
-  query: { status: 'pending' },
-  rag: { status: 'pending' },
-  answer: { status: 'pending' },
-})
+
+// ── ReAct Agent 状态 ──
+
+const streamingRounds = ref([])  // 流式中的临时思考轮次 [{thinking, tools}]
+
+const TOOL_LABEL_MAP = {
+  query_financial_data_tool: '财务数据查询',
+  search_knowledge_base_tool: '研报知识库检索',
+  resolve_company_tool: '公司信息查询',
+}
+function getToolLabel(name) {
+  return TOOL_LABEL_MAP[name] || name
+}
 
 const hasMessages = computed(() => messages.length > 0)
 const canSend = computed(() => currentInput.value.trim().length > 0 && !isLoading.value)
 
-const activeGroups = computed(() => {
-  const groups = new Set()
-  STEP_ORDER.forEach((key) => {
-    if (progressSteps[key].status !== 'pending') {
-      groups.add(STEP_CONFIG[key].group)
-    }
-  })
-  const active = []
-  if (groups.has('sql')) active.push('sql')
-  if (groups.has('rag')) active.push('rag')
-  return active
-})
-
-const progressMessage = computed(() => {
-  const active = STEP_ORDER.find((key) => progressSteps[key].status === 'active')
-  return active ? STEP_CONFIG[active].label : '正在分析...'
-})
-
 // ── 消息操作 ──
 
 const addMessage = (role, content, extra = {}) => {
-  messages.push({
+  const msg = {
     id: Date.now() + Math.random(),
     role,
     content,
     renderedHtml: role === 'assistant' ? renderMarkdown(content) : '',
     sql: extra.sql || null,
     showSql: false,
-  })
+  }
+  if (extra.thinkingRounds) {
+    msg.thinkingRounds = extra.thinkingRounds
+  }
+  messages.push(msg)
 }
 
 const scrollToBottom = async () => {
@@ -134,34 +109,55 @@ const copyText = async (text, msgId) => {
 }
 
 const resetProgress = () => {
-  STEP_ORDER.forEach((key) => { progressSteps[key].status = 'pending' })
   streamingContent.value = ''
+  streamingRounds.value = []
 }
 
 // ── SSE 回调 ──
 
-const handleStep = (data) => {
-  const step = data.step
-  if (!step) return
-  const stepKey = step.replace('_done', '')
-  if (!STEP_ORDER.includes(stepKey)) return
-  progressSteps[stepKey].status = step.endsWith('_done') ? 'done' : 'active'
-}
-
 const handleToken = (data) => {
   if (data.content) streamingContent.value += data.content
+}
+
+// ── ReAct Agent 事件处理器 ──
+
+const handleReasoningToken = (data) => {
+  /* 流式推理 token：
+     首个 token（或上一轮已有关闭标记时）→ 折叠前一轮，创建新轮次
+     后续 token → 追加到当前轮次 */
+  if (data.content) {
+    const rounds = streamingRounds.value
+    const lastHasTools = rounds.length > 0 && rounds[rounds.length - 1].tools.length > 0
+    if (rounds.length === 0 || lastHasTools) {
+      // 折叠前一轮（已完成）
+      if (rounds.length > 0) rounds[rounds.length - 1].collapsed = true
+      streamingRounds.value.push({ thinking: data.content, tools: [], collapsed: false })
+    } else {
+      rounds[rounds.length - 1].thinking += data.content
+    }
+  }
+}
+
+const handleToolCall = (data) => {
+  /* 工具调用：追加到当前轮次；如无可追加的轮次则先创建 */
+  const rounds = streamingRounds.value
+  if (rounds.length === 0) {
+    streamingRounds.value.push({ thinking: '', tools: [data.tool] })
+    return
+  }
+  const last = streamingRounds.value[rounds.length - 1]
+  if (!last.tools.includes(data.tool)) {
+    last.tools.push(data.tool)
+  }
 }
 
 const handleResult = (data) => {
   sessionId.value = data.session_id
   const answerContent = data.answer?.content || '暂无回答'
   const sql = data.sql || null
-  if (data.answer?.image && data.answer.image.length > 0) {
-    const imageHtml = data.answer.image.map((img) => `\n\n![图表](${img})`).join('')
-    addMessage('assistant', answerContent + imageHtml, { sql })
-  } else {
-    addMessage('assistant', answerContent, { sql })
-  }
+  const rawRounds = data.thinkingRounds || streamingRounds.value
+  const thinkingRounds = rawRounds.map(r => ({ ...r, expanded: false }))
+  addMessage('assistant', answerContent, { sql, thinkingRounds })
   isLoading.value = false
   resetProgress()
   scrollToBottom()
@@ -187,7 +183,14 @@ const sendMessage = async () => {
   await scrollToBottom()
   const payload = { question }
   if (sessionId.value) payload.session_id = sessionId.value
-  sendChatMessageStream(payload, handleStep, handleToken, handleResult, handleError)
+  sendChatMessageStream(
+    payload,
+    handleReasoningToken,
+    handleToolCall,
+    handleToken,
+    handleResult,
+    handleError,
+  )
 }
 
 const handleKeydown = (event) => {
@@ -419,8 +422,38 @@ onMounted(() => {
               <div
                 v-if="msg.role === 'assistant'"
                 class="prose prose-sm max-w-none prose-headings:text-ink-900 prose-p:text-ink-700 prose-a:text-accent-600 prose-code:text-accent-700 prose-code:bg-ink-50 prose-code:px-1 prose-code:rounded prose-strong:text-ink-900"
-                v-html="msg.renderedHtml"
-              ></div>
+              >
+                <!-- 思考轮次时间线 -->
+                <div v-if="msg.thinkingRounds && msg.thinkingRounds.length > 0" class="not-prose mb-3">
+                  <div v-for="(round, ri) in msg.thinkingRounds" :key="ri" class="relative flex gap-3">
+                    <div class="flex flex-col items-center w-5 shrink-0">
+                      <div class="w-5 h-5 rounded-full bg-teal-500 text-white text-[10px] flex items-center justify-center font-medium z-10">
+                        {{ ri + 1 }}
+                      </div>
+                      <div v-if="ri < msg.thinkingRounds.length - 1" class="w-0.5 flex-1 bg-gray-200 min-h-[12px]"></div>
+                    </div>
+                    <div class="flex-1 min-w-0 pb-3">
+                      <div class="border border-gray-200 rounded-lg overflow-hidden bg-white">
+                        <div class="flex items-center justify-between px-3 py-2 cursor-pointer text-xs text-gray-500 hover:bg-gray-50 select-none"
+                             @click="round.expanded = !round.expanded">
+                          <span class="font-medium text-gray-700">
+                            第 {{ ri + 1 }} 轮推理
+                            <span v-if="round.tools.length" class="text-gray-400 font-normal ml-1">
+                              · {{ round.tools.map(getToolLabel).join(' / ') }}
+                            </span>
+                          </span>
+                          <FontAwesomeIcon :icon="['fas', round.expanded ? 'chevron-up' : 'chevron-down']" class="text-[0.6em] transition-transform" />
+                        </div>
+                        <div v-show="round.expanded" class="px-3 py-2 text-xs text-gray-600 bg-blue-50 leading-relaxed whitespace-pre-wrap">
+                          {{ round.thinking }}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <!-- 最终回答 -->
+                <div v-html="msg.renderedHtml"></div>
+              </div>
               <p v-else class="text-sm leading-6">{{ msg.content }}</p>
               <div v-if="msg.sql" class="mt-3 border-t border-black/10 pt-2">
                 <button
@@ -445,103 +478,44 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- 加载中 - 步骤进度 -->
+        <!-- 流式思考轮次卡片 -->
+        <div v-if="isLoading && streamingRounds.length > 0" class="mb-4">
+          <div v-for="(round, ri) in streamingRounds" :key="ri" class="relative flex gap-3 mb-3">
+            <div class="flex flex-col items-center w-5 shrink-0">
+              <div class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium z-10"
+                   :class="ri === streamingRounds.length - 1 ? 'bg-accent-500 text-white' : 'bg-green-500 text-white'">
+                <FontAwesomeIcon v-if="ri === streamingRounds.length - 1" :icon="['fas', 'spinner']" spin class="text-[8px]" />
+                <span v-else>{{ ri + 1 }}</span>
+              </div>
+              <div v-if="ri < streamingRounds.length - 1" class="w-0.5 flex-1 bg-gray-200 min-h-[12px]"></div>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="rounded-lg border overflow-hidden bg-white">
+                <div class="flex items-center gap-2 px-3 py-2 text-xs border-b bg-gray-50">
+                  <span class="font-medium text-gray-700">第{{ ri + 1 }}轮推理</span>
+                  <span v-for="t in round.tools" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-50 text-accent-600 text-[10px] font-medium">
+                    <FontAwesomeIcon :icon="['fas', 'wrench']" class="text-[8px]" />
+                    {{ getToolLabel(t) }}
+                  </span>
+                </div>
+                <!-- 折叠时隐藏正文，只保留标题行 -->
+                <div v-show="!round.collapsed" class="px-3 py-2 text-xs text-gray-600 leading-relaxed whitespace-pre-wrap bg-blue-50/50">
+                  {{ round.thinking }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 加载中 - Agent 状态（精简） -->
         <div v-if="isLoading" class="mb-4 flex gap-3">
           <div class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-ink-100">
             <FontAwesomeIcon :icon="['fas', 'robot']" class="text-sm text-ink-600" aria-hidden="true" />
           </div>
-          <div class="min-w-[200px] rounded-2xl border border-black/5 bg-white px-4 py-3">
-            <div class="flex flex-col gap-3">
-              <!-- 基础步（intent / answer） -->
-              <div
-                v-for="stepKey in STEP_ORDER.filter(k => STEP_CONFIG[k].group === 'base')"
-                :key="stepKey"
-                class="flex items-center gap-2"
-                :class="progressSteps[stepKey].status === 'active' ? 'text-accent-600' : progressSteps[stepKey].status === 'done' ? 'text-green-600' : 'text-ink-300'"
-              >
-                <FontAwesomeIcon
-                  v-if="progressSteps[stepKey].status === 'done'"
-                  :icon="['fas', 'circle-check']"
-                  class="w-4 text-xs"
-                  aria-hidden="true"
-                />
-                <FontAwesomeIcon
-                  v-else-if="progressSteps[stepKey].status === 'active'"
-                  :icon="['fas', 'spinner']"
-                  spin
-                  class="w-4 text-xs"
-                  aria-hidden="true"
-                />
-                <div v-else class="flex w-4 items-center justify-center">
-                  <span class="block h-2 w-2 rounded-full border border-current"></span>
-                </div>
-                <span class="text-xs font-medium">{{ STEP_CONFIG[stepKey].label }}</span>
-              </div>
-
-              <!-- SQL 组 -->
-              <div v-if="activeGroups.includes('sql')">
-                <div class="mb-1.5 flex items-center gap-1.5">
-                  <span class="h-px flex-1 bg-accent-200"></span>
-                  <span class="text-[10px] font-medium uppercase tracking-wider text-accent-500">{{ STEP_GROUP_CONFIG.sql.label }}</span>
-                  <span class="h-px flex-1 bg-accent-200"></span>
-                </div>
-                <div
-                  v-for="stepKey in ['sql', 'query']"
-                  :key="stepKey"
-                  class="flex items-center gap-2"
-                  :class="progressSteps[stepKey].status === 'active' ? 'text-accent-600' : progressSteps[stepKey].status === 'done' ? 'text-green-600' : 'text-ink-300'"
-                >
-                  <FontAwesomeIcon
-                    v-if="progressSteps[stepKey].status === 'done'"
-                    :icon="['fas', 'circle-check']"
-                    class="w-4 text-xs"
-                    aria-hidden="true"
-                  />
-                  <FontAwesomeIcon
-                    v-else-if="progressSteps[stepKey].status === 'active'"
-                    :icon="['fas', 'spinner']"
-                    spin
-                    class="w-4 text-xs"
-                    aria-hidden="true"
-                  />
-                  <div v-else class="flex w-4 items-center justify-center">
-                    <span class="block h-2 w-2 rounded-full border border-current"></span>
-                  </div>
-                  <span class="text-xs font-medium">{{ STEP_CONFIG[stepKey].label }}</span>
-                </div>
-              </div>
-
-              <!-- RAG 组 -->
-              <div v-if="activeGroups.includes('rag')">
-                <div class="mb-1.5 flex items-center gap-1.5">
-                  <span class="h-px flex-1 bg-emerald-200"></span>
-                  <span class="text-[10px] font-medium uppercase tracking-wider text-emerald-600">{{ STEP_GROUP_CONFIG.rag.label }}</span>
-                  <span class="h-px flex-1 bg-emerald-200"></span>
-                </div>
-                <div
-                  class="flex items-center gap-2"
-                  :class="progressSteps['rag'].status === 'active' ? 'text-emerald-600' : progressSteps['rag'].status === 'done' ? 'text-green-600' : 'text-ink-300'"
-                >
-                  <FontAwesomeIcon
-                    v-if="progressSteps['rag'].status === 'done'"
-                    :icon="['fas', 'circle-check']"
-                    class="w-4 text-xs"
-                    aria-hidden="true"
-                  />
-                  <FontAwesomeIcon
-                    v-else-if="progressSteps['rag'].status === 'active'"
-                    :icon="['fas', 'spinner']"
-                    spin
-                    class="w-4 text-xs"
-                    aria-hidden="true"
-                  />
-                  <div v-else class="flex w-4 items-center justify-center">
-                    <span class="block h-2 w-2 rounded-full border border-current"></span>
-                  </div>
-                  <FontAwesomeIcon :icon="['fas', 'microchip']" class="w-3.5 text-[0.65em]" aria-hidden="true" />
-                  <span class="text-xs font-medium">{{ STEP_CONFIG['rag'].label }}</span>
-                </div>
-              </div>
+          <div class="min-w-[160px] rounded-2xl border border-black/5 bg-white px-4 py-3">
+            <div class="flex items-center gap-2 text-accent-600">
+              <FontAwesomeIcon :icon="['fas', 'spinner']" spin class="w-4 text-xs" aria-hidden="true" />
+              <span class="text-xs font-medium">Agent 分析中...</span>
             </div>
           </div>
         </div>

@@ -30,14 +30,6 @@ class PromptConfig:
         with open(config_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
-    @property
-    def get_task3_config(self):
-        """获取任务三模型提示词"""
-        config_path = os.path.join(SCRIPT_DIR, "task3.yaml")
-        with open(config_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-
-
 @lru_cache()
 def get_prompt_config():
     return PromptConfig()
